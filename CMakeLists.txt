@@ -20,12 +20,15 @@ set(CMAKE_C_STANDARD 11)
 # Force-include our PC types header BEFORE anything else.
 # This overrides MetroWerks and MSVC macros, fixes type sizes, etc.
 set(PC_PORT_DIR "${CMAKE_SOURCE_DIR}/pc_port")
-add_compile_options(
+
+# Legacy code (decompiled GameCube sources) needs permissive compilation.
+# Modern GCC would reject many Metrowerks-era constructs.
+set(LEGACY_COMPILE_OPTIONS
     -include "${PC_PORT_DIR}/pc_types.h"
-    -fpermissive              # Allow GC-era C++ constructs that modern GCC rejects
-    -Wno-narrowing            # GameCube code does implicit narrowing conversions
-    -Wno-multichar             # Four-character constants like 'QUIT' are used as message IDs
-    -Wno-write-strings         # String literals assigned to char* throughout
+    -fpermissive
+    -Wno-narrowing
+    -Wno-multichar
+    -Wno-write-strings
     -Wno-sign-compare
     -Wno-unused-variable
     -Wno-unused-but-set-variable
@@ -36,6 +39,29 @@ add_compile_options(
     -Wno-format
     -Wno-attributes
     -Wno-comment
+)
+
+# Native code (pc_port, tests, launcher) should compile with strict warnings.
+# We keep -fpermissive because native code includes legacy Dolphin headers.
+set(NATIVE_COMPILE_OPTIONS
+    -include "${PC_PORT_DIR}/pc_types.h"
+    -fpermissive
+    -Wall
+    -Wextra
+    -Wno-changes-meaning
+    -Wno-narrowing
+    -Wno-multichar
+    -Wno-write-strings
+    -Wno-sign-compare
+    -Wno-unused-variable
+    -Wno-unused-but-set-variable
+    -Wno-parentheses
+    -Wno-delete-non-virtual-dtor
+    -Wno-reorder
+    -Wno-attributes
+    -Wno-comment
+    -Werror=return-type
+    -Werror=switch
 )
 
 # ─── Version define for USA Rev 1 ───
@@ -177,8 +203,9 @@ file(GLOB PLUGPIKI_YAMASHITA_SOURCES "src/plugPikiYamashita/*.cpp")
 ###############################################################################
 #  Build the executable
 ###############################################################################
-add_executable(pikmin_pc
-    ${PC_PORT_SOURCES}
+# Create a static library for legacy (decompiled) sources with permissive flags.
+# This isolates the legacy compilation from the strict native compilation.
+add_library(pikmin_legacy STATIC
     ${SYSCOMMON_SOURCES}
     ${SYSDOLPHIN_SOURCES}
     ${PLUGPIKI_KANDO_SOURCES}
@@ -188,6 +215,14 @@ add_executable(pikmin_pc
     ${PLUGPIKI_OGAWA_SOURCES}
     ${PLUGPIKI_YAMASHITA_SOURCES}
 )
+target_compile_options(pikmin_legacy PRIVATE ${LEGACY_COMPILE_OPTIONS})
+
+# Native executable with strict flags
+add_executable(pikmin_pc
+    ${PC_PORT_SOURCES}
+)
+target_compile_options(pikmin_pc PRIVATE ${NATIVE_COMPILE_OPTIONS})
+target_link_libraries(pikmin_pc PRIVATE pikmin_legacy)
 
 # GX display lists, game logic and the software audio mixer execute on the host
 # CPU. Keep optimization level, machine-specific ISA and link-time optimization
@@ -237,12 +272,14 @@ add_library(pikmin_disc_image STATIC
     pc_port/launcher/gamecube_image.cpp)
 target_include_directories(pikmin_disc_image PUBLIC
     ${CMAKE_SOURCE_DIR}/pc_port/launcher)
+target_compile_options(pikmin_disc_image PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
 add_executable(pikmin_launcher
     pc_port/launcher/launcher_main.cpp
     pc_port/launcher/installer_ui.cpp)
 target_include_directories(pikmin_launcher PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_libraries(pikmin_launcher PRIVATE pikmin_disc_image ${SDL2_LIBRARIES})
+target_compile_options(pikmin_launcher PRIVATE ${NATIVE_COMPILE_OPTIONS})
 set_target_properties(pikmin_launcher PROPERTIES
     OUTPUT_NAME "pikmin-launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -250,6 +287,7 @@ set_target_properties(pikmin_launcher PROPERTIES
 add_executable(gamecube_image_test
     pc_port/launcher/gamecube_image_test.cpp)
 target_link_libraries(gamecube_image_test PRIVATE pikmin_disc_image)
+target_compile_options(gamecube_image_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
 add_executable(installer_ui_test
     pc_port/launcher/installer_ui_test.cpp
@@ -258,6 +296,7 @@ target_include_directories(installer_ui_test PRIVATE
     ${CMAKE_SOURCE_DIR}/pc_port/launcher
     ${SDL2_INCLUDE_DIRS})
 target_link_libraries(installer_ui_test PRIVATE ${SDL2_LIBRARIES})
+target_compile_options(installer_ui_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
 enable_testing()
 add_test(NAME gamecube_image_test COMMAND gamecube_image_test)
@@ -266,6 +305,7 @@ add_test(NAME installer_ui_test COMMAND installer_ui_test)
 add_executable(pc_generator_cache_validation_test
     pc_port/save/pc_generator_cache_validation_test.cpp)
 target_include_directories(pc_generator_cache_validation_test PRIVATE pc_port/save)
+target_compile_options(pc_generator_cache_validation_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_generator_cache_validation_test COMMAND pc_generator_cache_validation_test)
 
 # Both executables must remain side by side: the launcher resolves the game
@@ -276,6 +316,7 @@ install(TARGETS pikmin_pc pikmin_launcher
 # Envelope smoke test executable (not linked into main game)
 add_executable(pc_envelope_test pc_port/audio/pc_envelope_test.cpp pc_port/audio/pc_envelope.cpp)
 target_link_libraries(pc_envelope_test PRIVATE m)
+target_compile_options(pc_envelope_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_envelope_test COMMAND pc_envelope_test)
 
 add_executable(pc_jam_test
@@ -285,6 +326,7 @@ add_executable(pc_jam_test
     pc_port/audio/pc_sequence_archive.cpp
     pc_port/audio/pc_wave_bank.cpp
     src/jaudio/pikiseq.c)
+target_compile_options(pc_jam_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 if(EXISTS "${CMAKE_SOURCE_DIR}/assets/dataDir/SndData/Banks/pikibank.bx")
     add_test(NAME pc_jam_test COMMAND pc_jam_test)
     set_tests_properties(pc_jam_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -300,6 +342,7 @@ add_executable(pc_audio_mixer_test
     pc_port/audio/pc_wave_bank.cpp
     src/jaudio/pikiseq.c)
 target_link_libraries(pc_audio_mixer_test PRIVATE m ${SDL2_LIBRARIES})
+target_compile_options(pc_audio_mixer_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 if(EXISTS "${CMAKE_SOURCE_DIR}/assets/dataDir/SndData/Banks/pikibank.bx")
     add_test(NAME pc_audio_mixer_test COMMAND pc_audio_mixer_test)
     set_tests_properties(pc_audio_mixer_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -308,21 +351,25 @@ endif()
 add_executable(pc_frame_scheduler_test
     pc_port/timing/pc_frame_scheduler_test.cpp
     pc_port/timing/pc_frame_scheduler.cpp)
+target_compile_options(pc_frame_scheduler_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_frame_scheduler_test COMMAND pc_frame_scheduler_test)
 
 add_executable(pc_render_phase_test
     pc_port/timing/pc_render_phase_test.cpp
     pc_port/timing/pc_render_phase.cpp)
+target_compile_options(pc_render_phase_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_render_phase_test COMMAND pc_render_phase_test)
 
 add_executable(pc_visual_snapshot_test
     pc_port/timing/pc_visual_snapshot_test.cpp
     pc_port/timing/pc_visual_snapshot.cpp)
+target_compile_options(pc_visual_snapshot_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_visual_snapshot_test COMMAND pc_visual_snapshot_test)
 
 add_executable(pc_camera_snapshot_test
     pc_port/timing/pc_camera_snapshot_test.cpp
     pc_port/timing/pc_camera_snapshot.cpp)
+target_compile_options(pc_camera_snapshot_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_camera_snapshot_test COMMAND pc_camera_snapshot_test)
 
 add_executable(pc_visual_runtime_test
@@ -330,6 +377,7 @@ add_executable(pc_visual_runtime_test
     pc_port/timing/pc_visual_runtime.cpp
     pc_port/timing/pc_render_phase.cpp
     pc_port/timing/pc_visual_snapshot.cpp)
+target_compile_options(pc_visual_runtime_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_visual_runtime_test COMMAND pc_visual_runtime_test)
 
 add_executable(pc_tev_shader_test
@@ -337,17 +385,20 @@ add_executable(pc_tev_shader_test
     pc_port/gl/pc_tev_shader.cpp
 )
 target_include_directories(pc_tev_shader_test PRIVATE pc_port/gl)
+target_compile_options(pc_tev_shader_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_tev_shader_test COMMAND pc_tev_shader_test)
 
 add_executable(pc_render_packet_test
     pc_port/timing/pc_render_packet_test.cpp
     pc_port/timing/pc_render_packet.cpp)
+target_compile_options(pc_render_packet_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_render_packet_test COMMAND pc_render_packet_test)
 
 add_executable(pc_tick_profiler_test
     pc_port/timing/pc_tick_profiler_test.cpp
     pc_port/timing/pc_tick_profiler.cpp)
 target_include_directories(pc_tick_profiler_test PRIVATE pc_port/timing)
+target_compile_options(pc_tick_profiler_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_tick_profiler_test COMMAND pc_tick_profiler_test)
 
 message(STATUS "")
