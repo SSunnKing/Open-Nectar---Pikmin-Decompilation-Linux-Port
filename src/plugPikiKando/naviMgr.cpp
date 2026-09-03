@@ -92,10 +92,11 @@ Navi* NaviMgr::getNavi()
  */
 Navi* NaviMgr::getNavi(int idx)
 {
-	if (idx >= mNumObjects) {
+	if (idx < 0 || idx >= mNumObjects) {
 		// Given this is a bounds-check, you might think this should be be an `ERROR`.   Unfortunately,
 		// leftover multiplayer code brazenly requests out-of-bounds indices, so this must be a `PRINT`.
 		PRINT("err : getNavi(%d) : numNavis=%d\n", idx, mNumObjects);
+		return nullptr;
 	}
 	return static_cast<Navi*>(mObjectList[idx]);
 }

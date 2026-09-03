@@ -35,7 +35,7 @@ void AyuStack::create(immut char* name, int allocFlags, void* stackBase, int sta
 	mAllocType         = allocFlags;
 	mIsActive          = true;
 	mName              = name;
-	mInitialStackTop   = (u32)stackBase;
+	mInitialStackTop   = reinterpret_cast<AyuStackAddress>(stackBase);
 	mInitialStackLimit = mInitialStackTop + stackSizeBytes;
 	mSize              = mInitialStackLimit - mInitialStackTop;
 	mProtectOverflow   = enableOverflowGuard;
@@ -64,7 +64,7 @@ void AyuStack::reset()
 void AyuStack::checkStack()
 {
 	if ((mAllocType & AYU_STACK_GROW_UP)) {
-		u32 newTop = mStackTop - *(u32*)(mStackTop - 8);
+		AyuStackAddress newTop = mStackTop - *(u32*)(mStackTop - 8);
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
 		if (newTop != mInitialStackTop)
 #else
@@ -126,9 +126,9 @@ void* AyuStack::push(int requestedSizeBytes)
 		}
 
 		u32 previousSize;
-		u32 stackStart;
+		AyuStackAddress stackStart;
 		if (mStackTop != mInitialStackTop) {
-			int tmp      = mStackTop - 8;
+			AyuStackAddress tmp = mStackTop - 8;
 			previousSize = *(u32*)(mStackTop - 8);
 			stackStart   = tmp;
 		} else {
@@ -195,7 +195,8 @@ AyuCache::AyuCache(u32 cacheSize)
 
 	s32 alignedSize = OSRoundUp32B(cacheSize);
 	char* bufAddr   = new char[(alignedSize / 4) * 4];
-	init((u32)bufAddr, (u32)bufAddr + alignedSize);
+	AyuStackAddress bufferStart = reinterpret_cast<AyuStackAddress>(bufAddr);
+	init(bufferStart, bufferStart + alignedSize);
 }
 
 /**
@@ -203,7 +204,7 @@ AyuCache::AyuCache(u32 cacheSize)
  * @param bufferStart Start address of cache buffer.
  * @param bufferEnd End address of cache buffer.
  */
-void AyuCache::init(u32 bufferStart, u32 bufferEnd)
+void AyuCache::init(AyuStackAddress bufferStart, AyuStackAddress bufferEnd)
 {
 	mTotalAllocatedUnits            = 0;
 	mTotalCacheSizeBytes            = (bufferEnd - bufferStart);
@@ -216,7 +217,7 @@ void AyuCache::init(u32 bufferStart, u32 bufferEnd)
 	MemHead* head     = (MemHead*)bufferStart;
 	head->mNext       = &mFreeBlockHead;
 	head->mPrev       = &mFreeBlockHead;
-	head->mTagAndSize = ((bufferEnd - bufferStart) >> 4) - 0x1000001;
+	head->mTagAndSize = ((bufferEnd - bufferStart) / sizeof(MemHead)) - 0x1000001;
 	head->mGuardValue = AYU_CACHE_GUARD_WORD;
 
 	mFreeBlockHead.mNext       = (MemHead*)bufferStart;
@@ -277,7 +278,7 @@ void linkChunk(MemHead* node, u32 tagAndSize, MemHead* listHead)
  */
 void* AyuCache::mallocL(u32 sizeBytes)
 {
-	u32 a          = (sizeBytes + 0xF) >> 4;
+	u32 a          = (sizeBytes + sizeof(MemHead) - 1) / sizeof(MemHead);
 	MemHead* chunk = nullptr;
 	for (MemHead* i = mFreeBlockHead.mNext; i != &mFreeBlockHead; i = i->mNext) {
 		int b = (i->mTagAndSize & ~AYU_CACHE_FREE_FLAG) - a;

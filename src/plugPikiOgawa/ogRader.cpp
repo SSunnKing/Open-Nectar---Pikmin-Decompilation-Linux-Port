@@ -962,7 +962,8 @@ void zen::ogRaderMgr::RotatePos(f32* x, f32* y)
 void zen::ogRaderMgr::DrawCircle(u8 r, u8 g, u8 b, u8 a, f32 radius)
 {
 	int i;
-	u32 colour = (r << 24) | (g << 16) | (b << 8) | (a << 0);
+	// GXColor1u32 consumes the host-memory representation of RGBA on PC.
+	u32 colour = (a << 24) | (b << 16) | (g << 8) | (r << 0);
 
 	immut int nSides = 32;
 

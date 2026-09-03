@@ -3,6 +3,23 @@
 #include "Common/String.h"
 #include <string.h>
 
+#if defined(_WIN32) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#define PIKI_STREAM_LITTLE_ENDIAN 1
+#else
+#define PIKI_STREAM_LITTLE_ENDIAN 0
+#endif
+
+static inline u16 streamSwap16(u16 value)
+{
+	return static_cast<u16>((value >> 8) | (value << 8));
+}
+
+static inline u32 streamSwap32(u32 value)
+{
+	return (value >> 24) | ((value >> 8) & 0x0000FF00u)
+	     | ((value << 8) & 0x00FF0000u) | (value << 24);
+}
+
 // operator new[] is used without this header being included.
 #if defined(BUGFIX)
 #include "sysNew.h"
@@ -15,6 +32,9 @@ int Stream::readInt()
 {
 	int i;
 	read(&i, sizeof(int));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	i = static_cast<int>(streamSwap32(static_cast<u32>(i)));
+#endif
 	return i;
 }
 
@@ -35,6 +55,9 @@ short Stream::readShort()
 {
 	short s;
 	read(&s, sizeof(short));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	s = static_cast<short>(streamSwap16(static_cast<u16>(s)));
+#endif
 	return s;
 }
 
@@ -45,6 +68,12 @@ f32 Stream::readFloat()
 {
 	f32 f;
 	read(&f, sizeof(f32));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	u32 bits;
+	memcpy(&bits, &f, sizeof(bits));
+	bits = streamSwap32(bits);
+	memcpy(&f, &bits, sizeof(f));
+#endif
 	return f;
 }
 
@@ -76,8 +105,13 @@ void Stream::readString(char* dest, int size)
 void Stream::readString(String& str)
 {
 	int size = readInt();
-	if (str.mLength < size) {
-		str.init(size);
+	if (size < 0) {
+		size = 0;
+	}
+	// String(nullptr, 0) is a common destination in the original code.  An
+	// empty serialized string still needs one byte for its terminator.
+	if (!str.mString || str.mLength < size) {
+		str.init(size > 0 ? size : 1);
 	}
 
 	read(str.mString, size);
@@ -90,8 +124,8 @@ void Stream::readString(String& str)
 void Stream::writeInt(int i)
 {
 	int result = i;
-#ifdef WIN32
-	result = (((result & 0xFF000000) >> 24) | ((result & 0xFF0000) >> 8) | ((result & 0xFF00) << 8) | (result << 24));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	result = static_cast<int>(streamSwap32(static_cast<u32>(result)));
 #endif
 	write(&result, sizeof(result));
 }
@@ -110,8 +144,8 @@ void Stream::writeByte(u8 c)
 void Stream::writeShort(short _s)
 {
 	short s = _s;
-#ifdef WIN32
-	s = (((s & 0xFF00) >> 8) | (s << 8));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	s = static_cast<short>(streamSwap16(static_cast<u16>(s)));
 #endif
 	write(&s, sizeof(short));
 }
@@ -122,9 +156,11 @@ void Stream::writeShort(short _s)
 void Stream::writeFloat(f32 f)
 {
 	f32 result = f;
-#ifdef WIN32
-	int c  = reinterpret_cast<int&>(result);
-	result = ((u8)c << 24) | ((c & 0xFF00) << 8) | ((c & 0xFF0000) >> 8) | ((c & 0xFF000000) >> 24);
+#if PIKI_STREAM_LITTLE_ENDIAN
+	u32 bits;
+	memcpy(&bits, &result, sizeof(bits));
+	bits = streamSwap32(bits);
+	memcpy(&result, &bits, sizeof(result));
 #endif
 	write(&result, sizeof(f32));
 }

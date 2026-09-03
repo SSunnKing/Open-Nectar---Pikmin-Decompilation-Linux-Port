@@ -5,6 +5,10 @@
 #include "Mesh.h"
 #include "Shape.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_window.h"
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -144,9 +148,9 @@ GColor GColors[1];
  */
 DGXGraphics::DGXGraphics(bool flag)
 {
-	mDefaultFifoBuffer = new (0x20) u8[kDefaultFifoSize];
-	mTempFifoBuffer    = new (0x20) u8[kTempFifoSize];
-	mDefaultDLBuffer   = new (0x20) u8[kDefaultDLSize];
+	mDefaultFifoBuffer = new (PIKI_ALIGNED(0x20)) u8[kDefaultFifoSize];
+	mTempFifoBuffer    = new (PIKI_ALIGNED(0x20)) u8[kTempFifoSize];
+	mDefaultDLBuffer   = new (PIKI_ALIGNED(0x20)) u8[kDefaultDLSize];
 	mGpFifo            = GXInit(mDefaultFifoBuffer, kDefaultFifoSize);
 
 	if (flag) {
@@ -195,7 +199,7 @@ DGXGraphics::DGXGraphics(bool flag)
 	int backup = gsys->getHeap(gsys->mActiveHeapIdx)->mAllocType;
 	gsys->getHeap(gsys->mActiveHeapIdx)->setAllocType(AYU_STACK_GROW_UP);
 
-	mDisplayBuffer = new (0x20) u8[sFrameSize];
+	mDisplayBuffer = new (PIKI_ALIGNED(0x20)) u8[sFrameSize];
 
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO) || defined(VERSION_G98P01_PIKIDEMO)
 #else
@@ -357,6 +361,19 @@ u32 DGXGraphics::compileMaterial(Material* mat)
 	if (!(mat->mFlags & MATFLAG_PVW)) {
 		return 0;
 	}
+
+#if PIKI_PC_PORT
+	/*
+	 * GameCube material display lists contain BP/XF register commands, not
+	 * vertex primitives.  The PC backend currently applies those state calls
+	 * directly, so marking the empty recording as cached would make
+	 * setMaterial() skip blend, depth, channel and TEV setup forever.  Keep the
+	 * material uncached and let the existing direct path replay its state.
+	 */
+	mat->mDisplayListPtr  = nullptr;
+	mat->mDisplayListSize = 0;
+	return 0;
+#endif
 
 	if (gsys->mIsRendering) {
 		ERROR("Cannot make material DL when using GP\n");
@@ -550,6 +567,12 @@ void DGXGraphics::waitRetrace()
 		}
 	}
 	VIFlush();
+#if defined(PIKI_PC_PORT)
+	// On GameCube mFrameRate is the number of VI retraces per logical frame:
+	// 1 = 60 Hz, 2 = 30 Hz. Preserve that contract on PC so legacy systems
+	// which advance once per update do not speed up as rendering gets faster.
+	pc_window_set_swap_interval(mSystemFrameRate > 0 ? mSystemFrameRate : 1);
+#endif
 	VIWaitForRetrace();
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 
@@ -565,6 +588,7 @@ void DGXGraphics::waitRetrace()
  */
 void DGXGraphics::waitPostRetrace()
 {
+#if !defined(PIKI_PC_PORT)
 	BOOL interrupt = OSDisableInterrupts();
 
 	int a = mSystemFrameRate - (VIGetRetraceCount() - mRetraceCount) - 1;
@@ -574,6 +598,7 @@ void DGXGraphics::waitPostRetrace()
 	}
 
 	OSRestoreInterrupts(interrupt);
+#endif
 }
 
 /**
@@ -758,7 +783,19 @@ void DGXGraphics::setLight(Light* light, int idx)
  */
 void DGXGraphics::setPerspective(Mtx44 mtx, f32 fovY, f32 aspect, f32 zNear, f32 zFar, f32 scale)
 {
+#if defined(PIKI_PC_PORT)
+	// Override aspect ratio with configured value from pc_gfx
+	f32 actualAspect = pc_gfx_get_current_aspect_ratio();
+	if (actualAspect <= 0.0f) actualAspect = aspect;
+
+	// Adjust FOV for wider aspect ratios to show more horizontally
+	// Keep vertical FOV, extend horizontal view
+	f32 adjustedFovY = fovY;
+
+	MTXPerspective(mtx, adjustedFovY, actualAspect, zNear, zFar);
+#else
 	MTXPerspective(mtx, fovY, aspect, zNear, zFar);
+#endif
 	GXSetProjection(mtx, GX_PERSPECTIVE);
 	f32 screenSpaceDepth = 1.0f / (zFar - zNear);
 
@@ -1250,75 +1287,69 @@ void DGXGraphics::initMesh(Shape* model)
 /**
  * @todo: Documentation
  */
+// PC port fix: the send* flags cached which attributes were already programmed
+// so redundant GXSetVtxDesc calls could be skipped. That cache assumes the GX
+// vertex descriptor still holds whatever the previous mesh left, and its reset
+// (in the model setup above) asserts a baseline instead of programming one.
+// When the draw order does not match that assumption, a mesh executes its
+// display list under the previous mesh's descriptor. The parser then steps the
+// wrong number of bytes per vertex -- 9 instead of 11 on the title logo -- and
+// reads vertex indices out of the middle of neighbouring fields, giving indices
+// like 64768 into a position array and triangles stretched across the screen.
+//
+// Programming every attribute unconditionally produces the identical descriptor
+// whenever the cache was right, and the correct one when it was not, at the cost
+// of a few trivial calls per mesh. The flags are still maintained so any other
+// reader of them behaves as before.
 void DGXGraphics::setupVtxDesc(Shape* model, Material* mat, Mesh* mesh)
 {
 	if (mesh->mFeatureFlags & Mesh::FeatureFlags::PosAndNrm) {
-		if (!sendMtxIndx) {
-			GXSetVtxDesc(GX_VA_PNMTXIDX, GX_DIRECT);
-			sendMtxIndx = true;
-		}
+		GXSetVtxDesc(GX_VA_PNMTXIDX, GX_DIRECT);
+		sendMtxIndx = true;
 	} else {
-		if (sendMtxIndx) {
-			GXSetVtxDesc(GX_VA_PNMTXIDX, GX_NONE);
-			sendMtxIndx = false;
-		}
+		GXSetVtxDesc(GX_VA_PNMTXIDX, GX_NONE);
+		sendMtxIndx = false;
 	}
 
 	if (mesh->mFeatureFlags & Mesh::FeatureFlags::Tex1MtxIdx) {
-		if (!sendTxIndx) {
-			GXSetVtxDesc(GX_VA_TEX1MTXIDX, GX_DIRECT);
-			sendTxIndx = true;
-		}
+		GXSetVtxDesc(GX_VA_TEX1MTXIDX, GX_DIRECT);
+		sendTxIndx = true;
 	} else {
-		if (sendTxIndx) {
-			GXSetVtxDesc(GX_VA_TEX1MTXIDX, GX_NONE);
-			sendTxIndx = false;
-		}
+		GXSetVtxDesc(GX_VA_TEX1MTXIDX, GX_NONE);
+		sendTxIndx = false;
 	}
 
 	if (mCustomScale) {
-		if (!sendNbtIndx) {
-			GXSetArray(GX_VA_NBT, model->mNBTList, sizeof(NBT));
-			GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_NBT, GX_NRM_NBT, GX_F32, 0);
-			GXSetVtxDesc(GX_VA_NRM, GX_NONE);
-			GXSetVtxDesc(GX_VA_NBT, GX_INDEX16);
-			sendNbtIndx = true;
-		}
+		GXSetArray(GX_VA_NBT, model->mNBTList, sizeof(NBT));
+		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_NBT, GX_NRM_NBT, GX_F32, 0);
+		GXSetVtxDesc(GX_VA_NRM, GX_NONE);
+		GXSetVtxDesc(GX_VA_NBT, GX_INDEX16);
+		sendNbtIndx = true;
 	} else {
-		if (sendNbtIndx) {
-			GXSetArray(GX_VA_NRM, model->mNormalList, sizeof(Vector3f));
-			GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_NRM, GX_NRM_XYZ, GX_F32, 0);
-			GXSetVtxDesc(GX_VA_NRM, GX_INDEX16);
-			GXSetVtxDesc(GX_VA_NBT, GX_NONE);
-			sendNbtIndx = false;
-		}
+		GXSetArray(GX_VA_NRM, model->mNormalList, sizeof(Vector3f));
+		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_NRM, GX_NRM_XYZ, GX_F32, 0);
+		GXSetVtxDesc(GX_VA_NRM, GX_INDEX16);
+		GXSetVtxDesc(GX_VA_NBT, GX_NONE);
+		sendNbtIndx = false;
 	}
 
 	for (int texMapIdx = 0; texMapIdx < 8; texMapIdx++) {
 		// Effectively `Mesh::FeatureFlags::Tex0 << texMapIdx`
 		if (mesh->mFeatureFlags & (1 << (texMapIdx + 3))) {
-			if (!sendTxUVIndx[texMapIdx]) {
-				GXSetVtxDesc(GXAttr(GX_VA_TEX0 + texMapIdx), GX_INDEX16);
-				sendTxUVIndx[texMapIdx] = true;
-			}
+			GXSetVtxDesc(GXAttr(GX_VA_TEX0 + texMapIdx), GX_INDEX16);
+			sendTxUVIndx[texMapIdx] = true;
 		} else {
-			if (sendTxUVIndx[texMapIdx]) {
-				GXSetVtxDesc(GXAttr(GX_VA_TEX0 + texMapIdx), GX_NONE);
-				sendTxUVIndx[texMapIdx] = false;
-			}
+			GXSetVtxDesc(GXAttr(GX_VA_TEX0 + texMapIdx), GX_NONE);
+			sendTxUVIndx[texMapIdx] = false;
 		}
 	}
 
 	if (mesh->mFeatureFlags & Mesh::FeatureFlags::VtxColor) {
-		if (!sendColIndx) {
-			GXSetVtxDesc(GX_VA_CLR0, GX_INDEX16);
-			sendColIndx = true;
-		}
+		GXSetVtxDesc(GX_VA_CLR0, GX_INDEX16);
+		sendColIndx = true;
 	} else {
-		if (sendColIndx) {
-			GXSetVtxDesc(GX_VA_CLR0, GX_NONE);
-			sendColIndx = false;
-		}
+		GXSetVtxDesc(GX_VA_CLR0, GX_NONE);
+		sendColIndx = false;
 	}
 }
 

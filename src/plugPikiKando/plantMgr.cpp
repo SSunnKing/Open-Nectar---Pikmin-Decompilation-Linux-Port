@@ -135,7 +135,7 @@ void Plant::refresh(Graphics& gfx)
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, mtx);
 
 	mPlantAnimator.updateContext();
-	shape->mShape->updateAnim(gfx, mtx, nullptr);
+	shape->mShape->updateAnim(gfx, mtx, nullptr, this);
 
 	gfx.useMatrix(Matrix4f::ident, 0);
 	shape->mShape->drawshape(gfx, *gfx.mCamera, nullptr);

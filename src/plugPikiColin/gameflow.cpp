@@ -447,7 +447,7 @@ void preloadLanguage()
 	lang = &gameflow.mLanguageIndex;
 	gsys->mBaseAramAllocator.reset();
 	gsys->mDvdRoot.initCore("");
-	gsys->mFileList            = (DirEntry*)&gsys->mDvdRoot;
+	gsys->mFileList            = &gsys->mDvdRoot;
 	gsys->mActiveAramAllocator = &gsys->mBaseAramAllocator;
 
 	// set and load language-specific file
@@ -560,7 +560,11 @@ void GameFlow::hardReset(BaseApp* baseApp)
 	mParameters = new Parms();
 
 	// loading heap is 0x8000 bytes in size (32 kb)
+#if defined(PIKI_PC_PORT)
+	int loadHeapSize = 0x800000; // 8MB
+#else
 	int loadHeapSize = 0x8000;
+#endif
 
 	// set time-related factors
 	mWorldClock.reset(mParameters->mRealMinutesPerGameDay());
@@ -729,6 +733,9 @@ void GameFlow::softReset()
 
 	// always print load time reporting
 	gsys->mTogglePrint = TRUE;
+	const f32 loadMegabytesPerSecond = mLoadTimeSeconds > 0.0f
+	    ? gsys->mDvdBytesRead / (1024.0f * 1024.0f) / mLoadTimeSeconds
+	    : 0.0f;
 
 #if defined(VERSION_GPIP01)
 	int size  = (u32)gsys->getHeap(SYSHEAP_App)->getFree();
@@ -738,16 +745,16 @@ void GameFlow::softReset()
 	}
 	PRINT("*--------------- %.2fk (%.2fk) free : %d files, %.1fk took %.1f secs : %.1f mb/sec\n", size / 1024.0f, size2 / 1024.0f,
 	      gsys->mDvdOpenFiles, gsys->mDvdBytesRead / 1024.0f, mLoadTimeSeconds,
-	      gsys->mDvdBytesRead / (1024.0f * 1024.0f) / mLoadTimeSeconds);
+	      loadMegabytesPerSecond);
 #elif defined(VERSION_PIKIDEMO)
 	u32 size = (u32)gsys->getHeap(SYSHEAP_App)->getFree();
 	STACK_PAD_VAR(2);
 	_Print("*--------------- %.2fk free : %d files, %.1fk took %.1f secs : %.1f mb/sec\n", size / 1024.0f, gsys->mDvdOpenFiles,
-	       gsys->mDvdBytesRead / 1024.0f, mLoadTimeSeconds, gsys->mDvdBytesRead / (1024.0f * 1024.0f) / mLoadTimeSeconds);
+	       gsys->mDvdBytesRead / 1024.0f, mLoadTimeSeconds, loadMegabytesPerSecond);
 #else
 	u32 size = (u32)gsys->getHeap(SYSHEAP_App)->getFree();
 	PRINT("*--------------- %.2fk free : %d files, %.1fk took %.1f secs : %.1f mb/sec\n", size / 1024.0f, gsys->mDvdOpenFiles,
-	      gsys->mDvdBytesRead / 1024.0f, mLoadTimeSeconds, gsys->mDvdBytesRead / (1024.0f * 1024.0f) / mLoadTimeSeconds);
+	      gsys->mDvdBytesRead / 1024.0f, mLoadTimeSeconds, loadMegabytesPerSecond);
 #endif
 
 	// restore the user's debug print setting

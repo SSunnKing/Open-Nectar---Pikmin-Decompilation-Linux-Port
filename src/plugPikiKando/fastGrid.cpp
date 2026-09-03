@@ -43,7 +43,7 @@ void FastGrid::initAIGrid(u8 shift)
 	aiGridSize = (1 << (16 - aiGridShift));
 
 	memStat->start("aiGrid");
-	aiGridMap = new (0x20) u8[aiGridSize * aiGridSize];
+	aiGridMap = new (PIKI_ALIGNED(0x20)) u8[aiGridSize * aiGridSize];
 	clearAIGrid();
 	memStat->end("aiGrid");
 	PRINT("aiGridSize = %d : total = %d (KBytes)\n", aiGridSize, aiGridSize * aiGridSize);

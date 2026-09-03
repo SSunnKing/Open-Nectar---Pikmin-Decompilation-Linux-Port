@@ -158,7 +158,7 @@ void Slime::refresh(Graphics& gfx)
 	Matrix4f onCamMtx;
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, onCamMtx);
 	mAnimator.updateContext();
-	mShapeObject->mShape->updateAnim(gfx, onCamMtx, nullptr);
+	mShapeObject->mShape->updateAnim(gfx, onCamMtx, nullptr, this);
 	mSlimeBody->refresh(mShapeObject, gfx);
 	mCollInfo->updateInfo(gfx, false);
 }

@@ -15,6 +15,14 @@ DEFINE_ERROR(__LINE__) // Never used in the DLL
  */
 DEFINE_PRINT(nullptr)
 
+static u32 packGXColor(const Colour& color)
+{
+	// Colour is not guaranteed to be 32-bit aligned inside P2DFont. Packing the
+	// bytes explicitly also makes the native little-endian FIFO convention clear.
+	return static_cast<u32>(color.r) | (static_cast<u32>(color.g) << 8)
+	     | (static_cast<u32>(color.b) << 16) | (static_cast<u32>(color.a) << 24);
+}
+
 /**
  * @todo: Documentation
  */
@@ -69,6 +77,16 @@ P2DFont::P2DFont(immut char* fileName)
  */
 void P2DFont::setGX()
 {
+	// The GameCube GX state retained the font texture binding implicitly. The
+	// native backend starts each frame with no active texture, so bind it
+	// explicitly before emitting glyph quads.
+	if (mFont && mFont->mTexture) {
+		if (mFont->mTexture->mAttachName == -1) {
+			mFont->mTexture->attach();
+		}
+		GXLoadTexObj(mFont->mTexture->mTexObj, GX_TEXMAP0);
+	}
+
 	GXSetNumChans(1);
 	GXSetNumTevStages(1);
 	GXSetNumTexGens(1);
@@ -142,19 +160,19 @@ f32 P2DFont::drawChar(f32 xPos, f32 yPos, int charCode, int drawWidth, int drawH
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 
 	GXPosition3f32(x0, y0, 0.0f);
-	GXColor1u32(*(u32*)&mTLColour);
+	GXColor1u32(packGXColor(mTLColour));
 	GXTexCoord2u16(s0, t0);
 
 	GXPosition3f32(x1, y0, 0.0f);
-	GXColor1u32(*(u32*)&mTRColour);
+	GXColor1u32(packGXColor(mTRColour));
 	GXTexCoord2u16(s1, t0);
 
 	GXPosition3f32(x1, y1, 0.0f);
-	GXColor1u32(*(u32*)&mBRColour);
+	GXColor1u32(packGXColor(mBRColour));
 	GXTexCoord2u16(s1, t1);
 
 	GXPosition3f32(x0, y1, 0.0f);
-	GXColor1u32(*(u32*)&mBLColour);
+	GXColor1u32(packGXColor(mBLColour));
 	GXTexCoord2u16(s0, t1);
 
 	GXEnd();

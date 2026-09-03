@@ -11,6 +11,9 @@
 #include "UpdateMgr.h"
 #include "Vector.h"
 #include "types.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 class CollEvent;
 class CollInfo;
@@ -269,8 +272,20 @@ public:
 
 	BOOL isFlying() { return isCreatureFlag(CF_IsFlying); }
 
-	void disableAICulling() { resetCreatureFlag(CF_UseAICulling); }
-	void enableAICulling() { setCreatureFlag(CF_UseAICulling); }
+	void disableAICulling()
+	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
+		resetCreatureFlag(CF_UseAICulling);
+	}
+	void enableAICulling()
+	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
+		setCreatureFlag(CF_UseAICulling);
+	}
 	bool aiCullable() { return !isCreatureFlag(CF_UseAICulling); }
 
 	bool isAIActive() { return !isCreatureFlag(CF_IsAiDisabled); }

@@ -185,7 +185,8 @@ public:
 	void addGfxObject(GfxobjInfo*);
 	void attachObjs();
 	void detachObjs();
-	void invalidateObjs(u32, u32);
+	void invalidateObjs(uintptr_t, uintptr_t);
+	void invalidateObjsForHeap(int heapIdx);
 	void addTexture(Texture*, immut char*);
 	Shape* getShape(immut char*, immut char*, immut char*, bool);
 	void initLFlares(int);
@@ -228,7 +229,10 @@ public:
 	void Shutdown() { mSystemFlags = SystemFlags::Shutdown; }
 	bool isShutdown() { return mSystemFlags == SystemFlags::Shutdown; }
 	bool resetPending() { return mSoftResetPending; }
-	void setFrameClamp(int frameRate) { mFrameRate = frameRate; }
+	void setFrameClamp(int frameRate)
+	{
+		mFrameRate = frameRate;
+	}
 	int getHeapNum() { return mActiveHeapIdx; }
 
 	void setActive(bool set)
@@ -311,7 +315,7 @@ public:
 	Shape* mCurrentShape;         // _1FC
 	CoreNode mDvdRoot;            // _200
 	CoreNode mAramRoot;           // _214
-	DirEntry* mFileList;          // _228
+	CoreNode* mFileList;          // _228, root receiving DirEntry children
 	int mFlareCount;              // _22C
 	int mLfInfoCount;             // _230
 	LFInfo* mFlareInfoList;       // _234
@@ -453,7 +457,11 @@ public:
 
 	// _00      = VTBL
 	// _00-_248 = StdSystem
+	#if defined(PIKI_PC_PORT)
+	uintptr_t mHeapStart;
+	#else
 	u32 mHeapStart;                                  // _244
+	#endif
 	u32 mHeapEnd;                                    // _248
 	Graphics* mDGXGfx;                               // _24C, cast to DGXGraphics in DOL
 	SystemClass250* mHaltCallback;                   // _250, vestigial callback used by `System::halt`
@@ -565,8 +573,12 @@ struct AramStream : public RandomAccessStream {
 	virtual void read(void* data, int size)       // _3C (weak)
 	{
 		int readSize = OSRoundUp32B(size);
+		#if defined(PIKI_PC_PORT)
+		OSPanic(__FILE__, __LINE__, "AramStream::read reached on PC for '%s'", mPath ? mPath : "<unknown>");
+		#else
 		gsys->copyCacheToRam((u32)data, mBaseAddress + mOffset, readSize);
 		gsys->copyWaitUntilDone();
+		#endif
 		mOffset += readSize;
 	}
 

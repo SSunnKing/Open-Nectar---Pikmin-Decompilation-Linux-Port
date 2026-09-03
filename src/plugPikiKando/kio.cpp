@@ -45,7 +45,7 @@ KIO::KIO()
 {
 	mIsReady      = false;
 	kio           = this;
-	mHeaderBuffer = new (0x20) u8[0x100]; // something goes here, probably not this
+	mHeaderBuffer = new (PIKI_ALIGNED(0x20)) u8[0x100]; // something goes here, probably not this
 	fbCopy        = false;
 	mIsActive     = false;
 	haltMessage   = nullptr;

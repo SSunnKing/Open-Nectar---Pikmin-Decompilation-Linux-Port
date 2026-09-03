@@ -94,13 +94,17 @@ UtEffectMgr::UtEffectMgr()
 {
 	UtEffectMgr::effects = new KEffect*[KandoEffect::COUNT];
 	registerEffect(KandoEffect::Goal, new GoalEffect);
-	registerEffect(KandoEffect::NaviWhistle0, new NaviWhistle(naviMgr->getNavi(0)));
-	registerEffect(KandoEffect::NaviWhistle1, new NaviWhistle(naviMgr->getNavi(1))); // louie confirmed?
+	Navi* primaryNavi = naviMgr->getNavi(0);
+	registerEffect(KandoEffect::NaviWhistle0, new NaviWhistle(primaryNavi));
+	// Pikmin 1 only creates one Navi. This second effect slot is leftover
+	// multiplayer code, so keep it usable without indexing beyond NaviMgr's
+	// one-element object array.
+	registerEffect(KandoEffect::NaviWhistle1, new NaviWhistle(primaryNavi));
 	registerEffect(KandoEffect::SmokeSoil, new SmokeSoilEffect);
 	registerEffect(KandoEffect::SmokeGrass, new SmokeGrassEffect);
 	registerEffect(KandoEffect::SmokeRock, new SmokeRockEffect);
 	registerEffect(KandoEffect::SmokeTree, new SmokeTreeEffect);
-	registerEffect(KandoEffect::NaviFue0, new NaviFue(naviMgr->getNavi(0)));
+	registerEffect(KandoEffect::NaviFue0, new NaviFue(primaryNavi));
 	registerEffect(KandoEffect::PikiGrowup1, new SimpleEffect(EffectMgr::EFF_Piki_GrowUp1));
 	registerEffect(KandoEffect::PikiGrowup2, new SimpleEffect(EffectMgr::EFF_Piki_GrowUp2));
 	registerEffect(KandoEffect::WallHit1, new SimpleEffect(EffectMgr::EFF_Wl_Hit1));

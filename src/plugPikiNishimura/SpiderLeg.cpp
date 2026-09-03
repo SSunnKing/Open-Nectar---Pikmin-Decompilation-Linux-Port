@@ -12,6 +12,9 @@
 #include "SoundMgr.h"
 #include "Spider.h"
 #include "Stickers.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 namespace Kumo {
 static int leg_index[4][3] = {
@@ -863,7 +866,7 @@ void SpiderLeg::updateAnimation(const BossShapeObject* shapeObj, Graphics& gfx, 
 
 	mSpider->mAnimator.updateContext();
 
-	shapeObj->mShape->updateAnim(gfx, mtx1, nullptr);
+	shapeObj->mShape->updateAnim(gfx, mtx1, nullptr, this);
 
 	gfx.mCamera->mLookAtMtx.inverse(&animMtx);
 
@@ -1281,6 +1284,12 @@ void SpiderLeg::update()
  */
 void SpiderLeg::refresh(BossShapeObject* shapeObj, Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	Matrix4f animMtx;
 	updateAnimation(shapeObj, gfx, animMtx);
 	setJointMatrix(shapeObj, animMtx);

@@ -11,7 +11,7 @@ void AlignedStream::read(void* buffer, int length)
 	u8 tempBuffer[4];
 
 	while (lengthRemain != 0) {
-		if (lengthRemain <= sizeof(tempBuffer) || (streamPos & 3) != 0 || (reinterpret_cast<u32>(bufferPos) & mAlignment) != 0) {
+		if (lengthRemain <= sizeof(tempBuffer) || (streamPos & 3) != 0 || (reinterpret_cast<uintptr_t>(bufferPos) & mAlignment) != 0) {
 			int readingLength = lengthRemain;
 			int paddingLength = streamPos & 3;
 
@@ -54,7 +54,7 @@ void AlignedStream::write(immut void* buffer, int length)
 	u8 tempBuffer[4];
 
 	while (lengthRemain != 0) {
-		if (lengthRemain <= sizeof(tempBuffer) || (streamPos & 3) != 0 || (reinterpret_cast<u32>(bufferPos) & mAlignment) != 0) {
+		if (lengthRemain <= sizeof(tempBuffer) || (streamPos & 3) != 0 || (reinterpret_cast<uintptr_t>(bufferPos) & mAlignment) != 0) {
 			int writingLength = lengthRemain;
 			int paddingLength = streamPos & 3;
 

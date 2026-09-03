@@ -137,6 +137,10 @@ BossMgr::BossMgr()
  */
 void BossMgr::addUseCount(int bossID, int count)
 {
+	if (bossID < 0 || bossID >= BOSS_IDCOUNT) {
+		ERROR("BossMgr::addUseCount: bossID %d out of range", bossID);
+		return;
+	}
 	mUseCounts[bossID] += count;
 }
 
@@ -146,6 +150,10 @@ void BossMgr::addUseCount(int bossID, int count)
  */
 bool BossMgr::useBoss(int bossID)
 {
+	if (bossID < 0 || bossID >= BOSS_IDCOUNT) {
+		ERROR("BossMgr::useBoss: bossID %d out of range", bossID);
+		return false;
+	}
 	return mUseCounts[bossID] > 0;
 }
 
@@ -155,6 +163,10 @@ bool BossMgr::useBoss(int bossID)
  */
 int BossMgr::getUseCount(int bossID)
 {
+	if (bossID < 0 || bossID >= BOSS_IDCOUNT) {
+		ERROR("BossMgr::getUseCount: bossID %d out of range", bossID);
+		return 0;
+	}
 	return mUseCounts[bossID];
 }
 
@@ -530,6 +542,11 @@ void BossMgr::setBossParam(Boss* boss, GenObjectBoss* genBoss)
  */
 Boss* BossMgr::createBoss(int bossID)
 {
+	if (bossID < 0 || bossID >= BOSS_IDCOUNT) {
+		ERROR("BossMgr::createBoss: bossID %d out of range", bossID);
+		return nullptr;
+	}
+
 	BossNode* node = static_cast<BossNode*>(mFreeNodes[bossID].mChild);
 	if (!node) {
 		return nullptr;

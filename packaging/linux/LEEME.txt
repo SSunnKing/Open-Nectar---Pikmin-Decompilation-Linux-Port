@@ -1,0 +1,27 @@
+PIKMIN NATIVE — PAQUETE PARA LINUX (x86-64)
+
+Este paquete es autocontenido: incluye todas las librerías necesarias
+(glibc, SDL2, PulseAudio, etc.). Funciona en cualquier Linux x86-64 con
+kernel ≥ 3.10 y driver OpenGL.
+
+NO necesitas instalar ninguna dependencia del sistema.
+
+Uso:
+  chmod +x pikmin pikmin-launcher
+  ./pikmin-launcher
+
+El launcher pedirá:
+  - Tu copia legal y sin comprimir de Pikmin USA Rev. 1
+    (GPIE01, revisión 1), en formato ISO o GCM.
+  - Una carpeta donde instalar el juego.
+
+Para jugar de nuevo, ejecuta ./pikmin-launcher dentro de la carpeta de
+instalación elegida.
+
+Opciones del instalador:
+  - Si tienes zenity o kdialog instalado, verás diálogos gráficos.
+  - Desde una terminal sin ellos, funciona en modo texto.
+  - Si haces doble clic sin terminal, se abrirá automáticamente en una.
+
+No se incluye la ROM ni ningún recurso propiedad de Nintendo.
+La ROM no se copia ni se modifica durante la instalación.

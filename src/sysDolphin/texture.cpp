@@ -56,6 +56,7 @@ Texture::Texture()
 int Texture::offsetGLtoGX(int, int)
 {
 	TRAP_UNIMPLEMENTED;
+	return 0;
 }
 
 /**
@@ -293,7 +294,7 @@ void Texture::createBuffer(int width, int height, int texFmt, void* buf)
 	mHeight      = height;
 	int dataSize = TexImg::calcDataSize(mTexFormat, mWidth, mHeight);
 
-	mPixelData = (buf) ? buf : new (0x20) u8[(dataSize / 2) * 2];
+	mPixelData = (buf) ? buf : new (PIKI_ALIGNED(0x20)) u8[(dataSize / 2) * 2];
 
 	mWidthFactor  = 1.0f / mWidth;
 	mHeightFactor = 1.0f / mHeight;
@@ -487,8 +488,8 @@ void Texture::decodeData(TexImg* texImg)
 			// Decode alpha + red channels
 			for (gxOffset = 0; gxOffset < mWidth * mHeight; ++gxOffset) {
 				u8 r, a;
-				int gxOffset  = (gxOffset / 16 * 32) + (gxOffset & 0x0F);
-				u16 gxTexelRA = SWAP16(gxTexData[gxOffset]);
+				int tiledOffset = (gxOffset / 16 * 32) + (gxOffset & 0x0F);
+				u16 gxTexelRA = SWAP16(gxTexData[tiledOffset]);
 
 				a = (gxTexelRA >> 8) & 0xFF;
 				r = (gxTexelRA >> 0) & 0xFF;
@@ -498,8 +499,8 @@ void Texture::decodeData(TexImg* texImg)
 			// Decode green + blue channels
 			for (gxOffset = 0; gxOffset < mWidth * mHeight; ++gxOffset) {
 				u8 g, b;
-				int gxOffset  = (gxOffset / 16 * 32) + (gxOffset & 0x0F);
-				u16 gxTexelGB = SWAP16(gxTexData[gxOffset + 16]);
+				int tiledOffset = (gxOffset / 16 * 32) + (gxOffset & 0x0F);
+				u16 gxTexelGB = SWAP16(gxTexData[tiledOffset + 16]);
 
 				g = (gxTexelGB >> 8) & 0xFF;
 				b = (gxTexelGB >> 0) & 0xFF;
@@ -533,3 +534,36 @@ void Texture::decodeData(TexImg* texImg)
 	}
 #endif
 }
+
+// PC Port Stubs for missing methods
+int Texture::offsetGXtoGL(int gxOffset) {
+    int tileW, tileH;
+    switch (mTexFormat) {
+        case TEX_FMT_I4:
+            tileW = 8; tileH = 8; break;
+        case TEX_FMT_I8:
+        case TEX_FMT_IA4:
+            tileW = 8; tileH = 4; break;
+        default: // RGB565, RGB5A3, RGBA8, IA8
+            tileW = 4; tileH = 4; break;
+    }
+
+    int tilesAcross = (mWidth + tileW - 1) / tileW;
+    int pixelsPerTile = tileW * tileH;
+
+    int tileIndex = gxOffset / pixelsPerTile;
+    int pixelInTile = gxOffset % pixelsPerTile;
+
+    int tileX = tileIndex % tilesAcross;
+    int tileY = tileIndex / tilesAcross;
+
+    int inTileX = pixelInTile % tileW;
+    int inTileY = pixelInTile / tileW;
+
+    int globalX = tileX * tileW + inTileX;
+    int globalY = tileY * tileH + inTileY;
+
+    return globalY * mWidth + globalX;
+}
+
+void Texture::decodeS3TC(int w, int h, u8* src, u8* dst) { (void)w; (void)h; (void)src; (void)dst; }

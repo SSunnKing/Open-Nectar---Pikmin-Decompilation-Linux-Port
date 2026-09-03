@@ -31,15 +31,27 @@ public:
 	 * @brief Converts a string to a fourcc ID and sets it as the ID.
 	 * @param id String ID to convert and store.
 	 */
-	void Set(immut char* id) { mID = *(s32*)id; }
+	void Set(immut char* id)
+	{
+#if defined(PIKI_PC_PORT)
+		// Parameter files store their tags in GameCube byte order. Directly
+		// reinterpreting the string only produced the same value on PowerPC.
+		mID = (static_cast<u32>(static_cast<u8>(id[0])) << 24)
+		    | (static_cast<u32>(static_cast<u8>(id[1])) << 16)
+		    | (static_cast<u32>(static_cast<u8>(id[2])) << 8)
+		    | static_cast<u32>(static_cast<u8>(id[3]));
+#else
+		mID = *(s32*)id;
+#endif
+	}
 
 	/**
 	 * @brief Gets the fourcc ID.
 	 * @return A reference to the packed integer ID.
 	 */
-	long& Num() { return mID; };
+	s32& Num() { return mID; };
 
-	long mID; // _00, fourcc-style (32-bit) packed identifier.
+	s32 mID; // _00, fourcc-style (32-bit) packed identifier.
 };
 
 /**

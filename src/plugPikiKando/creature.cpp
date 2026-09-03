@@ -938,7 +938,11 @@ void Creature::collisionCheck(f32 _unused)
 		return;
 	}
 
-	Iterator iter(&mSearchBuffer, stack_new(CndIsAtari)());
+	// The PC stack_new fallback takes the address of a temporary.  Iterator keeps
+	// this pointer for the whole loop, so the temporary was already dead by the
+	// first CI_LOOP condition check.
+	CndIsAtari isAtariCondition;
+	Iterator iter(&mSearchBuffer, &isAtariCondition);
 	CI_LOOP(iter)
 	{
 		Creature* collider = *iter;

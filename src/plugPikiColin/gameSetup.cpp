@@ -112,7 +112,7 @@ void GameSetupSection::preCacheShapes()
 	gsys->setActiveAramAllocator(&gsys->mShapeAramAllocator);
 
 	gsys->mAramRoot.initCore("");
-	gsys->mFileList = (DirEntry*)&gsys->mAramRoot;
+	gsys->mFileList = &gsys->mAramRoot;
 
 	// load in all the arc/dir file pairs to cache in the file list.
 	immut char** bundlePair;
@@ -203,7 +203,7 @@ GameSetupSection::GameSetupSection()
 	kio = new KIO();
 	kio->initialise();
 	int saveSize     = Kontroller::getSaveSize(CONTROLLER_INPUT_BUFFER_SIZE / 12);
-	void* saveBuffer = new (0x20) u8[saveSize];
+	void* saveBuffer = new (PIKI_ALIGNED(0x20)) u8[saveSize];
 	controllerBuffer = new RamStream(saveBuffer, saveSize);
 
 	// load pikmin head and whistle models

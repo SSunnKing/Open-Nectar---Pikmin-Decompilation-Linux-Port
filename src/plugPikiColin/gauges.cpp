@@ -9,6 +9,9 @@
 #include "sysMath.h"
 #include "sysNew.h"
 #include "system.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /// Life gauge border color for bar-style health gauges (grey by default, never used in-game).
 static Colour lgborder;
@@ -368,43 +371,49 @@ void LifeGauge::refresh(Graphics& gfx)
 		return;
 	}
 
-	switch (mDisplayState) {
-	case STATE_FadeIn:
-	{
-		adjustValue();
-		mFadeTransitionValue += 2.0f * gsys->getFrameTime();
-		if (mFadeTransitionValue > 1.0f) {
-			// keep full health gauge visible for 5 seconds before hiding it
-			mFadeTransitionValue = 1.0f;
-			mDisplayState        = STATE_Display;
-			mVisibleHoldTimer    = 5.0f;
-		}
-		break;
-	}
-	case STATE_Display:
-	{
-		adjustValue();
-		mVisibleHoldTimer -= gsys->getFrameTime();
-		if (mVisibleHoldTimer <= 0.0f) {
-			mVisibleHoldTimer = 0.0f;
-			if (mRenderStyle == LifeGauge::Bar || mCurrentDisplayHealthRatio <= 0.0f || mCurrentDisplayHealthRatio >= 1.0f) {
-				// no point drawing full or empty health gauges for too long, hide it again
-				mDisplayState = STATE_FadeOut;
+#if defined(PIKI_PC_PORT)
+	if (pc_render_is_authoritative()) {
+#endif
+		switch (mDisplayState) {
+		case STATE_FadeIn:
+		{
+			adjustValue();
+			mFadeTransitionValue += 2.0f * gsys->getFrameTime();
+			if (mFadeTransitionValue > 1.0f) {
+				// keep full health gauge visible for 5 seconds before hiding it
+				mFadeTransitionValue = 1.0f;
+				mDisplayState        = STATE_Display;
+				mVisibleHoldTimer    = 5.0f;
 			}
+			break;
 		}
-		break;
-	}
-	case STATE_FadeOut:
-	{
-		mFadeTransitionValue -= 2.0f * gsys->getFrameTime();
-		if (mFadeTransitionValue < 0.0f) {
-			// fade out finished
-			mFadeTransitionValue = 0.0f;
-			mDisplayState        = STATE_Hidden;
+		case STATE_Display:
+		{
+			adjustValue();
+			mVisibleHoldTimer -= gsys->getFrameTime();
+			if (mVisibleHoldTimer <= 0.0f) {
+				mVisibleHoldTimer = 0.0f;
+				if (mRenderStyle == LifeGauge::Bar || mCurrentDisplayHealthRatio <= 0.0f || mCurrentDisplayHealthRatio >= 1.0f) {
+					// no point drawing full or empty health gauges for too long, hide it again
+					mDisplayState = STATE_FadeOut;
+				}
+			}
+			break;
 		}
-		break;
+		case STATE_FadeOut:
+		{
+			mFadeTransitionValue -= 2.0f * gsys->getFrameTime();
+			if (mFadeTransitionValue < 0.0f) {
+				// fade out finished
+				mFadeTransitionValue = 0.0f;
+				mDisplayState        = STATE_Hidden;
+			}
+			break;
+		}
+		}
+#if defined(PIKI_PC_PORT)
 	}
-	}
+#endif
 
 	if (mDisplayState == STATE_Hidden) {
 		// don't waste resources trying to draw hidden health gauges

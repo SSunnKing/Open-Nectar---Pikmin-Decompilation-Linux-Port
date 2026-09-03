@@ -97,10 +97,20 @@ public:
 	{
 		mIntID = id;
 
+#if defined(PIKI_PC_PORT)
+		// Four-character constants have the same numeric value on every host,
+		// but the GameCube stored their bytes in big-endian order.  Do not use
+		// the host representation here or "test" becomes "tset" on x86.
+		mStringID[0] = static_cast<char>(id >> 24);
+		mStringID[1] = static_cast<char>(id >> 16);
+		mStringID[2] = static_cast<char>(id >> 8);
+		mStringID[3] = static_cast<char>(id);
+#else
 		char* str = reinterpret_cast<char*>(&mIntID);
 		for (int i = 0; i < 4; i++) {
 			mStringID[i] = str[i];
 		}
+#endif
 
 		mStringID[4] = '\0';
 	}
@@ -110,10 +120,17 @@ public:
 	 */
 	inline void updateID()
 	{
+#if defined(PIKI_PC_PORT)
+		mIntID = (static_cast<u32>(static_cast<u8>(mStringID[0])) << 24)
+		       | (static_cast<u32>(static_cast<u8>(mStringID[1])) << 16)
+		       | (static_cast<u32>(static_cast<u8>(mStringID[2])) << 8)
+		       | static_cast<u32>(static_cast<u8>(mStringID[3]));
+#else
 		char* str = reinterpret_cast<char*>(&mIntID);
 		for (int i = 0; i < 4; i++) {
 			str[i] = mStringID[i];
 		}
+#endif
 	}
 
 	// unused/inlined:

@@ -128,7 +128,7 @@ void KusaItem::refresh(Graphics& gfx)
 	gfx.setLighting(true, nullptr);
 	gfx.useMatrix(Matrix4f::ident, 0);
 
-	mItemShape->updateAnim(gfx, camMat, nullptr);
+	mItemShape->updateAnim(gfx, camMat, nullptr, this);
 	mItemShape->drawshape(gfx, *gfx.mCamera, nullptr);
 	mCollInfo->updateInfo(gfx, false);
 }
@@ -235,7 +235,7 @@ void BoBaseItem::refresh(Graphics& gfx)
 		gfx.setLighting(true, nullptr);
 		gfx.useMatrix(Matrix4f::ident, 0);
 
-		mItemShape->updateAnim(gfx, camMat, nullptr);
+		mItemShape->updateAnim(gfx, camMat, nullptr, this);
 		mItemShape->drawshape(gfx, *gfx.mCamera, nullptr);
 		mCollInfo->updateInfo(gfx, false);
 	}

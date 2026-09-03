@@ -67,7 +67,10 @@ s32* CardUtilByteNotUsed()
  */
 s32 CardUtilBlocksNotUsed()
 {
-	TRAP_UNIMPLEMENTED;
+	if (CardControl.mSectorSize == 0) {
+		return 0;
+	}
+	return CardControl.mByteNotUsed / static_cast<s32>(CardControl.mSectorSize);
 }
 
 /**
@@ -527,6 +530,13 @@ static s32 DoSave(s32 chan, CARDStat* fileState, void* fileData)
 		// throw error
 		return resRename;
 	}
+	// The native filesystem backend derives file numbers from the sorted
+	// directory. Deleting the old entry and renaming the temporary one can
+	// change that index, so resolve it again before updating the cached list.
+	if (CARDOpen(chan, fileName, &info) == CARD_RESULT_READY) {
+		newFileNo = info.fileNo;
+		CARDClose(&info);
+	}
 
 	// if no directory list, update our free space counters and return
 	if (!CardControl.mDirentList) {
@@ -559,15 +569,22 @@ static s32 DoSave(s32 chan, CARDStat* fileState, void* fileData)
 	memset(entry->mFileCommentData, 0, CARD_COMMENT_SIZE);
 
 	// copy comment data from save buffer, if present
-	if (fileState->commentAddr <= fileState->length - CARD_COMMENT_SIZE) {
-		memmove(entry->mFileCommentData, (void*)((u32)fileData + fileState->commentAddr), CARD_COMMENT_SIZE);
+	if (fileData && fileState->length >= CARD_COMMENT_SIZE
+	    && fileState->commentAddr <= fileState->length - CARD_COMMENT_SIZE) {
+		const u8* source = static_cast<const u8*>(fileData) + fileState->commentAddr;
+		memmove(entry->mFileCommentData, source, CARD_COMMENT_SIZE);
 	}
 
 	// handle icon/banner data, if present
 	entry->mAnimTotalFrames = 0;
-	if (fileState->bannerFormat || fileState->iconFormat) {
-		memmove(entry, (void*)((u32)fileData + fileState->iconAddr), fileState->offsetData - fileState->iconAddr);
-		DCFlushRange(entry, fileState->offsetData - fileState->iconAddr);
+	if (fileData && (fileState->bannerFormat || fileState->iconFormat)
+	    && fileState->offsetData >= fileState->iconAddr && fileState->iconAddr <= fileState->length) {
+		size_t iconBytes = fileState->offsetData - fileState->iconAddr;
+		iconBytes = std::min(iconBytes, sizeof(entry->mFileData));
+		iconBytes = std::min(iconBytes, static_cast<size_t>(fileState->length - fileState->iconAddr));
+		const u8* source = static_cast<const u8*>(fileData) + fileState->iconAddr;
+		memmove(entry->mFileData, source, iconBytes);
+		DCFlushRange(entry->mFileData, iconBytes);
 
 		int iconCnt;
 		int i;
@@ -618,7 +635,7 @@ static s32 DoSave(s32 chan, CARDStat* fileState, void* fileData)
  * @param length Length for write operations.
  * @return CARD result code from last operation hit - 0 or 1 if no error, negative if error.
  */
-static s32 CardUtilCommand(s32 chan, s32 command, s32 file, void* workBuffer, u32 offset, u32 length)
+static s32 CardUtilCommand(s32 chan, s32 command, void* file, void* workBuffer, u32 offset, u32 length)
 {
 	OSLockMutex(&CardControl.mMutex);
 	int res;
@@ -629,7 +646,7 @@ static s32 CardUtilCommand(s32 chan, s32 command, s32 file, void* workBuffer, u3
 		// notify global control of command parameters
 		CardControl.mChannel    = chan;
 		CardControl.mCommand    = command;
-		CardControl.mFileNo     = (void*)file;
+		CardControl.mFileNo     = file;
 		CardControl.mDataPtr    = workBuffer;
 		CardControl.mOffset     = offset;
 		CardControl.mLength     = length;
@@ -661,7 +678,7 @@ s32 CardUtilResultCode()
  */
 void CardUtilMount(s32 chan, void* workBuffer)
 {
-	CardUtilCommand(chan, CARDCMD_Mount, 0, workBuffer, 0, 0);
+	CardUtilCommand(chan, CARDCMD_Mount, nullptr, workBuffer, 0, 0);
 }
 
 /**
@@ -670,7 +687,7 @@ void CardUtilMount(s32 chan, void* workBuffer)
  */
 void CardUtilUnmount(s32 chan)
 {
-	CardUtilCommand(chan, CARDCMD_Unmount, 0, nullptr, 0, 0);
+	CardUtilCommand(chan, CARDCMD_Unmount, nullptr, nullptr, 0, 0);
 }
 
 /**
@@ -681,7 +698,7 @@ void CardUtilUnmount(s32 chan)
  */
 void CardUtilList(s32 chan, CardUtilDirent* dirList)
 {
-	CardUtilCommand(chan, CARDCMD_List, 0, dirList, 0, 0);
+	CardUtilCommand(chan, CARDCMD_List, nullptr, dirList, 0, 0);
 }
 
 /**
@@ -691,7 +708,7 @@ void CardUtilList(s32 chan, CardUtilDirent* dirList)
  */
 void CardUtilFormat(s32 chan)
 {
-	CardUtilCommand(chan, CARDCMD_Format, 0, nullptr, 0, 0);
+	CardUtilCommand(chan, CARDCMD_Format, nullptr, nullptr, 0, 0);
 }
 
 /**
@@ -719,7 +736,7 @@ void CardUtilIdleWhileBusy()
  */
 void CardUtilErase(s32 chan, s32 fileNo)
 {
-	CardUtilCommand(chan, CARDCMD_Erase, fileNo, nullptr, 0, 0);
+	CardUtilCommand(chan, CARDCMD_Erase, reinterpret_cast<void*>(static_cast<intptr_t>(fileNo)), nullptr, 0, 0);
 }
 
 /**
@@ -730,7 +747,7 @@ void CardUtilErase(s32 chan, s32 fileNo)
  */
 void CardUtilOpen(s32 chan, s32 fileNo, void* workBuffer)
 {
-	CardUtilCommand(chan, CARDCMD_Open, fileNo, workBuffer, 0, 0);
+	CardUtilCommand(chan, CARDCMD_Open, reinterpret_cast<void*>(static_cast<intptr_t>(fileNo)), workBuffer, 0, 0);
 }
 
 /**
@@ -741,8 +758,9 @@ void CardUtilOpen(s32 chan, s32 fileNo, void* workBuffer)
  */
 void CardUtilSave(s32 chan, CARDStat* fileState, void* data)
 {
-	// no clue why they needed to force the CARDStat pointer in as a long
-	CardUtilCommand(chan, CARDCMD_Save, (s32)fileState, data, 0, 0);
+	// On GameCube a pointer and long are both 32-bit. Keep this as an actual
+	// pointer on PC; narrowing it corrupts the save worker's CARDStat address.
+	CardUtilCommand(chan, CARDCMD_Save, fileState, data, 0, 0);
 }
 
 /**
@@ -755,7 +773,7 @@ void CardUtilSave(s32 chan, CARDStat* fileState, void* data)
  */
 void CardUtilWrite(s32 chan, s32 fileNo, void* data, u32 offset, u32 length)
 {
-	CardUtilCommand(chan, CARDCMD_Write, fileNo, data, offset, length);
+	CardUtilCommand(chan, CARDCMD_Write, reinterpret_cast<void*>(static_cast<intptr_t>(fileNo)), data, offset, length);
 }
 
 /**
@@ -842,12 +860,12 @@ static void* CardUtilMain(void*)
 		}
 		case CARDCMD_Erase:
 		{
-			res = DoErase(chan, (s32)file);
+				res = DoErase(chan, static_cast<s32>(reinterpret_cast<intptr_t>(file)));
 			break;
 		}
 		case CARDCMD_Open:
 		{
-			res = DoOpen(chan, (s32)file, data);
+				res = DoOpen(chan, static_cast<s32>(reinterpret_cast<intptr_t>(file)), data);
 			break;
 		}
 		case CARDCMD_Save:
@@ -857,7 +875,7 @@ static void* CardUtilMain(void*)
 		}
 		case CARDCMD_Write:
 		{
-			s32 f   = (s32)file;
+				s32 f   = static_cast<s32>(reinterpret_cast<intptr_t>(file));
 			u32 v   = length;
 			void* a = data;
 

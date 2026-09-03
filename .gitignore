@@ -20,6 +20,12 @@ orig/*/*
 
 # Build files
 build/
+build-*/
+/packaging/arch-linux/out/
+/packaging/linux/out/
+/packaging.zip
+/Pikmin-Arch-Installer/
+/save/
 .ninja_*
 build.ninja
 
@@ -33,6 +39,7 @@ compile_commands.json
 
 # Miscellaneous
 /*.txt
+!/CMakeLists.txt
 *.exe
 !clang-format.exe
 /decomp
@@ -50,3 +57,24 @@ mwcc_debugger.py
 build.py
 *.lnk
 tools/vc6
+
+# User-supplied game data. These files must never be committed or distributed.
+/assets/*
+!/assets/README.md
+/assets.partial*
+/Pikmin (USA) (Rev 1)/
+/Pikmin*.zip
+*.[iI][sS][oO]
+*.[gG][cC][mM]
+*.[rR][vV][zZ]
+*.[wW][iI][aA]
+*.[wW][bB][fF][sS]
+*.[cC][iI][sS][oO]
+*.[gG][cC][zZ]
+*.[tT][gG][cC]
+
+# Native-port user state and local recovery copies.
+/pikmin_settings.conf
+/backup_audio/
+*.bak
+/snapshots/

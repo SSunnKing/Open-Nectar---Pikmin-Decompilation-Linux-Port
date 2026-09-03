@@ -481,10 +481,9 @@ void ItemMgr::initialise()
 	mItemShapes[1]    = new ItemShapeObject(gameflow.loadShape("objects/fl_water/fl_water.mod", true), "fl_water", "anims.bin");
 	registerClass(OBJTYPE_FallWater, new MizuItem(OBJTYPE_FallWater, mizuProp, mItemShapes[1], fwAI), sizeof(MizuItem));
 
-	// seems like these got initialised, but then their definitions got commented out? they're still used
-	Shape* doorShape;
-	Shape* keyShape;
-#if defined(WIN32)
+	Shape* doorShape = nullptr;
+	Shape* keyShape  = nullptr;
+#if defined(WIN32) || defined(PIKI_PC_PORT)
 	doorShape = gameflow.loadShape("objects/door.mod", true);
 	keyShape  = gameflow.loadShape("objects/key.mod", true);
 #endif
@@ -746,7 +745,7 @@ void ItemCreature::refresh(Graphics& gfx)
 		mWorldMtx.makeSRT(mSRT.s, mSRT.r, mSRT.t);
 		gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, mtx);
 		mItemAnimator.updateContext();
-		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 
 		if (!isOffCamera) {
 			gfx.useMatrix(Matrix4f::ident, 0);
@@ -1120,7 +1119,7 @@ void BuildingItem::refresh(Graphics& gfx)
 		mWorldMtx.makeSRT(mSRT.s, mSRT.r, mSRT.t);
 		gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, mtx);
 		mItemAnimator.updateContext();
-		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 		if (!isOffCamera) {
 			gfx.useMatrix(Matrix4f::ident, 0);
 			mItemShapeObject->mShape->drawshape(gfx, *gfx.mCamera, &mAnimatedMaterials);

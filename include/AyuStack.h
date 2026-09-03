@@ -2,6 +2,13 @@
 #define _AYUSTACK_H
 
 #include "types.h"
+#include <cstdint>
+
+#if defined(PIKI_PC_PORT)
+using AyuStackAddress = uintptr_t;
+#else
+using AyuStackAddress = u32;
+#endif
 
 class MemHead {
 public:
@@ -18,7 +25,7 @@ class AyuCache {
 public:
 	AyuCache(u32);
 
-	void init(u32 bufferStart, u32 bufferEnd);
+	void init(AyuStackAddress bufferStart, AyuStackAddress bufferEnd);
 	void* mallocL(u32 sizeBytes);
 	void cacheFree(void* ptr);
 	bool isEmpty();
@@ -72,10 +79,10 @@ public:
 	s32 mAllocType;         // _00, allocation mode (e.g. AYU_STACK_GROW_DOWN/UP)
 	int mSize;              // _04, total size in bytes
 	int mTotalSize;         // _08, total bytes currently allocated
-	u32 mInitialStackTop;   // _0C, base pointer for upward growth
-	u32 mInitialStackLimit; // _10, base pointer for downward growth
-	u32 mStackTop;          // _14, current top when growing upward
-	u32 mStackLimit;        // _18, current limit when growing downward
+	AyuStackAddress mInitialStackTop;   // _0C, base pointer for upward growth
+	AyuStackAddress mInitialStackLimit; // _10, base pointer for downward growth
+	AyuStackAddress mStackTop;          // _14, current top when growing upward
+	AyuStackAddress mStackLimit;        // _18, current limit when growing downward
 	bool mProtectOverflow;  // _1C, whether guard word/checks are enabled
 	bool mIsActive;         // _1D, whether this stack is currently active
 	immut char* mName;      // _20

@@ -12,6 +12,9 @@
 #include "nlib/Math.h"
 #include "sysNew.h"
 #include <math.h>
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -61,12 +64,18 @@ void PVWPolygonColourInfo::animate(f32* data, Colour& col)
 		mCurrentFrame = std::fmodf(data[0], mTotalFrameCount);
 	} else {
 		// If no new data is provided, increment the current frame
+#if defined(PIKI_PC_PORT)
+		if (pc_render_is_authoritative()) {
+#endif
 		mCurrentFrame += gsys->getFrameTime() * (30.0f * mSpeed);
 
 		// Wrap around if we've reached the end of the animation
 		if (mCurrentFrame >= mTotalFrameCount - 1) {
 			mCurrentFrame = 0.0f;
 		}
+#if defined(PIKI_PC_PORT)
+		}
+#endif
 	}
 
 	// Animate colour and transparency separately
@@ -395,10 +404,16 @@ void PVWTextureData::animate(f32* framePtr, Matrix4f& mtx)
 		if (framePtr) {
 			mCurrentFrame = std::fmodf(*framePtr, (f32)mTotalFrameCount);
 		} else {
+#if defined(PIKI_PC_PORT)
+			if (pc_render_is_authoritative()) {
+#endif
 			mCurrentFrame += gsys->getFrameTime() * (30.0f * mAnimSpeed);
 			if (mCurrentFrame >= f32(mTotalFrameCount - 1)) {
 				mCurrentFrame = 0.0f;
 			}
+#if defined(PIKI_PC_PORT)
+			}
+#endif
 		}
 
 		mScaleInfo.extract(mCurrentFrame, vec1);
@@ -521,10 +536,16 @@ void PVWTevColReg::animate(f32* framePtr, ShortColour& color)
 	if (framePtr) {
 		mCurrentAnimFrame = std::fmodf(*framePtr, mAnimFrameCount);
 	} else {
+#if defined(PIKI_PC_PORT)
+		if (pc_render_is_authoritative()) {
+#endif
 		mCurrentAnimFrame += gsys->getFrameTime() * (30.0f * mAnimSpeed);
 		if (mCurrentAnimFrame >= f32(mAnimFrameCount - 1)) {
 			mCurrentAnimFrame = 0.0f;
 		}
+#if defined(PIKI_PC_PORT)
+		}
+#endif
 	}
 
 	mColorAnimData.extract(mCurrentAnimFrame, color);
@@ -808,6 +829,12 @@ Graphics::Graphics()
 	PRINT("dgxgraphics constructor\n");
 
 	mRenderMode = 0;
+	mIsLightingEnabled = false;
+	mIsDepthEnabled    = true;
+	mHasTexGen         = FALSE;
+	mBlendMode         = 0;
+	mCullMode          = 0;
+	mCullFlip          = 0;
 
 	for (int i = 0; i < 0x1000; i++) {
 		sintable[i] = NMathF::sin(TAU * (i / 4096.0f));
@@ -1062,7 +1089,7 @@ void TexImg::read(RandomAccessStream& stream)
 	_     = stream.readInt();
 
 	mDataSize    = stream.readInt();
-	mTextureData = new (0x20) u8[mDataSize];
+	mTextureData = new (PIKI_ALIGNED(0x20)) u8[mDataSize];
 	stream.read(mTextureData, mDataSize);
 }
 
@@ -1104,7 +1131,7 @@ void TexImg::readTexData(Texture* tex, RandomAccessStream& stream, u8* data)
 	mDataSize = TexImg::calcDataSize(mFormat, mWidth, mHeight);
 
 	if (!data) {
-		mTextureData = new (0x20) u8[mDataSize];
+		mTextureData = new (PIKI_ALIGNED(0x20)) u8[mDataSize];
 	} else {
 		mTextureData = data;
 	}

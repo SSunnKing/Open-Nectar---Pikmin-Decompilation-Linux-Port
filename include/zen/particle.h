@@ -574,7 +574,7 @@ protected:
 	u8* pmSet(immut char* name, unsigned int bufSize)
 	{
 		mName    = StdSystem::stringDup(name);
-		mDataBuf = new (0x20) u8[bufSize];
+		mDataBuf = new (PIKI_ALIGNED(0x20)) u8[bufSize];
 		return mDataBuf;
 	}
 

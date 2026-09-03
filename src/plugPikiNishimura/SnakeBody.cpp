@@ -9,6 +9,9 @@
 #include "RumbleMgr.h"
 #include "Snake.h"
 #include "SoundMgr.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -1141,6 +1144,12 @@ void SnakeBody::returnJoint(BossShapeObject* shapeObj, Graphics& gfx, immut Matr
  */
 void SnakeBody::refresh(BossShapeObject* shapeObj, Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	Matrix4f animMatrices[8];
 	makeAnimation(shapeObj, gfx);
 	makeBodySize();

@@ -138,6 +138,20 @@ void PelletConfig::read(RandomAccessStream& input)
 	mModelId.read(input);
 	mPelletId.read(input);
 	mUnusedId.read(input);
+#if defined(PIKI_PC_PORT)
+	// ID32::read preserves the byte layout expected by the original PowerPC
+	// build.  Native multi-character constants have the opposite numeric value
+	// on little-endian hosts, however, and all runtime pellet lookups use those
+	// constants (for example 'pr01').  Canonicalise the IDs at this serialized
+	// data boundary so number pellets, enemy drops, UFO parts and their shape IDs
+	// all use the same representation.
+	mModelId.mId = __builtin_bswap32(mModelId.mId);
+	mModelId.updateString();
+	mPelletId.mId = __builtin_bswap32(mPelletId.mId);
+	mPelletId.updateString();
+	mUnusedId.mId = __builtin_bswap32(mUnusedId.mId);
+	mUnusedId.updateString();
+#endif
 	mRepairAnimJointIndex = input.readInt();
 }
 
@@ -902,6 +916,25 @@ void Pellet::doLoad(RandomAccessStream& input)
 	mSpawnPosition.x      = input.readFloat();
 	mSpawnPosition.y      = input.readFloat();
 	mSpawnPosition.z      = input.readFloat();
+	auto isValidSavedPosition = [](const Vector3f& pos) {
+		return !isNan(pos.x) && !isNan(pos.y) && !isNan(pos.z)
+		    && fabsf(pos.x) < 1000000.0f && fabsf(pos.y) < 1000000.0f
+		    && fabsf(pos.z) < 1000000.0f;
+	};
+	// A malformed carry-over position must never reach RouteMgr: its nearest
+	// waypoint search assumes finite world coordinates and deliberately panics
+	// otherwise. The same cache record contains the part's original spawn
+	// position, which is the safest recovery and preserves the collected state.
+	if (!isValidSavedPosition(mSRT.t)) {
+		if (isValidSavedPosition(mSpawnPosition)) {
+			PRINT("invalid saved UFO-part position; restoring spawn position\n");
+			mSRT.t = mSpawnPosition;
+		} else {
+			PRINT("invalid saved and spawn UFO-part positions; restoring origin\n");
+			mSRT.t.set(0.0f, 0.0f, 0.0f);
+			mSpawnPosition = mSRT.t;
+		}
+	}
 	Vector3f displacement = mSpawnPosition - mSRT.t;
 	if (displacement.length() < 40.0f) {
 		PRINT("UFO PARTS DIDN'T MOVE!\n");
@@ -910,7 +943,7 @@ void Pellet::doLoad(RandomAccessStream& input)
 #if defined(VERSION_GPIE01_00) || defined(VERSION_PIKIDEMO) || defined(VERSION_GPIJ01)
 	// This isn't in the USA versions' DLL, meaning that DLL is based on rev 0 instead of rev 1 (it was not recompiled between revisions).
 #else
-	else if (isNan(mSRT.t.x) || isNan(mSRT.t.y) || isNan(mSRT.t.z)) {
+	else if (!isValidSavedPosition(mSRT.t)) {
 		mSRT.t = mSpawnPosition;
 	}
 #endif
@@ -1351,7 +1384,7 @@ void Pellet::doRender(Graphics& gfx, Matrix4f& mtx)
 		mAnimatedMaterials.animate(nullptr);
 	}
 
-	mShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+	mShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 	if (mCollInfo) {
 		mCollInfo->updateInfo(gfx, false);
 	}

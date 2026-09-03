@@ -1073,7 +1073,8 @@ void TaiNapkidWanderingRouteAction::makeTargetPosition(Teki& teki)
  */
 bool TaiNapkidTargetPikiAction::act(Teki& teki)
 {
-	Creature* nearestPiki = pikiMgr->findClosest(teki.getPosition(), stack_new(TekiNapkidTargetPikiCondition)(&teki));
+	TekiNapkidTargetPikiCondition targetCondition(&teki);
+	Creature* nearestPiki = pikiMgr->findClosest(teki.getPosition(), &targetCondition);
 	if (nearestPiki == nullptr) {
 		return false;
 	} else {
@@ -1313,10 +1314,12 @@ bool TaiNapkidCatchingAction::act(Teki& teki)
 	NVector3f offset;
 	offset.add2(teki.getPosition(), direction);
 
-	TekiAndCondition notStickerAndIsRecognizedCond(stack_new(TekiRecognitionCondition)(&teki),
-	                                               stack_new(TekiNotCondition)(stack_new(TekiStickerCondition)(&teki)));
-	TekiAndCondition posSphereDistAndOtherConds(
-	    &notStickerAndIsRecognizedCond, stack_new(TekiPositionSphereDistanceCondition)(offset, teki.getParameterF(TPF_AttackHitRange)));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiStickerCondition stickerCondition(&teki);
+	TekiNotCondition notStickerCondition(&stickerCondition);
+	TekiAndCondition notStickerAndIsRecognizedCond(&recognitionCondition, &notStickerCondition);
+	TekiPositionSphereDistanceCondition distanceCondition(offset, teki.getParameterF(TPF_AttackHitRange));
+	TekiAndCondition posSphereDistAndOtherConds(&notStickerAndIsRecognizedCond, &distanceCondition);
 
 	Iterator iter(pikiMgr);
 	CI_LOOP(iter)

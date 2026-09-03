@@ -23,6 +23,8 @@
 #include "Section.h"
 #include "SoundMgr.h"
 #include "gameflow.h"
+
+#include "settings/pc_settings.h"
 #include "jaudio/piki_scene.h"
 #include "jaudio/pikidemo.h"
 #include "sysNew.h"
@@ -39,6 +41,9 @@
 #include "zen/ogResult.h"
 #include "zen/ogTotalScore.h"
 #include "zen/ogTutorial.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 //////////////////////////////////////////////////////
 //////////////// FORWARD DECLARATIONS ////////////////
@@ -168,6 +173,7 @@ struct GameMovieInterface : public GameInterface {
 	{
 		mMessageLimit       = GAME_MESSAGE_LIMIT;
 		mSimpleMessageCount = 0;
+		mComplexMesgCount   = 0;
 		mSetupSection       = section;
 	}
 
@@ -208,6 +214,9 @@ struct GameMovieInterface : public GameInterface {
 	 */
 	virtual void message(int cmd, int data) // _08
 	{
+		if (mSimpleMessageCount < 0) {
+			mSimpleMessageCount = 0;
+		}
 		// don't add to queue if queue is full
 		if (mSimpleMessageCount >= mMessageLimit) {
 			return;
@@ -234,6 +243,9 @@ struct GameMovieInterface : public GameInterface {
 	virtual void movie(int movieIdx, int unused, Creature* target, immut Vector3f* pos, immut Vector3f* rot, u32 actorVisMask,
 	                   bool isPlaying) // _0C
 	{
+		if (mComplexMesgCount < 0) {
+			mComplexMesgCount = 0;
+		}
 		// don't add to the queue if we're full
 		if (mComplexMesgCount >= mMessageLimit) {
 			return;
@@ -765,15 +777,19 @@ void BaseGameSection::draw(Graphics& gfx)
 {
 	Matrix4f orthoMtx;
 	gfx.setOrthogonal(orthoMtx.mMtx, AREA_FULL_SCREEN(gfx));
+	bool advanceState = true;
+#if defined(PIKI_PC_PORT)
+	advanceState = pc_render_is_authoritative();
+#endif
 
 	// Update fade transition - fade of 1 = black screen, fade of 0 = no fade
-	if (mCurrentFade < mTargetFade) {
+	if (advanceState && mCurrentFade < mTargetFade) {
 		// fade out
 		mCurrentFade += mFadeSpeed * gsys->getFrameTime();
 		if (mCurrentFade > mTargetFade) {
 			mCurrentFade = mTargetFade;
 		}
-	} else if (mCurrentFade > mTargetFade) {
+	} else if (advanceState && mCurrentFade > mTargetFade) {
 		// fade in
 		mCurrentFade -= mFadeSpeed * gsys->getFrameTime();
 		if (mCurrentFade < mTargetFade) {
@@ -797,18 +813,24 @@ void BaseGameSection::draw(Graphics& gfx)
 
 	// draw level banner, if active
 	if (gameflow.mLevelBannerTex && gameflow.mLevelBannerFadeValue > 0.0f) {
-		// fade out level banner
-		gameflow.mLevelBannerFadeValue -= gsys->getFrameTime();
-		if (gameflow.mLevelBannerFadeValue < 0.0f) {
-			gameflow.mLevelBannerTex       = nullptr;
-			gameflow.mLevelBannerFadeValue = 0.0f;
+		if (advanceState) {
+			// fade out level banner
+			gameflow.mLevelBannerFadeValue -= gsys->getFrameTime();
+			if (gameflow.mLevelBannerFadeValue < 0.0f) {
+				gameflow.mLevelBannerTex       = nullptr;
+				gameflow.mLevelBannerFadeValue = 0.0f;
+			} else {
+				gameflow.drawLoadLogo(gfx, false, gameflow.mLevelBannerTex, gameflow.mLevelBannerFadeValue);
+			}
 		} else {
 			gameflow.drawLoadLogo(gfx, false, gameflow.mLevelBannerTex, gameflow.mLevelBannerFadeValue);
 		}
 	}
 
 	// perform any post-draw mode state updates
-	mCurrentModeState->postUpdate();
+	if (advanceState) {
+		mCurrentModeState->postUpdate();
+	}
 }
 
 /**
@@ -1296,6 +1318,10 @@ ModeState* DayOverModeState::update(u32& result)
 	if (resultWindow) {
 		zen::ogScrResultMgr::returnStatusFlag stat = resultWindow->update(mParentSection->mController);
 		if (stat >= zen::ogScrResultMgr::RESULT_ExitToMapSelect) {
+			// The result manager lives in the Teki heap, which is reset below.
+			// Clear the global pointer first so the draw pass cannot dereference
+			// the released screen while a memory-card dialog is still active.
+			resultWindow = nullptr;
 			// 2-second loading screen
 			gsys->startLoading(nullptr, true, 120);
 			PRINT("EXITDAYEND!!!!\n");
@@ -2515,18 +2541,34 @@ public:
  */
 void GameMovieInterface::parseMessages()
 {
-	// process all queued commands
-	for (int simpleMesgIdx = 0; simpleMesgIdx < mSimpleMessageCount; simpleMesgIdx++) {
-		parse(mSimpMesg[simpleMesgIdx]);
+	// Snapshot and clear each queue before dispatch. Handlers are allowed to
+	// enqueue more work; that work belongs to a later pass and must not extend
+	// the loop currently walking the fixed-size arrays.
+	int simpleMessageCount = mSimpleMessageCount;
+	if (simpleMessageCount < 0 || simpleMessageCount > mMessageLimit) {
+		simpleMessageCount = 0;
+	}
+	SimpleMessage simpleMessages[GAME_MESSAGE_LIMIT];
+	for (int i = 0; i < simpleMessageCount; i++) {
+		simpleMessages[i] = mSimpMesg[i];
 	}
 	mSimpleMessageCount = 0;
-
-	// process all queued movies
-	for (int complexMesgIdx = 0; complexMesgIdx < mComplexMesgCount; complexMesgIdx++) {
-		parse(mCompMesg[complexMesgIdx]);
+	for (int simpleMesgIdx = 0; simpleMesgIdx < simpleMessageCount; simpleMesgIdx++) {
+		parse(simpleMessages[simpleMesgIdx]);
 	}
 
+	int complexMessageCount = mComplexMesgCount;
+	if (complexMessageCount < 0 || complexMessageCount > mMessageLimit) {
+		complexMessageCount = 0;
+	}
+	ComplexMessage complexMessages[GAME_MESSAGE_LIMIT];
+	for (int i = 0; i < complexMessageCount; i++) {
+		complexMessages[i] = mCompMesg[i];
+	}
 	mComplexMesgCount = 0;
+	for (int complexMesgIdx = 0; complexMesgIdx < complexMessageCount; complexMesgIdx++) {
+		parse(complexMessages[complexMesgIdx]);
+	}
 }
 
 /**
@@ -2808,8 +2850,12 @@ NewPikiGameSection::NewPikiGameSection()
 	flowCont.mIsDayEndSkipped   = FALSE;
 #endif
 
-	// run gameplay at 30 fps
-	gsys->setFrameClamp(2);
+	// Gameplay runs at 30 fps on the original hardware. The PC port can drive
+	// it at 60 once the render side fits in 16.6 ms (PERF-NATIVE-002); the
+	// setting is off by default because the game's fixed-step logic was tuned
+	// at 30 and doubling the rate is a behaviour change, not just a smoother
+	// picture. Toggle it in the F1 menu; it persists in pikmin_settings.conf.
+	gsys->setFrameClamp(pc_settings_get_fps_mode() == 1 ? 1 : 2);
 
 #if defined(WIN32) || defined(DEVELOP)
 	_nPrint = FALSE;

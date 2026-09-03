@@ -5,6 +5,9 @@
 #include "gameflow.h"
 #include "sysNew.h"
 #include "teki.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -62,6 +65,12 @@ PelletShapeObject* PelletAnimInfo::createShapeObject()
 void PelletAnimInfo::read(RandomAccessStream& stream)
 {
 	mID.read(stream);
+#if defined(PIKI_PC_PORT)
+	// Keep animation/shape IDs in the same native representation as the pellet
+	// configuration IDs and the compile-time four-character constants.
+	mID.mId = __builtin_bswap32(mID.mId);
+	mID.updateString();
+#endif
 	mCreationType  = stream.readInt();
 	mTekiType      = stream.readInt();
 	mOverrideJoint = stream.readInt();
@@ -169,6 +178,9 @@ void PelletAnimator::finishMotion(PaniAnimKeyListener* listener)
  */
 void PelletAnimator::updateAnimation(f32 lowerAnimSpeed, f32 upperAnimSpeed)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) return;
+#endif
 	mLowerAnimator.animate(lowerAnimSpeed);
 	mUpperAnimator.animate(upperAnimSpeed);
 }

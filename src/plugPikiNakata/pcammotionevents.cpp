@@ -140,7 +140,9 @@ PcamSideVibrationEvent::PcamSideVibrationEvent(PcamCamera* camera)
 {
 	mCamera = camera;
 
-	mPolyFunction.construct(new f32[2], 2);
+	// Degree two requires three coefficients; NPolynomialFunction::construct
+	// clears all degree + 1 entries.
+	mPolyFunction.construct(new f32[3], 2);
 	mTimeCondition.construct(0.0f);
 	mEventPeriod        = 0.6f;
 	mVibrationMagnitude = 0.2f;

@@ -25,10 +25,37 @@ static inline void bBoard_readU8(u8* outVal, u8*& data, u32 size)
 
 static inline void bBoard_readFloatArray(f32** outArray, u8*& data, u32 size)
 {
-	*outArray = (f32*)data;
-	for (u32 i = 0; i < size; i++) {
-		data += 4;
+	struct DecodedArray {
+		const u8* source;
+		u32 count;
+		f32* values;
+	};
+	static DecodedArray decodedArrays[256];
+	static u32 decodedArrayCount;
+
+	for (u32 i = 0; i < decodedArrayCount; i++) {
+		if (decodedArrays[i].source == data && decodedArrays[i].count == size) {
+			*outArray = decodedArrays[i].values;
+			data += size * 4;
+			return;
+		}
 	}
+
+	f32* decoded = new f32[size];
+	for (u32 i = 0; i < size; i++) {
+		const u8* value = data + i * 4;
+		u32 bits = (static_cast<u32>(value[0]) << 24) | (static_cast<u32>(value[1]) << 16)
+		         | (static_cast<u32>(value[2]) << 8) | value[3];
+		decoded[i] = u32ToFloat(bits);
+	}
+	if (decodedArrayCount < 256) {
+		decodedArrays[decodedArrayCount].source = data;
+		decodedArrays[decodedArrayCount].count  = size;
+		decodedArrays[decodedArrayCount].values = decoded;
+		decodedArrayCount++;
+	}
+	*outArray = decoded;
+	data += size * 4;
 }
 
 static inline void bBoard_readColourArray(Colour** outVal, u8*& data, u32 size)

@@ -216,7 +216,9 @@ bool TaiTargetNearestCollisionAction::actByEvent(immut TekiEvent& event)
 		return false;
 	}
 	Creature* target = event.mOther;
-	TekiAndCondition cond(stack_new(TekiRecognitionCondition)(event.mTeki), stack_new(TekiNaviPikiCondition)());
+	TekiRecognitionCondition recognitionCondition(event.mTeki);
+	TekiNaviPikiCondition naviPikiCondition;
+	TekiAndCondition cond(&recognitionCondition, &naviPikiCondition);
 	if (!cond.satisfy(target)) {
 		return false;
 	}

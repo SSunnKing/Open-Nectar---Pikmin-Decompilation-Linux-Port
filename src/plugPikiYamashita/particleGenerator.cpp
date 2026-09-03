@@ -2,6 +2,9 @@
 #include "Graphics.h"
 #include "Matrix3f.h"
 #include "zen/particle.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -24,21 +27,32 @@ static u8 lpsCoord[8] ATTRIBUTE_ALIGN(32) = {
 	0, 0, 1, 0, 1, 1, 0, 1,
 };
 
+static inline u16 readDDF_BE16(const u8* data)
+{
+	return (static_cast<u16>(data[0]) << 8) | data[1];
+}
+
+static inline u32 readDDF_BE32(const u8* data)
+{
+	return (static_cast<u32>(data[0]) << 24) | (static_cast<u32>(data[1]) << 16)
+	     | (static_cast<u32>(data[2]) << 8) | data[3];
+}
+
 static inline void readDDF_U32(u32* outVal, u8*& data, u32 size)
 {
-	*outVal = *((u32*)data);
+	*outVal = readDDF_BE32(data);
 	data += size;
 }
 
 static inline void readDDF_Vector(Vector3f* outVec, u8*& data)
 {
-	outVec->set(u32ToFloat(((u32*)data)[0]), u32ToFloat(((u32*)data)[1]), u32ToFloat(((u32*)data)[2]));
+	outVec->set(u32ToFloat(readDDF_BE32(data)), u32ToFloat(readDDF_BE32(data + 4)), u32ToFloat(readDDF_BE32(data + 8)));
 	data += sizeof(Vector3f);
 }
 
 static inline void readDDF_Float(f32* outVal, u8*& data, u32 size)
 {
-	*outVal = u32ToFloat(((u32*)data)[0]);
+	*outVal = u32ToFloat(readDDF_BE32(data));
 	data += size;
 }
 
@@ -50,15 +64,41 @@ static inline void readDDF_U8(u8* outVal, u8*& data, u32 size)
 
 static inline void readDDF_FloatArray(f32** outArray, u8*& data, u32 size)
 {
-	*outArray = (f32*)(data);
-	for (u32 i = 0; i < size; i++) {
-		data += 4;
+	// PCR blobs stay shared by every generator. Cache a host-endian copy for
+	// each source range instead of byte-swapping the shared data repeatedly.
+	struct DecodedArray {
+		const u8* source;
+		u32 count;
+		f32* values;
+	};
+	static DecodedArray decodedArrays[1024];
+	static u32 decodedArrayCount;
+
+	for (u32 i = 0; i < decodedArrayCount; i++) {
+		if (decodedArrays[i].source == data && decodedArrays[i].count == size) {
+			*outArray = decodedArrays[i].values;
+			data += size * 4;
+			return;
+		}
 	}
+
+	f32* decoded = new f32[size];
+	for (u32 i = 0; i < size; i++) {
+		decoded[i] = u32ToFloat(readDDF_BE32(data + i * 4));
+	}
+	if (decodedArrayCount < 1024) {
+		decodedArrays[decodedArrayCount].source = data;
+		decodedArrays[decodedArrayCount].count  = size;
+		decodedArrays[decodedArrayCount].values = decoded;
+		decodedArrayCount++;
+	}
+	*outArray = decoded;
+	data += size * 4;
 }
 
 static inline void readDDF_Short(s16* outVal, u8*& data, u32 size)
 {
-	*outVal = *(s16*)data;
+	*outVal = static_cast<s16>(readDDF_BE16(data));
 	data += size;
 }
 
@@ -93,8 +133,8 @@ void zen::particleGenerator::init(u8* data, Texture* tex1, Texture* tex2, immut 
 			mDrawCallBack = &particleGenerator::drawPtclBillboard;
 		} else {
 			STACK_PAD_VAR(1);
-			mLengthScale  = u32ToFloat(((u32*)data)[2]);
-			mPivotOffsetY = u32ToFloat(((u32*)data)[3]);
+			mLengthScale  = u32ToFloat(readDDF_BE32(data + 8));
+			mPivotOffsetY = u32ToFloat(readDDF_BE32(data + 12));
 			mAnimData.set(&data[16]);
 
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
@@ -154,7 +194,7 @@ void zen::particleGenerator::init(u8* data, Texture* tex1, Texture* tex2, immut 
 			}
 		}
 
-		pmSetDDF(&data[((u16*)data)[2]]);
+		pmSetDDF(&data[readDDF_BE16(data + 4)]);
 		mMdlMgr  = mdlMgr;
 		mEmitPos = pos;
 		setCallBack(cb1, cb2);
@@ -166,6 +206,12 @@ void zen::particleGenerator::init(u8* data, Texture* tex1, Texture* tex2, immut 
  */
 bool zen::particleGenerator::update(f32 timeStep)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return false;
+	}
+#endif
+
 	bool res = false;
 	if (!(mControlFlags & PTCLCTRL_Stop)) {
 		if (!(mControlFlags & PTCLCTRL_Finished)) {
@@ -1083,15 +1129,35 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 				mtx2[1][2] = vec3.y * a;
 				mtx2[2][2] = vec3.z * a;
 
-				ptcl->mOrientedNormal = vec3;
+				// The renderer keeps this as a continuity hint. An extra
+				// presentation draw must not alter simulation-owned state.
+#if defined(PIKI_PC_PORT)
+				if (pc_render_is_authoritative()) {
+#endif
+					ptcl->mOrientedNormal = vec3;
+#if defined(PIKI_PC_PORT)
+				}
+#endif
 			} else {
-				ptcl->mAgeTimer = ptcl->mLifeTime;
-				ptcl->mAge      = ptcl->mLifeTime;
+#if defined(PIKI_PC_PORT)
+				if (pc_render_is_authoritative()) {
+#endif
+					ptcl->mAgeTimer = ptcl->mLifeTime;
+					ptcl->mAge      = ptcl->mLifeTime;
+#if defined(PIKI_PC_PORT)
+				}
+#endif
 				continue;
 			}
 		} else {
-			ptcl->mAgeTimer = ptcl->mLifeTime;
-			ptcl->mAge      = ptcl->mLifeTime;
+#if defined(PIKI_PC_PORT)
+			if (pc_render_is_authoritative()) {
+#endif
+				ptcl->mAgeTimer = ptcl->mLifeTime;
+				ptcl->mAge      = ptcl->mLifeTime;
+#if defined(PIKI_PC_PORT)
+			}
+#endif
 			continue;
 		}
 

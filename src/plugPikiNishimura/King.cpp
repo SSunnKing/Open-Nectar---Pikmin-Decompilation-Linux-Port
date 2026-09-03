@@ -130,7 +130,7 @@ void King::draw(Graphics& gfx)
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, viewMatrix);
 
 	mAnimator.updateContext();
-	mShapeObject->mShape->updateAnim(gfx, viewMatrix, nullptr);
+	mShapeObject->mShape->updateAnim(gfx, viewMatrix, nullptr, this);
 	mKingBody->refresh(mShapeObject, gfx);
 }
 

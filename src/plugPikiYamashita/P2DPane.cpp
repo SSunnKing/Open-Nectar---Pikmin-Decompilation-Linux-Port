@@ -180,7 +180,16 @@ P2DPane::P2DPane(P2DPane* parent, RandomAccessStream* input, u16 paneType)
 	tag[2] = input->readByte();
 	tag[3] = input->readByte();
 
+	// Pane tags are four-character big-endian values (for example 'pall').
+	// Select by actual host byte order rather than by a port build macro: native
+	// toolchains may compile this translation unit with a different definition
+	// set, but the resource format never changes.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	mTagName = (static_cast<u32>(tag[0]) << 24) | (static_cast<u32>(tag[1]) << 16)
+	         | (static_cast<u32>(tag[2]) << 8) | static_cast<u32>(tag[3]);
+#else
 	mTagName = *(u32*)tag;
+#endif
 
 	mBounds.mMinX = (int)input->readShort();
 	mBounds.mMinY = (int)input->readShort();
@@ -294,7 +303,8 @@ P2DPane* P2DPane::search(u32 tag, bool doPanicOnNull)
 	}
 
 	if (doPanicOnNull) {
-		const char* s = reinterpret_cast<char*>(&tag);
+		const char s[4] = { static_cast<char>(tag >> 24), static_cast<char>(tag >> 16),
+		                    static_cast<char>(tag >> 8), static_cast<char>(tag) };
 		PRINT("tag <%c%c%c%c> is not found.\n", s[0], s[1], s[2], s[3]);
 		ERROR("tag <%c%c%c%c> is not found. 逝ってよし\n", s[0], s[1], s[2], s[3]); // "Go away"
 	}

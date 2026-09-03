@@ -10,6 +10,7 @@
 #include "gameflow.h"
 #include "sysNew.h"
 #include "teki.h"
+#include <cstdio>
 
 /**
  * @todo: Documentation
@@ -40,12 +41,19 @@ GeneratorList* generatorList;
  */
 static void writeID(RandomAccessStream& output, u32 id)
 {
+#if defined(PIKI_PC_PORT)
+	// Generator fourcc values are C/C++ multi-character literals internally,
+	// while the files contain the PowerPC memory byte order (e.g. "meti" for
+	// 'item').  Convert only at this serialization boundary.
+	output.writeInt(__builtin_bswap32(id));
+#else
 	u8* outID = reinterpret_cast<u8*>(&id);
 
 	output.writeByte(outID[3]);
 	output.writeByte(outID[2]);
 	output.writeByte(outID[1]);
 	output.writeByte(outID[0]);
+#endif
 }
 
 /**
@@ -54,6 +62,9 @@ static void writeID(RandomAccessStream& output, u32 id)
  */
 static u32 readID(RandomAccessStream& input)
 {
+#if defined(PIKI_PC_PORT)
+	return __builtin_bswap32(static_cast<u32>(input.readInt()));
+#else
 	u32 outID;
 	u8* id = reinterpret_cast<u8*>(&outID);
 	id[3]  = input.readByte();
@@ -61,6 +72,7 @@ static u32 readID(RandomAccessStream& input)
 	id[1]  = input.readByte();
 	id[0]  = input.readByte();
 	return outID;
+#endif
 }
 
 /**
@@ -718,8 +730,16 @@ void Generator::read(RandomAccessStream& input)
 	STACK_PAD_VAR(4);
 
 	mGeneratorName.read(input);
+#if defined(PIKI_PC_PORT)
+	mGeneratorName.mId = __builtin_bswap32(mGeneratorName.mId);
+	mGeneratorName.updateString();
+#endif
 	if (!ramMode) {
 		mGeneratorVersion.read(input);
+#if defined(PIKI_PC_PORT)
+		mGeneratorVersion.mId = __builtin_bswap32(mGeneratorVersion.mId);
+		mGeneratorVersion.updateString();
+#endif
 		_70 = readID(input);
 	}
 
@@ -793,7 +813,6 @@ void Generator::read(RandomAccessStream& input)
 		PRINT("unknown genType id : %x\n", typeID);
 		printID(typeID);
 	}
-
 	STACK_PAD_TERNARY(this, 5);
 	STACK_PAD_INLINE(3);
 }
@@ -805,10 +824,18 @@ void Generator::write(RandomAccessStream& output)
 {
 	PRINT("** generator write start : %x\n", this);
 
+#if defined(PIKI_PC_PORT)
+	output.writeInt(__builtin_bswap32(mGeneratorName.mId));
+#else
 	mGeneratorName.write(output);
+#endif
 
 	if (!ramMode) {
+#if defined(PIKI_PC_PORT)
+		output.writeInt(__builtin_bswap32(mGeneratorVersion.mId));
+#else
 		mGeneratorVersion.write(output);
+#endif
 		writeID(output, _70);
 	}
 
@@ -886,9 +913,19 @@ GeneratorMgr::GeneratorMgr()
  */
 void GeneratorMgr::init()
 {
+	int recognised = 0;
+	int spawned    = 0;
 	for (Generator* gen = mGenListHead; gen; gen = gen->mNextGenerator) {
+		if (gen->mGenObject && gen->mGenArea && gen->mGenType) {
+			recognised++;
+		}
 		gen->init();
+		spawned += gen->mAliveCount;
 	}
+#if defined(PIKI_PC_PORT)
+	fprintf(stderr, "[PC Generator] %s: initialised %d recognised generators, spawned %d creatures\n",
+	        mName ? mName : "unnamed", recognised, spawned);
+#endif
 }
 
 /**
@@ -942,7 +979,13 @@ void GeneratorMgr::read(RandomAccessStream& input, bool p2)
 	}
 
 	mGeneratorVersionId.read(input);
-	if (!(mGeneratorVersionId == 'v0.0')) {
+#if defined(PIKI_PC_PORT)
+	mGeneratorVersionId.mId = __builtin_bswap32(mGeneratorVersionId.mId);
+	mGeneratorVersionId.updateString();
+#endif
+	bool isVersion00 = mGeneratorVersionId == 'v0.0';
+	bool isVersion01 = mGeneratorVersionId == 'v0.1';
+	if (!isVersion00) {
 		PRINT("OLD VERSION !!!! %x\n", mGeneratorVersionId.mId);
 	}
 
@@ -950,7 +993,7 @@ void GeneratorMgr::read(RandomAccessStream& input, bool p2)
 	mNaviPos.y = input.readFloat();
 	mNaviPos.z = input.readFloat();
 
-	if (mGeneratorVersionId == 'v0.1') {
+	if (isVersion01) {
 		mNaviDirection = input.readFloat();
 	}
 
@@ -968,6 +1011,15 @@ void GeneratorMgr::read(RandomAccessStream& input, bool p2)
 
 	mGenCount    = input.readInt();
 	mGenListHead = nullptr;
+#if defined(PIKI_PC_PORT)
+	// A corrupt or misaligned count previously made the loader read beyond EOF
+	// forever, leaving a black screen after the opening movie.
+	if (mGenCount < 0 || mGenCount > 65536 || mGenCount > input.getPending()) {
+		PRINT("Invalid generator count %d (only %d bytes remain)\n", mGenCount, input.getPending());
+		mGenCount = 0;
+		return;
+	}
+#endif
 
 	for (int i = 0; i < mGenCount; i++) {
 		if (!mGenListHead) {
@@ -989,6 +1041,17 @@ void GeneratorMgr::read(RandomAccessStream& input, bool p2)
 			generatorList->mGenListHead->add(newGen);
 		}
 	}
+
+#if defined(PIKI_PC_PORT)
+	int recognised = 0;
+	for (Generator* gen = mGenListHead; gen; gen = gen->mNextGenerator) {
+		if (gen->mGenObject && gen->mGenArea && gen->mGenType) {
+			recognised++;
+		}
+	}
+	fprintf(stderr, "[PC Generator] %s: read %d generators, %d fully recognised\n",
+	        mName ? mName : "unnamed", mGenCount, recognised);
+#endif
 }
 
 /**

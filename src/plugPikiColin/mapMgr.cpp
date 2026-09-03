@@ -48,6 +48,18 @@ DEFINE_PRINT("mapMgr")
 /// Global manager for the current map, handling model, collisions, rendering, etc.
 MapMgr* mapMgr;
 
+static int getGroundQueryTriCount(immut CollGroup* group)
+{
+	int count = group->mTriCount;
+	if (AIPerf::showColls && group->mFarCulledTriCount >= 0 && group->mFarCulledTriCount <= group->mTriCount) {
+		count -= group->mFarCulledTriCount;
+	}
+
+	// An entirely culled group is suspicious here; preserve the original
+	// fallback and query all of its triangles.
+	return count == 0 ? group->mTriCount : count;
+}
+
 #pragma endregion
 //////////////////////////////////////////////////////
 ///////////////// DYNAMIC COLLISION //////////////////
@@ -410,7 +422,7 @@ void DynMapObject::refresh(Graphics& gfx)
 	// update animation
 	gsys->mTimer->start("animation", true);
 	mAnimator.updateContext();
-	mShapeObject->mModel->updateAnim(gfx, viewMtx, nullptr);
+	mShapeObject->mModel->updateAnim(gfx, viewMtx, nullptr, this);
 	gsys->mTimer->stop("animation");
 
 	// update sub-parts
@@ -1423,7 +1435,7 @@ void MapMgr::refresh(Graphics& gfx)
 	gfx.setLighting(true, nullptr);
 	// don't allow translucent things
 	gfx.mMatRenderMask = (MATFLAG_Opaque | MATFLAG_AlphaTest);
-	mMapModel->updateAnim(gfx, viewMtx, nullptr);
+	mMapModel->updateAnim(gfx, viewMtx, nullptr, this);
 	gfx.useMatrix(Matrix4f::ident, 0);
 
 	// draw only visible joints of the model to optimise performance
@@ -1602,7 +1614,7 @@ void MapMgr::drawXLU(Graphics& gfx)
 			gfx.setLighting(true, nullptr);
 			// only allow translucent things this pass
 			gfx.mMatRenderMask = MATFLAG_AlphaBlend;
-			mMapModel->updateAnim(gfx, viewMtx, nullptr);
+			mMapModel->updateAnim(gfx, viewMtx, nullptr, this);
 			gfx.useMatrix(Matrix4f::ident, 0);
 
 			mMapModel->drawshape(gfx, *gfx.mCamera, &mAnimatedMaterials);
@@ -1649,8 +1661,9 @@ void MapMgr::postrefresh(Graphics& gfx)
 		gsys->mTimer->stop("eff draw");
 	}
 
-#if PIKI_USE_DGX
+#if PIKI_USE_DGX && !PIKI_PC_PORT
 	// make and draw infamous blur effect - on by default
+	// Disabled on PC: requires GXCopyTex framebuffer capture which is stubbed.
 	if (gsys->mToggleBlur) {
 		// set up screen environment for drawing
 		Matrix4f orthoMtx;
@@ -1918,11 +1931,7 @@ f32 MapMgr::getMinY(f32 x, f32 z, bool includePlatColl)
 	// lowest possible value so it will always snap up to max actual collision
 	f32 maxY = -32768.0f;
 	for (CollGroup* colls = getCollGroupList(x, z, includePlatColl); colls; colls = colls->mNextCollGroup) {
-		int count = (AIPerf::showColls) ? colls->mTriCount - colls->mFarCulledTriCount : colls->mTriCount;
-		// if everything's culled, just include everything
-		if (count == 0) {
-			count = colls->mTriCount;
-		}
+		int count = getGroundQueryTriCount(colls);
 
 		// check for any triangles that aren't facing "down"
 		for (int i = 0; i < count; i++) {
@@ -1961,11 +1970,7 @@ f32 MapMgr::getMaxY(f32 x, f32 z, bool includePlatColl)
 	// highest possible value so it will always snap up to min actual collision
 	f32 minY = 32768.0f;
 	for (CollGroup* colls = getCollGroupList(x, z, includePlatColl); colls; colls = colls->mNextCollGroup) {
-		int count = (AIPerf::showColls) ? colls->mTriCount - colls->mFarCulledTriCount : colls->mTriCount;
-		// if everything's culled, just include everything
-		if (count == 0) {
-			count = colls->mTriCount;
-		}
+		int count = getGroundQueryTriCount(colls);
 
 		// check for any triangles that aren't facing "down"
 		for (int i = 0; i < count; i++) {
@@ -2002,11 +2007,7 @@ CollTriInfo* MapMgr::getCurrTri(f32 x, f32 z, bool includePlatColl)
 	// project point into each triangle, and return triangle where point has highest y value.
 	f32 maxY = -32768.0f;
 	for (CollGroup* colls = getCollGroupList(x, z, includePlatColl); colls; colls = colls->mNextCollGroup) {
-		int count = (AIPerf::showColls) ? colls->mTriCount - colls->mFarCulledTriCount : colls->mTriCount;
-		// if everything's culled, just include everything
-		if (count == 0) {
-			count = colls->mTriCount;
-		}
+		int count = getGroundQueryTriCount(colls);
 
 		// triangle orientation does *not* matter for this check, unlike getMinY/getMaxY
 		for (int i = 0; i < count; i++) {
@@ -2274,6 +2275,7 @@ void MapMgr::recTraceMove(CollGroup* collGroupList, MoveTrace& trace, f32 timeSt
  */
 void MapMgr::traceMove(Creature* creature, MoveTrace& trace, f32 timeStep)
 {
+	static bool reportedNaviCollisionState = false;
 	// account for sphere tracing
 	trace.mPosition.add(Vector3f(0.0f, trace.mRadius, 0.0f));
 
@@ -2334,6 +2336,20 @@ void MapMgr::traceMove(Creature* creature, MoveTrace& trace, f32 timeStep)
 
 		// also collect any static map collision as well
 		CollGroup* mapColls = mMapModel->getCollTris(trace.mPosition);
+		if (!reportedNaviCollisionState && creature && creature->mObjType == OBJTYPE_Navi) {
+			int gridX = (trace.mPosition.x - mMapModel->mCourseExtents.mMin.x) / mMapModel->mGridSize;
+			int gridZ = (trace.mPosition.z - mMapModel->mCourseExtents.mMin.z) / mMapModel->mGridSize;
+			PRINT("[PC Collision] Navi pos=(%.3f, %.3f, %.3f), radius=%.3f, grid=(%d,%d)/(%d,%d), map tris=%d\n",
+			      trace.mPosition.x, trace.mPosition.y, trace.mPosition.z, trace.mRadius, gridX, gridZ, mMapModel->mGridSizeX,
+			      mMapModel->mGridSizeY, mapColls ? mapColls->mTriCount : -1);
+			if (mapColls && mapColls->mTriCount > 0) {
+				CollTriInfo* tri = mapColls->mTriangleList[0];
+				PRINT("[PC Collision] First map plane normal=(%.3f, %.3f, %.3f), offset=%.3f, distance=%.3f\n",
+				      tri->mTriangle.mNormal.x, tri->mTriangle.mNormal.y, tri->mTriangle.mNormal.z, tri->mTriangle.mOffset,
+				      tri->mTriangle.dist(trace.mPosition));
+			}
+			reportedNaviCollisionState = true;
+		}
 		if (mapColls && mapColls->mTriCount) {
 			mapColls->mModel         = mMapModel;
 			mapColls->mVertexList    = mMapModel->mVertexList;

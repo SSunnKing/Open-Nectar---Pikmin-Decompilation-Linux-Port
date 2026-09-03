@@ -1,0 +1,118 @@
+#ifndef PC_WINDOW_H
+#define PC_WINDOW_H
+
+#include <SDL2/SDL.h>
+#include "Dolphin/pad.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+bool pc_window_init(const char* title, int width, int height);
+void pc_window_poll_events(PADStatus* pad);
+void pc_window_swap_buffers(void);
+void pc_window_set_swap_interval(int interval);
+void pc_window_shutdown(void);
+bool pc_window_should_close(void);
+int  pc_window_get_width(void);
+int  pc_window_get_height(void);
+
+// Settings-menu video controls (PC only).
+enum {
+    PC_WINDOW_FULLSCREEN_WINDOWED  = 0,
+    PC_WINDOW_FULLSCREEN_EXCLUSIVE = 1,
+    PC_WINDOW_FULLSCREEN_BORDERLESS = 2,
+};
+
+// PC Control Modes
+enum {
+    PC_CONTROL_CLASSIC      = 0,  // Original GameCube behavior
+    PC_CONTROL_MOUSE_CURSOR = 1,  // Mouse controls cursor, WASD moves Olimar
+};
+
+// Keyboard remapping actions (PC only).
+enum {
+    PC_KEY_ACT_A       = 0,
+    PC_KEY_ACT_B       = 1,
+    PC_KEY_ACT_X       = 2,
+    PC_KEY_ACT_Y       = 3,
+    PC_KEY_ACT_Z       = 4,
+    PC_KEY_ACT_START   = 5,
+    PC_KEY_ACT_L       = 6,
+    PC_KEY_ACT_R       = 7,
+    PC_KEY_ACT_DPAD_UP    = 8,
+    PC_KEY_ACT_DPAD_DOWN  = 9,
+    PC_KEY_ACT_DPAD_LEFT  = 10,
+    PC_KEY_ACT_DPAD_RIGHT = 11,
+    PC_KEY_ACT_STICK_UP   = 12,
+    PC_KEY_ACT_STICK_DOWN = 13,
+    PC_KEY_ACT_STICK_LEFT = 14,
+    PC_KEY_ACT_STICK_RIGHT = 15,
+    PC_KEY_ACT_CSTICK_UP    = 16,
+    PC_KEY_ACT_CSTICK_DOWN  = 17,
+    PC_KEY_ACT_CSTICK_LEFT  = 18,
+    PC_KEY_ACT_CSTICK_RIGHT = 19,
+    PC_KEY_ACT_COUNT
+};
+void pc_window_set_key_binding(int action, SDL_Scancode scancode);
+SDL_Scancode pc_window_get_key_binding(int action);
+const char* pc_window_get_key_action_name(int action);
+void pc_window_reset_key_bindings(void);
+bool pc_window_load_key_bindings(const char* path);
+bool pc_window_save_key_bindings(const char* path);
+
+// Default scancodes (for persistence in config).
+extern const SDL_Scancode kDefaultKeyBindings[PC_KEY_ACT_COUNT];
+
+// Default gamepad button bindings (SDL_GameControllerButton).
+extern const int kDefaultGamepadBindings[PC_KEY_ACT_COUNT];
+
+// Gamepad button remapping.
+void pc_window_set_gamepad_binding(int action, int button);
+int pc_window_get_gamepad_binding(int action);
+const char* pc_window_get_gamepad_button_name(int button);
+void pc_window_set_stick_dead_zone(int deadZone);
+int pc_window_get_stick_dead_zone(void);
+void pc_window_set_stick_invert(int flags);
+int pc_window_get_stick_invert(void);
+void pc_window_set_cstick_invert(int flags);
+int pc_window_get_cstick_invert(void);
+
+// Access to controller for menu navigation.
+SDL_GameController* pc_window_get_controller(void);
+
+void pc_window_set_display_mode(int mode);        // PC_WINDOW_FULLSCREEN_*
+int  pc_window_get_display_mode(void);
+void pc_window_set_window_size(int w, int h);     // windowed resolution
+void pc_window_set_refresh_rate(double hz);       // post-pacing target refresh
+double pc_window_get_refresh_rate(void);
+void pc_window_set_vsync_enabled(bool enabled);   // whether presentation pacing is active
+bool pc_window_get_vsync_enabled(void);
+void pc_window_report_error(const char* what);    // remembers a failure for the settings UI
+const char* pc_window_get_last_error(void);
+
+// Mouse relative mode control (for cursor/C-stick)
+void pc_window_set_mouse_relative_mode(bool enabled);
+bool pc_window_get_mouse_relative_mode(void);
+
+// Control mode selection
+void pc_window_set_control_mode(int mode);
+int pc_window_get_control_mode(void);
+void pc_window_set_mouse_sensitivity(float sensitivity);
+float pc_window_get_mouse_sensitivity(void);
+void pc_window_set_settings_menu_open(bool open);
+
+// Virtual cursor (mouse-controlled cursor input)
+extern "C" s8 pc_window_get_virtual_cursor_x(void);
+extern "C" s8 pc_window_get_virtual_cursor_y(void);
+
+// Mouse cursor delta (for direct mouse input in PC_CONTROL_MOUSE_CURSOR mode)
+extern "C" float pc_window_get_mouse_cursor_delta_x(void);
+extern "C" float pc_window_get_mouse_cursor_delta_y(void);
+extern "C" void pc_window_clear_mouse_cursor_delta(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // PC_WINDOW_H

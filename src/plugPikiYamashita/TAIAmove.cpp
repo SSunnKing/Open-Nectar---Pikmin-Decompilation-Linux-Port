@@ -38,8 +38,17 @@ void TAIAappearKabekui::start(Teki& teki)
 bool TAIAappearKabekui::act(Teki& teki)
 {
 	CollPart* part = teki.mCollInfo->getSphere('cent');
-	Vector3f effPos;
-	effPos.set(part->mCentre.x, mapMgr->getMinY(part->mCentre.x, part->mCentre.z, true), part->mCentre.z);
+	// Some restored enemies can reach their first visible frame before the
+	// optional `cent` collision part has been rebuilt.  The original code
+	// dereferenced it unconditionally, which turns the normal emerge action into
+	// a crash.  The creature position is the correct fallback for this ground
+	// effect and lets the animation/model finish becoming visible.
+	Vector3f effPos = teki.getPosition();
+	if (part) {
+		effPos.x = part->mCentre.x;
+		effPos.z = part->mCentre.z;
+	}
+	effPos.y = mapMgr->getMinY(effPos.x, effPos.z, true);
 	if (teki.mCurrentAnimEvent == KEY_Action0) {
 		teki.setStaySwitch(true);
 		teki.playEventSound(&teki, SE_WALLEAT_APPEAR);

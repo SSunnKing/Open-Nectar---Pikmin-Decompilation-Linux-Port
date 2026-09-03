@@ -254,7 +254,7 @@ public:
 	void initGame();
 	void saveCard(RandomAccessStream&);
 	void loadCard(RandomAccessStream&);
-	void preload(u32);
+	bool preload(u32);
 	bool hasUfoParts(u32, u32);
 	void load(u32);
 	void beginSave(u32);
@@ -269,6 +269,7 @@ public:
 
 protected:
 	void addOne(u32);
+	void discardCache(Cache*);
 	Cache* findCache(Cache&, u32);
 
 	Cache mAliveCacheList;    ///< _00, list of all currently active/used caches.

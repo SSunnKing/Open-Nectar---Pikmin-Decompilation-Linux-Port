@@ -47,7 +47,7 @@ void __DSPHandler(__OSInterrupt interrupt, OSContext* context)
 		if (__DSP_curr_task == DSP_prior_task) {
 			DSP_prior_yield = 1;
 		}
-		if (__DSP_curr_task->init_cb != nullptr) {
+		if (__DSP_curr_task->init_cb != NULL) {
 			__DSP_curr_task->init_cb(__DSP_curr_task);
 		}
 		break;
@@ -59,7 +59,7 @@ void __DSPHandler(__OSInterrupt interrupt, OSContext* context)
 			DSP_prior_yield = 1;
 			Dsp_Update_Request();
 		}
-		if (__DSP_curr_task->res_cb != nullptr) {
+		if (__DSP_curr_task->res_cb != NULL) {
 			__DSP_curr_task->res_cb(__DSP_curr_task);
 		}
 		Console_printf("Audio Resumed\n");
@@ -72,7 +72,7 @@ void __DSPHandler(__OSInterrupt interrupt, OSContext* context)
 		while (DSPCheckMailToDSP() != 0)
 			;
 		__DSP_curr_task->state = 2;
-		if (__DSP_curr_task->next == nullptr && AUDIO_UPDATE_REQUEST) {
+		if (__DSP_curr_task->next == NULL && AUDIO_UPDATE_REQUEST) {
 			__DSP_exec_task(__DSP_curr_task, DSP_prior_task);
 			AUDIO_UPDATE_REQUEST = 0;
 			__DSP_curr_task      = DSP_prior_task;
@@ -92,12 +92,12 @@ void __DSPHandler(__OSInterrupt interrupt, OSContext* context)
 		while (DSPCheckMailToDSP() != 0)
 			;
 		__DSP_curr_task->state = 3;
-		if (__DSP_curr_task->next == nullptr) {
-			__DSP_exec_task(nullptr, DSP_prior_task);
+		if (__DSP_curr_task->next == NULL) {
+			__DSP_exec_task(NULL, DSP_prior_task);
 			__DSP_remove_task(__DSP_curr_task);
 			__DSP_curr_task = DSP_prior_task;
 		} else {
-			__DSP_exec_task(nullptr, __DSP_curr_task->next);
+			__DSP_exec_task(NULL, __DSP_curr_task->next);
 			__DSP_curr_task = __DSP_curr_task->next;
 			__DSP_remove_task(__DSP_curr_task->prev);
 		}
@@ -105,14 +105,14 @@ void __DSPHandler(__OSInterrupt interrupt, OSContext* context)
 	}
 	case 0xDCD10004:
 	{
-		if (__DSP_curr_task->req_cb != nullptr) {
+		if (__DSP_curr_task->req_cb != NULL) {
 			__DSP_curr_task->req_cb(__DSP_curr_task);
 		}
 		break;
 	}
 	case 0xDCD10005:
 	{
-		if (__DSP_first_task == nullptr || AUDIO_UPDATE_REQUEST) {
+		if (__DSP_first_task == NULL || AUDIO_UPDATE_REQUEST) {
 			DSPSendMailToDSP(0xCDD10003);
 			while (DSPCheckMailToDSP() != 0)
 				;

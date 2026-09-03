@@ -1,6 +1,9 @@
 #include "DebugLog.h"
 #include "PaniPikiAnimator.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 PaniMotionTable* PaniPikiAnimMgr::motionTable;
 
@@ -104,6 +107,9 @@ void PaniPikiAnimMgr::finishMotion(PaniAnimKeyListener* listener)
  */
 void PaniPikiAnimMgr::updateAnimation(f32 speed)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) return;
+#endif
 	if (mUpperAnimator.isFinished()) {
 		if (mAnimSpeed < mUpperAnimator.getAnimationSpeed()) {
 			mAnimSpeed = mUpperAnimator.getAnimationSpeed();

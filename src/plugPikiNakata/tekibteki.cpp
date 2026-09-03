@@ -123,7 +123,7 @@ void BTeki::viewDraw(Graphics& gfx, immut Matrix4f& mat)
 {
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mTekiAnimator->updateContext();
-	mTekiShape->mShape->updateAnim(gfx, mat, nullptr);
+	mTekiShape->mShape->updateAnim(gfx, mat, nullptr, this);
 	mTekiShape->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 }
 
@@ -1426,7 +1426,8 @@ bool BTeki::attackRangeNaviPiki(immut Interaction& interaction, immut Condition&
 	outputHitCenter(hitCenter);
 
 	// Fun Fact: Decompiling this unused function fixed a fakematch related to `TekiAndCondition` in this file.
-	TekiAndCondition andCond(&condition, stack_new(TekiPositionSphereDistanceCondition)(hitCenter, getAttackHitRange()));
+	TekiPositionSphereDistanceCondition distanceCondition(hitCenter, getAttackHitRange());
+	TekiAndCondition andCond(&condition, &distanceCondition);
 	return interactNaviPiki(interaction, andCond);
 }
 
@@ -1566,9 +1567,12 @@ void BTeki::flickLower()
  */
 void BTeki::flickLower(InteractFlick& flick)
 {
-	TekiAndCondition andCond(stack_new(TekiAndCondition)(stack_new(TekiRecognitionCondition)(static_cast<Teki*>(this)),
-	                                                     stack_new(TekiNotCondition)(stack_new(TekiStickingCondition)())),
-	                         stack_new(TekiDistanceCondition)(static_cast<Teki*>(this), getLowerRange()));
+	TekiRecognitionCondition recognitionCondition(static_cast<Teki*>(this));
+	TekiStickingCondition stickingCondition;
+	TekiNotCondition notStickingCondition(&stickingCondition);
+	TekiAndCondition recognizedAndNotSticking(&recognitionCondition, &notStickingCondition);
+	TekiDistanceCondition distanceCondition(static_cast<Teki*>(this), getLowerRange());
+	TekiAndCondition andCond(&recognizedAndNotSticking, &distanceCondition);
 	interactNavi(flick, andCond);
 	flick.mDamage = 0.0f;
 
@@ -1935,7 +1939,7 @@ void BTeki::drawTekiShape(Graphics& gfx)
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, onCamMtx);
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mTekiAnimator->updateContext();
-	mTekiShape->mShape->updateAnim(gfx, onCamMtx, nullptr);
+	mTekiShape->mShape->updateAnim(gfx, onCamMtx, nullptr, this);
 
 	if (mCollInfo) {
 		mCollInfo->updateInfo(gfx, false);

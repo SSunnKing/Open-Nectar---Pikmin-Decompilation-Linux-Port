@@ -5,6 +5,16 @@
 #include "Graphics.h"
 #include "Shape.h"
 #include "sysNew.h"
+
+#if defined(PIKI_PC_PORT)
+static u32 collisionTagFromText(immut char* text)
+{
+	return (static_cast<u32>(static_cast<u8>(text[0])) << 24)
+	     | (static_cast<u32>(static_cast<u8>(text[1])) << 16)
+	     | (static_cast<u32>(static_cast<u8>(text[2])) << 8)
+	     | static_cast<u32>(static_cast<u8>(text[3]));
+}
+#endif
 #include "system.h"
 #include <stdio.h>
 #include <string.h>
@@ -119,11 +129,21 @@ void ObjCollInfo::loadini(CmdStream* cmdStream)
 		if (cmdStream->isToken("id")) {
 			cmdStream->getToken(true);
 			strncpy(mId.mStringID, cmdStream->mCurrentToken, 4);
+#if defined(PIKI_PC_PORT)
+			mId.mStringID[4] = '\0';
+			mId.mId          = collisionTagFromText(mId.mStringID);
+#else
 			mId.updateID();
+#endif
 		} else if (cmdStream->isToken("code")) {
 			cmdStream->getToken(true);
 			strncpy(mCode.mStringID, cmdStream->mCurrentToken, 4);
+#if defined(PIKI_PC_PORT)
+			mCode.mStringID[4] = '\0';
+			mCode.mId          = collisionTagFromText(mCode.mStringID);
+#else
 			mCode.updateID();
+#endif
 		} else if (cmdStream->isToken("type")) {
 			sscanf(cmdStream->getToken(true), "%d", &mCollType);
 

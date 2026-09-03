@@ -94,10 +94,15 @@ bool TaiAnimationSwallowingAction::act(Teki& teki)
 		Vector3f center;
 		teki.outputHitCenter(center);
 
-		TekiAndCondition andCond1(stack_new(TekiRecognitionCondition)(&teki),
-		                          stack_new(TekiNotCondition)(stack_new(TekiStickerCondition)(&teki)));
-		TekiAndCondition andCond2(&andCond1, stack_new(TekiNotCondition)(stack_new(TekiPikiStateCondition)(PIKISTATE_Flick)));
-		TekiAndCondition andCond3(&andCond2, stack_new(TekiPositionSphereDistanceCondition)(center, teki.getAttackHitRange()));
+		TekiRecognitionCondition recognitionCondition(&teki);
+		TekiStickerCondition stickerCondition(&teki);
+		TekiNotCondition notStickerCondition(&stickerCondition);
+		TekiAndCondition andCond1(&recognitionCondition, &notStickerCondition);
+		TekiPikiStateCondition flickStateCondition(PIKISTATE_Flick);
+		TekiNotCondition notFlickStateCondition(&flickStateCondition);
+		TekiAndCondition andCond2(&andCond1, &notFlickStateCondition);
+		TekiPositionSphereDistanceCondition distanceCondition(center, teki.getAttackHitRange());
+		TekiAndCondition andCond3(&andCond2, &distanceCondition);
 
 		int swallowPikiNum = 0;
 		int numSlots       = 0;
@@ -234,8 +239,9 @@ bool TaiBangingAction::actByEvent(immut TekiEvent& event)
  */
 bool TaiFlickAction::act(Teki& teki)
 {
-	int pikiCount
-	    = teki.countPikis(TekiAndCondition(stack_new(TekiRecognitionCondition)(&teki), stack_new(TekiLowerRangeCondition)(&teki)));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiLowerRangeCondition lowerRangeCondition(&teki);
+	int pikiCount = teki.countPikis(TekiAndCondition(&recognitionCondition, &lowerRangeCondition));
 	return teki.mDamageCount >= f32(teki.getFlickDamageCount(pikiCount));
 
 	TekiAndCondition(nullptr, nullptr);

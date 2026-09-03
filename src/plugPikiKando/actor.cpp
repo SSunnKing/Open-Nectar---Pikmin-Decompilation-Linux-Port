@@ -64,7 +64,7 @@ void Actor::refresh(Graphics& gfx)
 	f32 light = mapMgr->getLight(mSRT.t.x, mSRT.t.z);
 	gfx.setLighting(true, nullptr);
 
-	mPikiShape->mShape->updateAnim(gfx, mtx, nullptr);
+	mPikiShape->mShape->updateAnim(gfx, mtx, nullptr, this);
 	mPikiShape->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 }
 

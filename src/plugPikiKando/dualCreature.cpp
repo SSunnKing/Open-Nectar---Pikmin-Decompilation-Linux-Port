@@ -273,7 +273,7 @@ void PelCreature::doRender(Graphics& gfx, Matrix4f& mtx)
 	gfx.setLighting(true, nullptr);
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mItemAnimator.updateContext();
-	mItemShape->mShape->updateAnim(gfx, mtx, nullptr);
+	mItemShape->mShape->updateAnim(gfx, mtx, nullptr, this);
 	mItemShape->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 	mCollInfo->updateInfo(gfx, false);
 }

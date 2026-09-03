@@ -352,10 +352,16 @@ public:
 	/// Default constructor - resets lists, counts and room index.
 	CollGroup()
 	{
+		memset(_unused00, 0, sizeof(_unused00));
 		mTriangleList          = nullptr;
 		mTriCount              = 0;
+		mFarCulledTriCount     = 0;
 		mJointIndex            = 0;
 		mFarCulledTriDistances = nullptr;
+		mModel                 = nullptr;
+		mVertexList            = nullptr;
+		mPlatCollision         = nullptr;
+		mNextCollGroup         = nullptr;
 	}
 
 	u8 _unused00[0x4];            ///< _00, unknown/unused.

@@ -118,7 +118,7 @@ void Snake::refresh(Graphics& gfx)
 	mWorldMtx.makeSRT(mSRT.s, mSRT.r, mSRT.t);
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, onCamMtx);
 	mAnimator.updateContext();
-	mShapeObject->mShape->updateAnim(gfx, onCamMtx, nullptr);
+	mShapeObject->mShape->updateAnim(gfx, onCamMtx, nullptr, this);
 	mSnakeBody->refresh(mShapeObject, gfx);
 	mCollInfo->updateInfo(gfx, false);
 }

@@ -17,6 +17,14 @@ DEFINE_ERROR(9)
  */
 DEFINE_PRINT("tekipersonality");
 
+#if defined(PIKI_PC_PORT)
+static void canonicalizePelletID(ID32& id)
+{
+	id.mId = __builtin_bswap32(id.mId);
+	id.updateString();
+}
+#endif
+
 /**
  * @todo: Documentation
  */
@@ -105,6 +113,9 @@ void TekiPersonality::read(RandomAccessStream& input, int version)
 		mPelletKind  = input.readInt();
 		mPelletColor = input.readInt();
 		mID.read(input);
+#if defined(PIKI_PC_PORT)
+		canonicalizePelletID(mID);
+#endif
 
 		int i;
 		for (i = 0; i <= 2; i++) {
@@ -127,6 +138,9 @@ void TekiPersonality::read(RandomAccessStream& input, int version)
 		mPelletKind  = (s8)input.readByte();
 		mPelletColor = (s8)input.readByte();
 		mID.read(input);
+#if defined(PIKI_PC_PORT)
+		canonicalizePelletID(mID);
+#endif
 
 		int i;
 		for (i = 0; i <= 2; i++) {
@@ -148,6 +162,9 @@ void TekiPersonality::read(RandomAccessStream& input, int version)
 	mPelletKind  = (s8)input.readByte();
 	mPelletColor = (s8)input.readByte();
 	mID.read(input);
+#if defined(PIKI_PC_PORT)
+	canonicalizePelletID(mID);
+#endif
 	params->read(input);
 	PRINT_NAKATA("TekiPersonality::read:pelletColor:%d\n", mPelletColor);
 }
@@ -160,7 +177,11 @@ void TekiPersonality::write(RandomAccessStream& output)
 	PRINT_NAKATA("TekiPersonality::write>\n");
 	output.writeByte((s8)mPelletKind);
 	output.writeByte((s8)mPelletColor);
+#if defined(PIKI_PC_PORT)
+	output.writeInt(__builtin_bswap32(mID.mId));
+#else
 	mID.write(output);
+#endif
 	mParams->write(output);
 	PRINT_NAKATA("TekiPersonality::write<\n");
 }

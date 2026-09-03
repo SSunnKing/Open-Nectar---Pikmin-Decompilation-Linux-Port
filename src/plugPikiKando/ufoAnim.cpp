@@ -3,6 +3,9 @@
 #include "Shape.h"
 #include "UfoItem.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -240,6 +243,9 @@ void UfoAnimator::setMotionLastFrame(int id)
  */
 void UfoAnimator::updateAnimation()
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) return;
+#endif
 	for (int i = 0; i < 8; i++) {
 		mAnims[i].animate(mAnimSpeeds[i]);
 	}

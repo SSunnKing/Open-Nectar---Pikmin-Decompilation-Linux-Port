@@ -5,6 +5,9 @@
 #include "Graphics.h"
 #include "MapMgr.h"
 #include "Shape.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @note UNUSED Size: 00009C
@@ -69,6 +72,12 @@ void CreaturePlatMgr::release()
  */
 void CreaturePlatMgr::update(Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	for (int i = 0; i < mPartCount; i++) {
 		CreatureCollPart* part = mPlatParts[i];
 		part->mTransformMtx.inverse(&part->mInverseMatrix);

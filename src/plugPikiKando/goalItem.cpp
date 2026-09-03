@@ -160,7 +160,7 @@ void GoalItem::playEffect(int id)
 			if (gen) {
 				int legIDs[3] = { 2, 1, 0 };
 
-				Vector3f test = -1.0f * mRope[2 * legIDs[randIdx]]->mRopeDirection;
+				Vector3f test = -1.0f * mLegs[legIDs[randIdx]].mRope->mRopeDirection;
 				gen->setEmitDir(test);
 			}
 
@@ -432,7 +432,7 @@ Piki* GoalItem::exitPiki()
 	pikiInfMgr.decPiki(piki);
 	piki->mSRT.s.set(1.0f, 1.0f, 1.0f);
 	piki->mFSM->transit(piki, PIKISTATE_Normal);
-	piki->startRope(mRope[leg * 2], 1.0f);
+	piki->startRope(mLegs[leg].mRope, 1.0f);
 	piki->changeMode(12, nullptr);
 	mHeldPikis[happa]--;
 	GameStat::containerPikis.dec(piki->mColor);
@@ -471,6 +471,10 @@ GoalItem::GoalItem(CreatureProp* prop, ItemShapeObject* shape1, ItemShapeObject*
 	mHaloEfx              = nullptr;
 	mSpotEfx              = nullptr;
 	mSuckEfx              = nullptr;
+	for (GoalLeg& leg : mLegs) {
+		leg.mFulcrum = nullptr;
+		leg.mRope    = nullptr;
+	}
 }
 
 /**
@@ -624,7 +628,7 @@ void GoalItem::startAI(int)
 
 	int i;
 	for (i = 0; i < 3; i++) {
-		GoalLeg* leg    = (GoalLeg*)((&this->_444) + i * 2);
+		GoalLeg* leg    = &mLegs[i];
 		CollPart* coll  = mCollInfo->getSphere(leg_ids[i]);
 		CollPart* child = coll->getChild();
 		Vector3f diff   = coll->mCentre - child->mCentre;
@@ -786,14 +790,14 @@ void GoalItem::refresh(Graphics& gfx)
 		rate = int(mOnionColour << 1);
 	}
 	mAnimatedMaterials.animate(&rate);
-	mItemShapeObject->mShape->updateAnim(gfx, mtx1, nullptr);
+	mItemShapeObject->mShape->updateAnim(gfx, mtx1, nullptr, this);
 	if (aiCullable()) {
 		mItemShapeObject->mShape->drawshape(gfx, *gfx.mCamera, &mAnimatedMaterials);
 	}
 	mCollInfo->updateInfo(gfx, false);
 
 	for (int i = 0; i < 3; i++) {
-		GoalLeg* leg = (GoalLeg*)((&this->_444) + i * 2);
+		GoalLeg* leg = &mLegs[i];
 		if (pikiMgr->containerDebug) {
 			PRINT("leg %d : (%.1f %.1f %.1f) \n", i, leg->mRope->mSRT.t.x, leg->mRope->mSRT.t.y, leg->mRope->mSRT.t.z);
 		}

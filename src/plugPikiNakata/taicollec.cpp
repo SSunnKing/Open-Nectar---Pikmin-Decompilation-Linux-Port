@@ -978,11 +978,13 @@ bool TaiCollecTargetPelletAction::act(Teki& teki)
 {
 	Creature* target = teki.getCreaturePointer(3);
 	int carryPower   = teki.getParameterI(COLLECPI_CarryPower);
-	Pellet* nearest  = (Pellet*)pelletMgr->findClosest(
-	    teki.getPosition(),
-	    stack_new(TekiAndCondition)(stack_new(TekiAndCondition)(stack_new(TekiVisibleCondition)(&teki),
-	                                                            stack_new(TekiCollecTargetPelletCondition)(&teki, carryPower)),
-	                                stack_new(TekiNotCondition)(stack_new(TekiCreaturePointerCondition)(target))));
+	TekiVisibleCondition visibleCondition(&teki);
+	TekiCollecTargetPelletCondition pelletCondition(&teki, carryPower);
+	TekiAndCondition visiblePelletCondition(&visibleCondition, &pelletCondition);
+	TekiCreaturePointerCondition targetCondition(target);
+	TekiNotCondition notTargetCondition(&targetCondition);
+	TekiAndCondition searchCondition(&visiblePelletCondition, &notTargetCondition);
+	Pellet* nearest = (Pellet*)pelletMgr->findClosest(teki.getPosition(), &searchCondition);
 	if (!nearest) {
 		return false;
 	}
@@ -1042,8 +1044,9 @@ bool TaiCollecPelletLostAction::act(Teki& teki)
 		return true;
 	}
 
-	TekiAndCondition NRef cond = TekiAndCondition(
-	    stack_new(TekiVisibleCondition)(&teki), stack_new(TekiCollecTargetPelletCondition)(&teki, teki.getParameterI(COLLECPI_CarryPower)));
+	TekiVisibleCondition visibleCondition(&teki);
+	TekiCollecTargetPelletCondition pelletCondition(&teki, teki.getParameterI(COLLECPI_CarryPower));
+	TekiAndCondition NRef cond = TekiAndCondition(&visibleCondition, &pelletCondition);
 	if (!cond.satisfy(target)) {
 		teki.clearCreaturePointer(0);
 		return true;

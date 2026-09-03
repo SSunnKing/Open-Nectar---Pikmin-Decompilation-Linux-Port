@@ -5,6 +5,9 @@
 #include "Slime.h"
 #include "sysMath.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -259,5 +262,11 @@ void SlimeBody::setJointPosition(BossShapeObject* shape, Graphics& gfx)
  */
 void SlimeBody::refresh(BossShapeObject* shape, Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	setJointPosition(shape, gfx);
 }

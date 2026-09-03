@@ -46,6 +46,9 @@
 #include "bugprint.h"
 #include "gameflow.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 #include "teki.h"
 #include "timers.h"
 #include "zen/DrawAccount.h"
@@ -930,7 +933,7 @@ void GameCoreSection::initStage()
 
 	PRINT("--------------- GeneratorCache : preload start\n");
 	memStat->start("genCache");
-	generatorCache->preload(flowCont.mCurrentStage->mStageIndex);
+	const bool hasAuthoritativeStageCache = generatorCache->preload(flowCont.mCurrentStage->mStageIndex);
 	memStat->end("genCache");
 	PRINT("--------------- GeneratorCache : preload done\n");
 
@@ -1016,7 +1019,14 @@ void GameCoreSection::initStage()
 		PRINT("** FILE %s NOT FOUND\n", path2);
 	}
 
-	if (flowCont.mCurrentStage->mHasInitialised == FALSE) {
+	// init.gen is a one-shot source. A validated cache proves that the stage has
+	// persistent state and is authoritative even if a legacy save's separate
+	// mHasInitialised flag disagrees. Mixing both sources duplicates or suppresses
+	// entities, so disk is used only when no usable cache exists.
+	if (!hasAuthoritativeStageCache) {
+		if (flowCont.mCurrentStage->mHasInitialised != FALSE && !hasAuthoritativeStageCache) {
+			PRINT("[PC Port] Stage cache unavailable; rebuilding one-shot generators from init.gen\n");
+		}
 		flowCont.mCurrentStage->mHasInitialised = TRUE;
 
 		sprintf(path2, "%sinit.gen", path);
@@ -1736,12 +1746,16 @@ void GameCoreSection::draw(Graphics& gfx)
 {
 	gfx.mCamera->mProjectionMatrix = gfx.mCamera->mPerspectiveMatrix;
 	gfx.mCamera->mProjectionMatrix.multiply(gfx.mCamera->mLookAtMtx);
+	bool advanceState = true;
+#if defined(PIKI_PC_PORT)
+	advanceState = pc_render_is_authoritative();
+#endif
 	gsys->mTimer->start("se updt", true);
-	if (gameflow.mMoviePlayer->mIsActive) {
+	if (advanceState && gameflow.mMoviePlayer->mIsActive) {
 		Vector3f pos;
 		gameflow.mMoviePlayer->getLookAtPos(pos);
 		seSystem->update(gfx, pos);
-	} else {
+	} else if (advanceState) {
 		seSystem->update(gfx, mNavi->mSRT.t);
 	}
 	gsys->mTimer->stop("se updt");

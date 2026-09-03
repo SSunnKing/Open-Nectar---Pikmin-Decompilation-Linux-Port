@@ -150,13 +150,13 @@ BOOL Jac_SelfAllocHeap(jaheap_* parent, jaheap_* heap, u32 size, u32 startAddr)
 	parent->isRootHeap   = 0;
 	parent->memoryType   = heap->memoryType;
 	parent->childCount   = 0;
-	parent->firstChild   = nullptr;
+	parent->firstChild   = NULL;
 	parent->parent       = heap;
 
 	jaheap_* temp = heap->firstChild;
 	if (temp == NULL) {
 		heap->firstChild    = parent;
-		parent->nextSibling = nullptr;
+		parent->nextSibling = NULL;
 		heap->usedSize      = parent->startAddress - heap->startAddress + parent->size;
 	} else {
 		jaheap_* temp2 = heap->firstChild;

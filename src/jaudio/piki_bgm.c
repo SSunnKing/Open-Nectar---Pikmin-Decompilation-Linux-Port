@@ -40,7 +40,7 @@ static int last_crossmode;
 static u32 call_counter;
 static int bgm_semaphore;
 
-static u8* buffer[2]       = { nullptr, nullptr };
+static u8* buffer[2]       = { NULL, NULL };
 static int buffer_mus[2]   = { -1, -1 };
 static int fadeouttime     = 30;
 static f32 game_bgm_volume = 1.0f;

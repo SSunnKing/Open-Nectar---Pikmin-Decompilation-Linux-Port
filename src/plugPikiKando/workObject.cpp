@@ -198,6 +198,10 @@ void WorkObjectMgr::loadShapes()
  */
 void WorkObjectMgr::addUseList(int index)
 {
+	if (index < 0 || index >= 5) {
+		ERROR("WorkObjectMgr::addUseList: shape index %d out of range", index);
+		return;
+	}
 	mShouldThisShapeLoad[index] = true;
 }
 
@@ -206,6 +210,11 @@ void WorkObjectMgr::addUseList(int index)
  */
 Creature* WorkObjectMgr::birth(int wObjType, int p2)
 {
+	if (p2 < 0 || p2 >= 5) {
+		ERROR("WorkObjectMgr::birth: shape index %d out of range", p2);
+		return nullptr;
+	}
+
 	WorkObject* object = nullptr;
 	Shape* shape       = mItemShapes[p2];
 
@@ -723,7 +732,7 @@ void HinderRock::refresh(Graphics& gfx)
 {
 	Matrix4f mtx;
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, mtx);
-	mBoxShape->updateAnim(gfx, mtx, nullptr);
+	mBoxShape->updateAnim(gfx, mtx, nullptr, this);
 	mBuildShape->mTransformMtx.inverse(&mBuildShape->mInverseMatrix);
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mBuildShape->updateContext();
@@ -1013,7 +1022,7 @@ void Bridge::refresh(Graphics& gfx)
 {
 	Matrix4f animMtx;
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, animMtx);
-	mBridgeShape->updateAnim(gfx, animMtx, nullptr);
+	mBridgeShape->updateAnim(gfx, animMtx, nullptr, this);
 	mBuildShape->mTransformMtx.inverse(&mBuildShape->mInverseMatrix);
 	mAnimatedMaterials.animate(nullptr);
 	gfx.useMatrix(Matrix4f::ident, 0);

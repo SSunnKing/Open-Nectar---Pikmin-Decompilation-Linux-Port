@@ -11,6 +11,9 @@
 #include "gameflow.h"
 #include "jaudio/pikiinter.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -442,6 +445,12 @@ void UfoItem::LightAnimator::start(int id)
  */
 void UfoItem::LightAnimator::update()
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	if (mType) {
 		f32 frame = 20.0f * (mType - 1);
 		mFrame += mSpeed * gsys->getFrameTime();
@@ -989,7 +998,7 @@ void UfoItem::demoDraw(Graphics& gfx, immut Matrix4f* mtx)
 	}
 
 	mAnimator.updateContext();
-	mShipModel->mShape->updateAnim(gfx, *mtx, nullptr);
+	mShipModel->mShape->updateAnim(gfx, *mtx, nullptr, this);
 
 	if (gameflow.mMoviePlayer->mIsActive || aiCullable()) {
 		mShipModel->mShape->drawshape(gfx, *gfx.mCamera, mAnimatedMaterialsList);

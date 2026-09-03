@@ -2,6 +2,9 @@
 #include "DebugLog.h"
 #include "nlib/System.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -186,6 +189,9 @@ void PaniAnimator::finishMotion(immut PaniMotionInfo& info)
  */
 void PaniAnimator::animate(f32 speed)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) return;
+#endif
 	if (!mAnimInfo) {
 		return;
 	}

@@ -67,6 +67,9 @@ public:
 	{
 		texture->makeResident();
 #if PIKI_USE_DGX
+		if (texture->mAttachName == -1) {
+			texture->attach();
+		}
 		GXLoadTexObj(texture->mTexObj, texMapID);
 #else
 		glEnable(GL_TEXTURE_2D);

@@ -66,7 +66,7 @@ void StdSystem::onceInit()
 #else
 	mMatrixCount = 0x2000;
 #endif
-	mMatrices = new (0x20) Matrix4f[mMatrixCount];
+	mMatrices = new (PIKI_ALIGNED(0x20)) Matrix4f[mMatrixCount];
 }
 
 /**
@@ -84,7 +84,28 @@ AyuHeap* StdSystem::getHeap(int heapIdx)
  */
 void StdSystem::resetHeap(int heapIdx, int flag)
 {
+	// Evict first: the registry entries for objects that lived in this heap
+	// must go before the memory does, or a later loadShape() cache hit hands
+	// out a pointer into freed storage. See GfxobjInfo::mOwnerHeap.
+	invalidateObjsForHeap(heapIdx);
 	mHeaps[heapIdx].reset(flag);
+}
+
+/**
+ * Removes graphics objects that were registered while the given heap was the
+ * active one. This is the port's stand-in for the address-range eviction in
+ * invalidateObjs(), which cannot work when every object comes from malloc.
+ */
+void StdSystem::invalidateObjsForHeap(int heapIdx)
+{
+	GfxobjInfo* next;
+	for (GfxobjInfo* c = mGfxobjInfo.mNext; c != &mGfxobjInfo;) {
+		next = c->mNext;
+		if (c->mOwnerHeap == heapIdx) {
+			c->remove();
+		}
+		c = next;
+	}
 }
 
 /**
@@ -344,6 +365,7 @@ void StdSystem::addAnimation(AnimData* data, immut char* path)
  */
 void StdSystem::addGfxObject(GfxobjInfo* other)
 {
+	other->mOwnerHeap = mActiveHeapIdx;
 	mGfxobjInfo.insertAfter(other);
 	mHasGfxObjects = true;
 }
@@ -389,13 +411,13 @@ void StdSystem::detachObjs()
  * @param lowerBound Inclusive lower address bound.
  * @param upperBound Exclusive upper address bound.
  */
-void StdSystem::invalidateObjs(u32 lowerBound, u32 upperBound)
+void StdSystem::invalidateObjs(uintptr_t lowerBound, uintptr_t upperBound)
 {
 	GfxobjInfo* next;
 	for (GfxobjInfo* c = mGfxobjInfo.mNext; c != &mGfxobjInfo;) {
 		next = c->mNext;
 
-		u32 address = reinterpret_cast<u32>(c);
+		uintptr_t address = reinterpret_cast<uintptr_t>(c);
 		if (address >= lowerBound && address < upperBound) {
 			c->remove();
 		}
@@ -599,10 +621,15 @@ void StdSystem::loadBundle(immut char* pPath, bool loadWithCache)
 				CacheTexture* cacheTex = new CacheTexture();
 				cacheTex->mTexImage    = texImg;
 				newTex                 = cacheTex;
-				texImg->importBti(cacheTex, *fs, (u8*)OSRoundUp32B(mGraphics->mMatrixBuffer));
+				#if defined(PIKI_PC_PORT)
+				texImg->importBti(cacheTex, *fs, nullptr);
+				#else
+				uintptr_t matrixBuffer = (reinterpret_cast<uintptr_t>(mGraphics->mMatrixBuffer) + 0x1f) & ~uintptr_t(0x1f);
+				texImg->importBti(cacheTex, *fs, reinterpret_cast<u8*>(matrixBuffer));
 				cacheTex->mAramAddress = copyRamToCache((u32)texImg->mTextureData, texImg->mDataSize, 0);
 				copyWaitUntilDone();
 				texImg->mTextureData = nullptr;
+				#endif
 			} else {
 				Texture* tex = new Texture();
 				newTex       = tex;
@@ -696,7 +723,14 @@ void TextureCacher::cacheTexture(CacheTexture* tex)
 			if (!alloc) {
 				ERROR("Could not get memory from cache! %d : %d\n", texSize, largestBlockFree);
 			}
+			#if defined(PIKI_PC_PORT)
+			if (!tex->mTexImage->mTextureData) {
+				uintptr_t alignedTexture = (reinterpret_cast<uintptr_t>(alloc) + 0x33) & ~uintptr_t(0x1f);
+				tex->mTexImage->mTextureData = reinterpret_cast<void*>(alignedTexture);
+			}
+			#else
 			tex->mTexImage->mTextureData = (void*)OSRoundDown32B((u32)alloc + 0x33);
+			#endif
 			TexCacheInfo* info           = (TexCacheInfo*)alloc;
 			info->mActiveCacheSlot       = &tex->mActiveCache;
 			tex->mActiveCache            = info;

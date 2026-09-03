@@ -4,6 +4,7 @@
 #include "Generator.h"
 #include "Pellet.h"
 #include "PelletState.h"
+#include "PlayerState.h"
 #include "sysNew.h"
 
 /**
@@ -50,6 +51,10 @@ void GenObjectPellet::initialise()
 void GenObjectPellet::doRead(RandomAccessStream& stream)
 {
 	mPelletId.read(stream);
+#if defined(PIKI_PC_PORT)
+	mPelletId.mId = __builtin_bswap32(mPelletId.mId);
+	mPelletId.updateString();
+#endif
 	mIndex = pelletMgr->getConfigIndex(mPelletId.mId);
 	if (mIndex == -1) {
 		mIndex = 0;
@@ -62,7 +67,11 @@ void GenObjectPellet::doRead(RandomAccessStream& stream)
 void GenObjectPellet::doWrite(RandomAccessStream& stream)
 {
 	mPelletId = pelletMgr->getConfigFromIdx(mIndex)->mModelId;
+#if defined(PIKI_PC_PORT)
+	stream.writeInt(__builtin_bswap32(mPelletId.mId));
+#else
 	mPelletId.write(stream);
+#endif
 	PRINT("******* WRITE \n");
 	mPelletId.print();
 }
@@ -84,6 +93,14 @@ void GenObjectPellet::updateUseList(Generator*, int)
 Creature* GenObjectPellet::birth(BirthInfo& info)
 {
 	mPelletId.print();
+	PelletConfig* config = pelletMgr->getConfig(mPelletId.mId);
+	// A recovered init.gen must never recreate a ship part that is already on
+	// the ship or waiting in the stage cache. Collecting a duplicate increments
+	// PlayerState's counters unconditionally, so prevent it at the source.
+	if (config && config->mPelletType() == PELTYPE_UfoPart && playerState->existUfoParts(mPelletId.mId)) {
+		PRINT("Skipping duplicate UFO part %s\n", mPelletId.mStringID);
+		return nullptr;
+	}
 	Pellet* pelt = pelletMgr->newPellet(mPelletId.mId, nullptr);
 	if (pelt) {
 		pelt->init(info.mPosition);

@@ -468,7 +468,9 @@ void PeveMoveEvent::reset()
 PeveVibrationEvent::PeveVibrationEvent()
     : PeveEvent(0)
 {
-	mPolyFunction.construct(new f32[2], 2);
+	// NPolynomialFunction's second argument is the polynomial degree, so a
+	// quadratic owns degree + 1 coefficients.
+	mPolyFunction.construct(new f32[3], 2);
 	mTimeCondition.construct(0.0f);
 }
 

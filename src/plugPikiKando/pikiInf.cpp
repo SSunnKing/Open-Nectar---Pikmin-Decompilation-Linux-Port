@@ -229,6 +229,20 @@ void BPikiInf::loadCard(RandomAccessStream& card)
 	u8 byte       = card.readByte();
 	mPikiColour   = byte & 0x3;
 	mNextKeyIndex = (byte >> 2) & 0x3F;
+
+#if defined(PIKI_PC_PORT)
+	// These values index fixed-size colour and growth-stage tables later in
+	// stage setup.  Preserve loadability if a legacy/corrupt save contains
+	// unused bit patterns rather than indexing beyond those tables.
+	if (mPikiColour < PikiMinColor || mPikiColour > PikiMaxColor) {
+		PRINT("Invalid buried Pikmin colour %d; using Blue\n", mPikiColour);
+		mPikiColour = Blue;
+	}
+	if (mNextKeyIndex < PikiMinHappa || mNextKeyIndex > PikiMaxHappa) {
+		PRINT("Invalid buried Pikmin growth stage %d; using Leaf\n", mNextKeyIndex);
+		mNextKeyIndex = Leaf;
+	}
+#endif
 }
 
 /**
@@ -251,8 +265,14 @@ void BPikiInf::doRestore(Creature* piki)
 	if (piki->mObjType != OBJTYPE_Pikihead) {
 		ERROR("mail to teppe2\n");
 	}
-	static_cast<Piki*>(piki)->mPikiAnimMgr.mLowerAnimator.mStartKeyIndex = mPikiColour;
-	static_cast<Piki*>(piki)->mPikiAnimMgr.mLowerAnimator.mEndKeyIndex   = mNextKeyIndex;
+
+	// doStore() serialises a PikiHeadItem's seed colour and flower stage.
+	// Restore those same fields.  Casting this object to Piki wrote into an
+	// unrelated layout and corrupted memory whenever a save contained a buried
+	// sprout, commonly crashing near the end of GameCoreSection::initStage().
+	PikiHeadItem* item = static_cast<PikiHeadItem*>(piki);
+	item->mSeedColor   = mPikiColour;
+	item->mFlowerStage = mNextKeyIndex;
 }
 
 /**
@@ -346,10 +366,19 @@ void MonoInfMgr::loadCard(RandomAccessStream& input)
 	}
 
 	int max = input.readInt();
+	if (max < 0 || max > 4096 || max > input.getPending() / 6) {
+		PRINT("Invalid stored-object count %d with %d bytes pending; ignoring section\n", max, input.getPending());
+		return;
+	}
 	for (int i = 0; i < max; i++) {
 		BaseInf* bi = getFreeInf();
 		if (!bi) {
-			ERROR("gakkari bi=0!\n");
+			// Consume overflow records to keep every following save section
+			// aligned, but do not write beyond this manager's fixed pool.
+			BaseInf* overflow = newInf();
+			overflow->loadCard(input);
+			delete overflow;
+			continue;
 		}
 		bi->loadCard(input);
 	}

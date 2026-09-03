@@ -124,8 +124,10 @@ bool TaiTargetVisibleNaviPikiAction::act(Teki& teki)
  */
 bool TaiTargetVisibleNaviAction::act(Teki& teki)
 {
-	Creature* navi = naviMgr->findClosest(
-	    teki.getPosition(), stack_new(TekiAndCondition)(stack_new(TekiVisibleCondition)(&teki), stack_new(TekiNaviCondition)()));
+	TekiVisibleCondition visibleCondition(&teki);
+	TekiNaviCondition naviCondition;
+	TekiAndCondition searchCondition(&visibleCondition, &naviCondition);
+	Creature* navi = naviMgr->findClosest(teki.getPosition(), &searchCondition);
 	if (!navi) {
 		return false;
 	}

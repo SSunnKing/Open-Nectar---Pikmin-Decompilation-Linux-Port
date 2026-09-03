@@ -482,8 +482,15 @@ void PlayerState::loadCard(RandomAccessStream& data)
 
 	int parts = data.readInt();
 	PRINT("**** BEFORE UFO PARTS :: %d \n", data.getPosition());
+	if (parts < 0 || parts > data.getPending()) {
+		PRINT("Invalid UFO-part state count %d with %d bytes pending; ignoring section\n", parts, data.getPending());
+		parts = 0;
+	}
 	for (i = 0; i < parts; i++) {
-		mUfoParts[i].mPartVisType = data.readByte();
+		const u8 visibility = data.readByte();
+		if (i < mTotalParts) {
+			mUfoParts[i].mPartVisType = visibility <= PARTVIS_Invisible ? visibility : PARTVIS_Uncollected;
+		}
 	}
 	PRINT("**** LOADING @ %d\n", data.getPosition());
 
@@ -1080,6 +1087,13 @@ void PlayerState::startUfoPartsMotion(u32 id, int anim, bool wantPassiveMotion)
 void PlayerState::getUfoParts(u32 partID, bool isInvisiblePart)
 {
 	UfoParts* parts = findUfoParts(partID);
+	// Collection is keyed by part ID, not by the physical Pellet instance.
+	// Never let a duplicated generator/cache entry inflate progression counters
+	// or trigger an early ending in an existing save.
+	if (hasUfoParts(partID)) {
+		PRINT("Ignoring duplicate UFO part collection %s\n", ID32(partID).mStringID);
+		return;
+	}
 	if (!parts && !isInvisiblePart) {
 		STACK_PAD_INLINE(1);
 		PRINT("parts %s is not registered !\n", ID32(partID).mStringID);
@@ -1310,7 +1324,7 @@ void PlayerState::renderParts(Graphics& gfx, Shape* shape)
 			parts->mRepairEffectPosition.set(0.0f, 0.0f, 0.0f);
 			shape->calcJointWorldPos(gfx, parts->mRepairAnimJointIndex, parts->mRepairEffectPosition);
 			Matrix4f mtx = temp;
-			parts->mPelletShape->mShape->updateAnim(gfx, mtx, nullptr);
+			parts->mPelletShape->mShape->updateAnim(gfx, mtx, nullptr, parts);
 			parts->mAnimatedMaterials.animate(nullptr);
 			parts->mPelletShape->mShape->drawshape(gfx, *gfx.mCamera, &parts->mAnimatedMaterials);
 		}
@@ -1324,7 +1338,7 @@ void PlayerState::renderParts(Graphics& gfx, Shape* shape)
 		mtx2.makeSRT(Vector3f(1.0f, 1.0f, 1.0f), Vector3f(0.0f, PI, 0.0f), Vector3f(0.0f, -10.0f, 0.0f));
 		Matrix4f mtx3;
 		mtx.multiplyTo(mtx2, mtx3);
-		mOlimarShapeObj->mShape->updateAnim(gfx, mtx3, nullptr);
+		mOlimarShapeObj->mShape->updateAnim(gfx, mtx3, nullptr, this);
 		mOlimarShapeObj->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 		mNaviLightEfxPos.set(2.0f, 0.0f, 0.0f);
 		mOlimarShapeObj->mShape->calcJointWorldPos(gfx, 6, mNaviLightEfxPos);

@@ -160,7 +160,20 @@ void MovieInfo::refresh(Graphics&)
  */
 MoviePlayer::MoviePlayer()
 {
+	mCurrentFrame = 0;
+	mIsActive     = false;
+	mIsPaused     = false;
+	mActorVisMask = 0;
+	mTargetViewpoint.set(0.0f, 0.0f, 0.0f);
+	mLookAtPos.set(0.0f, 0.0f, 0.0f);
+	mTargetFov = 0.0f;
+	mPreCutsceneCamPosition.set(0.0f, 0.0f, 0.0f);
+	mPreCutsceneCamLookAt.set(0.0f, 0.0f, 0.0f);
+	mPreCutsceneCamFov   = 0.0f;
+	mInitialCamBlend     = 0.0f;
 	mCamTransitionFactor = 0.0f;
+	mIsGameCam           = false;
+	_170                 = 0;
 }
 
 /**
@@ -443,13 +456,16 @@ void MoviePlayer::startMovie(int movieIdx, int, Creature* target, immut Vector3f
 	}
 
 	PRINT("starting movie %d <%s> with creature %08x\n", translatedIdx, movie->mCinFileName, target);
-	mIsActive = true;
 	if (mMovieInfoList.getChildCount() == 0) {
 		PRINT("Cannot start to play movie !!\n");
-		ERROR(""); // okay
+		return;
 	}
 
 	info = (MovieInfo*)mMovieInfoList.mChild;
+	if (!info) {
+		return;
+	}
+	mIsActive = true;
 	info->del();
 	info->initCore(movie->mCinFileName);
 	info->mMovieIndex   = translatedIdx;
@@ -629,8 +645,9 @@ void MoviePlayer::update()
 		return;
 	}
 
-	if (mIsActive && mIsPaused && static_cast<MovieInfo*>(mPlayInfoList.mChild)->mPlayer->mCurrentPlaybackTime > 0.0f) {
-		static_cast<MovieInfo*>(mPlayInfoList.mChild)->mPlayer->mCurrentPlaybackTime -= 1.0f;
+	MovieInfo* activeInfo = static_cast<MovieInfo*>(mPlayInfoList.mChild);
+	if (mIsActive && mIsPaused && activeInfo && activeInfo->mPlayer && activeInfo->mPlayer->mCurrentPlaybackTime > 0.0f) {
+		activeInfo->mPlayer->mCurrentPlaybackTime -= 1.0f;
 	}
 
 	MovieInfo* next;

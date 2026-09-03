@@ -121,6 +121,9 @@ void Parameters::read(RandomAccessStream& input)
 	STACK_PAD_VAR(1);
 
 	while (true) {
+		if (input.getPending() < static_cast<int>(sizeof(int))) {
+			break;
+		}
 		int entryHeader = input.readInt();
 		if (entryHeader == FILE_TERMINATOR) {
 			// end of file reached

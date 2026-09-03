@@ -1,6 +1,9 @@
 #include "DebugLog.h"
 #include "Graphics.h"
 #include "zen/particle.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -48,6 +51,12 @@ zen::particleMdl* zen::simplePtclManager::create(Texture* tex, s16 lifeTime, con
  */
 void zen::simplePtclManager::update(f32 timeStep)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	zenList* next;
 	for (zenList* list = getTopList(); list != getOrigin(); list = next) {
 		next              = list->mNext;

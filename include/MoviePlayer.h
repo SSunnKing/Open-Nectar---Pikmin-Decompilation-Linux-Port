@@ -40,7 +40,9 @@ public:
 	MovieInfo()
 	    : CoreNode("")
 	{
-		mPlayer = nullptr;
+		mMovieIndex   = 0;
+		mPlayer       = nullptr;
+		mActorVisMask = 0;
 	}
 
 	// unused/inlined:

@@ -19,6 +19,7 @@ public:
 		mString       = "";
 		mId.setID('none');
 		mAttached = 0;
+		mOwnerHeap = -1;
 	}
 
 	void insertAfter(GfxobjInfo* other)
@@ -41,6 +42,17 @@ public:
 	immut char* mString; // _08
 	ID32 mId;            // _0C
 	u32 mAttached;       // _18, check type/name later
+
+	// PC port: which system heap was active when this object was registered.
+	// On GameCube the arenas were contiguous, so StdSystem::invalidateObjs
+	// could evict a heap's entries by address range. The port allocates every
+	// object with malloc, so nothing falls inside an AyuStack's bounds and that
+	// eviction silently does nothing: the registry then keeps handing out
+	// shapes whose memory died with the heap. Re-entering a level after
+	// switching saves returned a dead map model -- 83 KB read instead of 5 MB,
+	// and no ground drawn at all. Recording the owning heap restores the
+	// eviction the address range used to provide.
+	int mOwnerHeap;
 
 	// vtable
 	virtual void attach() { } // _08

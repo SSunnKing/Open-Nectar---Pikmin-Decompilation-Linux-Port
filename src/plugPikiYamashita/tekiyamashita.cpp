@@ -97,9 +97,9 @@ void TekiYamashita::makeDefaultAnimations()
 	TAItankAnimation().makeDefaultAnimations();
 	TAImarAnimation().makeDefaultAnimations();
 	TAIbeatleAnimation().makeDefaultAnimations();
-	TAIkabekuiBAnimation().makeDefaultAnimations(); // yep, they had this 3 times. nice.
+	TAIkabekuiAAnimation().makeDefaultAnimations();
 	TAIkabekuiBAnimation().makeDefaultAnimations();
-	TAIkabekuiBAnimation().makeDefaultAnimations();
+	TAIkabekuiCAnimation().makeDefaultAnimations();
 	TAItamagoAnimation().makeDefaultAnimations();
 	TAIdororoAnimation().makeDefaultAnimations();
 	TAIhibaAAnimation().makeDefaultAnimations();

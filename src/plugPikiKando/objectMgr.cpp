@@ -693,8 +693,9 @@ void PolyObjectMgr::registerClass(int id, Creature* obj, int size)
  */
 void PolyObjectMgr::endRegister()
 {
-	mObjectPool = new u8[mPoolCapacity * mMaxSize];
-	for (int i = 0; i < mPoolCapacity * mMaxSize; i++) {
+	immut size_t poolSize = static_cast<size_t>(mPoolCapacity) * static_cast<size_t>(mMaxSize);
+	mObjectPool           = new u8[poolSize];
+	for (size_t i = 0; i < poolSize; i++) {
 		mObjectPool[i] = -1;
 	}
 }
@@ -749,7 +750,11 @@ int PolyObjectMgr::getTemplateIndex(int id)
  */
 Creature* PolyObjectMgr::get(int i)
 {
-	return (Creature*)((int)mObjectPool + mMaxSize * i);
+	if (!mObjectPool || i < 0 || i >= mPoolCapacity) {
+		return nullptr;
+	}
+
+	return reinterpret_cast<Creature*>(mObjectPool + static_cast<size_t>(mMaxSize) * static_cast<size_t>(i));
 }
 
 /**

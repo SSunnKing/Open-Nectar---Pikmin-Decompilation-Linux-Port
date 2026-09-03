@@ -129,6 +129,12 @@ struct IntroModeState : public ModeState {
 	{
 		result = UPDATE_AI;
 
+		// Finish through MoviePlayer's normal teardown path. The opening is two
+		// queued scenes, so clear the entire sequence rather than only part one.
+		if (gameflow.mMoviePlayer->mIsActive && mController->keyClick(KBBTN_START)) {
+			gameflow.mMoviePlayer->skipScene(SCENESKIP_SkipAll);
+		}
+
 		// when cutscene is finished, exit to gameplay
 		if (!gameflow.mMoviePlayer->mIsActive) {
 			PRINT("quitting!\n");

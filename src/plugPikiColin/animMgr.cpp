@@ -9,6 +9,9 @@
 #include "sysNew.h"
 #include "system.h"
 #include <string.h>
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @note UNUSED Size: 00009C
@@ -354,7 +357,13 @@ void AnimMgr::loadAnims(immut char* animPath, immut char* bundlePath)
 			sprintf(finalBundlePath, bundlePath ? bundlePath : mModel->mName);
 
 			if (!bundlePath) {
-				sprintf(&finalAnimPath[strlen(finalBundlePath) + 253], "anm");
+				// Derive the animation bundle beside the model (foo.mod ->
+				// foo.anm).  The recovered pointer expression wrote hundreds of
+				// bytes past finalAnimPath and left finalBundlePath unchanged.
+				size_t pathLength = strlen(finalBundlePath);
+				if (pathLength >= 3) {
+					memcpy(finalBundlePath + pathLength - 3, "anm", 4);
+				}
 			}
 
 			gsys->loadBundle(finalBundlePath, false);
@@ -531,6 +540,9 @@ void Animator::updateContext()
  */
 void Animator::animate(f32 animSpeed)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) return;
+#endif
 	animSpeed = (mAnimInfo->mParams.mFlags() & ANIMFLAG_UseDynamicSpeed) ? animSpeed : mAnimInfo->mParams.mSpeed();
 
 	f32 firstFrame = mAnimInfo->getKeyValue(mStartKeyIndex);

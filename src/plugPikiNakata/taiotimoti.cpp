@@ -742,7 +742,9 @@ void TaiOtimotiStartDroppingWaterAction::start(Teki& teki)
  */
 bool TaiOtimotiFlickAction::act(Teki& teki)
 {
-	int pikiNum = teki.countPikis(TekiAndCondition(stack_new(TekiRecognitionCondition)(&teki), stack_new(TekiLowerRangeCondition)(&teki)));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiLowerRangeCondition lowerRangeCondition(&teki);
+	int pikiNum = teki.countPikis(TekiAndCondition(&recognitionCondition, &lowerRangeCondition));
 	int flickCount = teki.getFlickDamageCount(pikiNum);
 
 	if (teki.mDamageCount >= f32(flickCount)) {
@@ -763,7 +765,9 @@ bool TaiOtimotiFlickAction::act(Teki& teki)
  */
 bool TaiOtimotiFailToJumpAction::act(Teki& teki)
 {
-	int pikiNum = teki.countPikis(TekiAndCondition(stack_new(TekiRecognitionCondition)(&teki), stack_new(TekiLowerCondition)(&teki)));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiLowerCondition lowerCondition(&teki);
+	int pikiNum = teki.countPikis(TekiAndCondition(&recognitionCondition, &lowerCondition));
 	f32 linValues[2];
 	NClampLinearFunction linFunc(linValues);
 	linFunc.makeClampLinearFunction(teki.getParameterF(OTIMOTIPF_MissFuncMinCount), teki.getParameterF(OTIMOTIPF_MissFuncMinChance),
@@ -964,10 +968,12 @@ bool TaiOtimotiPressingAction::actByEvent(immut TekiEvent& event)
 		Teki* teki = event.mTeki;
 
 		InteractPress NRef press = InteractPress(teki, teki->getParameterF(TPF_AttackPower));
-		TekiAndCondition NRef cond
-		    = TekiAndCondition(stack_new(TekiRecognitionCondition)(teki),
-		                       stack_new(TekiAndCondition)(stack_new(TekiDistanceCondition)(teki, teki->getAttackRange()),
-		                                                   stack_new(TekiNotCondition)(stack_new(TekiStickerCondition)(teki))));
+		TekiRecognitionCondition recognitionCondition(teki);
+		TekiDistanceCondition distanceCondition(teki, teki->getAttackRange());
+		TekiStickerCondition stickerCondition(teki);
+		TekiNotCondition notStickerCondition(&stickerCondition);
+		TekiAndCondition distanceAndNotSticker(&distanceCondition, &notStickerCondition);
+		TekiAndCondition NRef cond = TekiAndCondition(&recognitionCondition, &distanceAndNotSticker);
 		teki->interactNaviPiki(press, cond);
 		teki->flickUpper();
 		teki->mDamageCount = 0.0f;

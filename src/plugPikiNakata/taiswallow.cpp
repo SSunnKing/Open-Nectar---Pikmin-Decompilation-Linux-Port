@@ -720,7 +720,9 @@ bool TaiSwallowTurningAction::act(Teki& teki)
 		return true;
 	}
 
-	TekiAndCondition NRef cond = TekiAndCondition(stack_new(TekiRecognitionCondition)(&teki), stack_new(TekiLowerCondition)(&teki));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiLowerCondition lowerCondition(&teki);
+	TekiAndCondition NRef cond = TekiAndCondition(&recognitionCondition, &lowerCondition);
 	int pikiCount              = teki.countPikis(cond);
 	f32 linFuncValues[2];
 	NClampLinearFunction linFunc(linFuncValues);
@@ -779,11 +781,14 @@ void TaiSwallowFlickingAction::flick(Teki& teki)
 	teki.flickUpper();
 	InteractFlick NRef flick
 	    = InteractFlick(&teki, teki.getParameterF(TPF_LowerFlickPower), teki.getParameterF(TPF_LowerAttackPower), FLICK_BACKWARDS_ANGLE);
-	TekiAndCondition NRef cond = TekiAndCondition(
-	    stack_new(TekiAndCondition)(stack_new(TekiRecognitionCondition)(&teki),
-	                                stack_new(TekiNotCondition)(stack_new(TekiStickingCondition)())),
-	    stack_new(TekiAndCondition)(stack_new(TekiDistanceCondition)(&teki, teki.getLowerRange()),
-	                                stack_new(TekiAngleCondition)(&teki, teki.getParameterF(SWALLOWPF_FlickLowerAngle))));
+	TekiRecognitionCondition recognitionCondition(&teki);
+	TekiStickingCondition stickingCondition;
+	TekiNotCondition notStickingCondition(&stickingCondition);
+	TekiAndCondition recognizedAndNotSticking(&recognitionCondition, &notStickingCondition);
+	TekiDistanceCondition distanceCondition(&teki, teki.getLowerRange());
+	TekiAngleCondition angleCondition(&teki, teki.getParameterF(SWALLOWPF_FlickLowerAngle));
+	TekiAndCondition distanceAndAngle(&distanceCondition, &angleCondition);
+	TekiAndCondition NRef cond = TekiAndCondition(&recognizedAndNotSticking, &distanceAndAngle);
 	teki.interactNaviPiki(flick, cond);
 
 	TekiAndCondition(nullptr, nullptr);
@@ -799,11 +804,14 @@ bool TaiSwallowSwallowingFlickAction::act(Teki& teki)
 	if (teki.getAnimationKeyOption(BTeki::ANIMATION_KEY_OPTION_ACTION_0)) {
 		InteractFlick NRef flick   = InteractFlick(&teki, teki.getParameterF(TPF_LowerFlickPower), teki.getParameterF(TPF_LowerAttackPower),
 		                                           teki.getDirection() + NMathF::pi);
-		TekiAndCondition NRef cond = TekiAndCondition(
-		    stack_new(TekiAndCondition)(stack_new(TekiRecognitionCondition)(&teki),
-		                                stack_new(TekiNotCondition)(stack_new(TekiStickingCondition)())),
-		    stack_new(TekiAndCondition)(stack_new(TekiDistanceCondition)(&teki, teki.getLowerRange()),
-		                                stack_new(TekiAngleCondition)(&teki, teki.getParameterF(SWALLOWPF_FlickLowerAngle))));
+		TekiRecognitionCondition recognitionCondition(&teki);
+		TekiStickingCondition stickingCondition;
+		TekiNotCondition notStickingCondition(&stickingCondition);
+		TekiAndCondition recognizedAndNotSticking(&recognitionCondition, &notStickingCondition);
+		TekiDistanceCondition distanceCondition(&teki, teki.getLowerRange());
+		TekiAngleCondition angleCondition(&teki, teki.getParameterF(SWALLOWPF_FlickLowerAngle));
+		TekiAndCondition distanceAndAngle(&distanceCondition, &angleCondition);
+		TekiAndCondition NRef cond = TekiAndCondition(&recognizedAndNotSticking, &distanceAndAngle);
 		teki.interactNaviPiki(flick, cond);
 	}
 	return false;

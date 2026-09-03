@@ -15,6 +15,9 @@
 #include "bugprint.h"
 #include "gameflow.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -610,14 +613,17 @@ void ViewPiki::refresh(Graphics& gfx)
 	}
 
 	mPikiAnimMgr.updateContext();
-	mPikiShape->mShape->updateAnim(gfx, mtx, nullptr);
+	mPikiShape->mShape->updateAnim(gfx, mtx, nullptr, this);
 
 	if ((AIPerf::useLOD && _528 < 1200.0f && aiCullable()) || !AIPerf::useLOD) {
-#if defined(VERSION_PIKIDEMO)
-		if ((mLookatPosPtr || mLookTimer) && getState() != PIKISTATE_Swallowed)
-#else
-		if ((mLookatPosPtr || mLookTimer) && getState() != PIKISTATE_Swallowed && mMode != PikiMode::ExitMode)
+		bool updateHeadPose = (mLookatPosPtr || mLookTimer) && getState() != PIKISTATE_Swallowed;
+#if !defined(VERSION_PIKIDEMO)
+		updateHeadPose = updateHeadPose && mMode != PikiMode::ExitMode;
 #endif
+#if defined(PIKI_PC_PORT)
+		updateHeadPose = updateHeadPose && pc_render_is_authoritative();
+#endif
+		if (updateHeadPose)
 		{
 			updateLook();
 

@@ -1,10 +1,9 @@
 #ifndef _PARAPARAMETERS_H
 #define _PARAPARAMETERS_H
 
+#include "Stream.h"
 #include "sysNew.h"
 #include "types.h"
-
-class Stream;
 
 /**
  * @brief TODO

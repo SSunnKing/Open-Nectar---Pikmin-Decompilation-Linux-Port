@@ -360,8 +360,7 @@ void TAIkabekuiAAnimation::makeDefaultAnimations()
 		return;
 	}
 
-	// lol, these are so just copy pasted
-	gsys->mCurrentShape = tekiMgr->mTekiShapes[TEKI_KabekuiB]->mShape;
+	gsys->mCurrentShape = tekiMgr->mTekiShapes[TEKI_KabekuiA]->mShape;
 	addAnimation("tekis/kabekuiA/motion/dead.dca");
 
 	addAnimation("tekis/kabekuiA/motion/damage.dca");

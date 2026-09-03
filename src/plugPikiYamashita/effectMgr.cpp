@@ -554,7 +554,7 @@ void EffectShape::refresh(Graphics& gfx, Matrix4f& mtx, f32* p4)
 		p4 = nullptr;
 	}
 	mAnimatedMaterials.animate(p4);
-	mModel->updateAnim(gfx, mtx, p4);
+	mModel->updateAnim(gfx, mtx, p4, this);
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mModel->drawshape(gfx, *gfx.mCamera, &mAnimatedMaterials);
 }

@@ -83,7 +83,7 @@ void DispList::read(RandomAccessStream& stream)
 
 	stream.skipPadding(0x20);
 
-	mData = new (0x20) u8[mDataLength];
+	mData = new (PIKI_ALIGNED(0x20)) u8[mDataLength];
 	stream.read(mData, mDataLength);
 }
 
@@ -961,7 +961,7 @@ void AnimData::makeAnimSRT(int boneId, immut Matrix4f* parent, Matrix4f* output,
 	bool check = true;
 	if ((info->mFlags & AnimDataFlags::AllComponentsStatic) != AnimDataFlags::AllComponentsStatic
 	    && mAnimInfoList[frameNum].mCachedMtxBlock) {
-		AnimCacheInfo* cache = static_cast<AnimCacheInfo*>(mAnimInfoList[frameNum].mCachedMtxBlock);
+		FrameCacher* cache = static_cast<FrameCacher*>(mAnimInfoList[frameNum].mCachedMtxBlock);
 		if (cache->mBoneMtxList[boneId]) {
 			check = false;
 		} else {
@@ -2278,7 +2278,7 @@ void BaseShape::read(RandomAccessStream& stream)
 
 			mVertexCount = stream.readInt();
 			stream.skipPadding(0x20);
-			mVertexList = reinterpret_cast<Vector3f*>(new (0x20) char[sizeof(Vector3f) * mVertexCount]); // hmm.
+			mVertexList = reinterpret_cast<Vector3f*>(new (PIKI_ALIGNED(0x20)) char[sizeof(Vector3f) * mVertexCount]); // hmm.
 			for (int i = 0; i < mVertexCount; i++) {
 				mVertexList[i].read(stream);
 			}
@@ -2294,7 +2294,7 @@ void BaseShape::read(RandomAccessStream& stream)
 
 			mNormalCount = stream.readInt();
 			stream.skipPadding(0x20);
-			mNormalList = reinterpret_cast<Vector3f*>(new (0x20) char[sizeof(Vector3f) * mNormalCount]); // hmm
+			mNormalList = reinterpret_cast<Vector3f*>(new (PIKI_ALIGNED(0x20)) char[sizeof(Vector3f) * mNormalCount]); // hmm
 			for (int i = 0; i < mNormalCount; i++) {
 				mNormalList[i].read(stream);
 			}
@@ -2310,7 +2310,7 @@ void BaseShape::read(RandomAccessStream& stream)
 
 			mNBTCount = stream.readInt();
 			stream.skipPadding(0x20);
-			mNBTList = reinterpret_cast<NBT*>(new (0x20) char[(sizeof(Vector3f) * mNBTCount * 3)]); // really
+			mNBTList = reinterpret_cast<NBT*>(new (PIKI_ALIGNED(0x20)) char[(sizeof(Vector3f) * mNBTCount * 3)]); // really
 			for (int i = 0; i < mNBTCount; i++) {
 				reinterpret_cast<Vector3f*>(mNBTList)[3 * i].read(stream);
 				reinterpret_cast<Vector3f*>(mNBTList)[3 * i + 1].read(stream);
@@ -2328,7 +2328,7 @@ void BaseShape::read(RandomAccessStream& stream)
 
 			mVtxColorCount = stream.readInt();
 			stream.skipPadding(0x20);
-			mVtxColorList = (Colour*)(new (0x20) GXColor[mVtxColorCount]);
+			mVtxColorList = (Colour*)(new (PIKI_ALIGNED(0x20)) GXColor[mVtxColorCount]);
 			for (int i = 0; i < mVtxColorCount; i++) {
 				mVtxColorList[i].read(stream);
 			}
@@ -2352,7 +2352,7 @@ void BaseShape::read(RandomAccessStream& stream)
 
 			mTexCoordCounts[index] = stream.readInt();
 			stream.skipPadding(0x20);
-			mTexCoordList[index] = new (0x20) Vector2f[mTexCoordCounts[index]];
+			mTexCoordList[index] = new (PIKI_ALIGNED(0x20)) Vector2f[mTexCoordCounts[index]];
 
 			for (int i = 0; i < mTexCoordCounts[index]; i++) {
 				mTexCoordList[index][i].read(stream);
@@ -3235,9 +3235,9 @@ void AnimFrameCacher::updateInfo(AnimCacheInfo* info)
  */
 void AnimFrameCacher::removeOldest()
 {
-	AnimCacheInfo* oldest = static_cast<AnimCacheInfo*>(mInfo.mPrev);
+	FrameCacher* oldest = static_cast<FrameCacher*>(mInfo.mPrev);
 	mInfo.mPrev->remove();
-	*oldest->_0C = nullptr;
+	*oldest->mInfo = nullptr;
 	mCache->cacheFree(oldest);
 }
 
@@ -3246,15 +3246,23 @@ void AnimFrameCacher::removeOldest()
  */
 void AnimFrameCacher::cacheFrameSpace(int numTextures, AnimCacheInfo* info)
 {
-	u32 texSize = OSRoundDown32B(59 + 4 * numTextures + 64 * numTextures);
+	// The original allocation packed a 32-bit pointer table followed by 64-byte
+	// matrices.  Reproduce that layout using native sizes instead of overlapping
+	// both regions through the old u32 flexible-array trick.
+	const size_t headerSize = (sizeof(FrameCacher) + alignof(Matrix4f*) - 1) & ~(alignof(Matrix4f*) - 1);
+	const size_t listSize   = sizeof(Matrix4f*) * numTextures;
+	const size_t matrixAt   = (headerSize + listSize + alignof(Matrix4f) - 1) & ~(alignof(Matrix4f) - 1);
+	const size_t required   = matrixAt + sizeof(Matrix4f) * numTextures;
+	u32 texSize             = static_cast<u32>((required + 31) & ~size_t(31));
 
 	while (true) {
 		u32 freeSize = mCache->largestBlockFree();
 		if (freeSize > texSize) {
 			FrameCacher* alloc       = static_cast<FrameCacher*>(mCache->mallocL(texSize)); // I hate you
 			FrameCacher* cacher      = alloc;
-			cacher->mBoneMtxList     = &alloc->mBoneMatrices[0];
-			cacher->mBoneMatricesEnd = &alloc->mBoneMatrices[numTextures];
+			u8* storage              = reinterpret_cast<u8*>(alloc);
+			cacher->mBoneMtxList     = reinterpret_cast<Matrix4f**>(storage + headerSize);
+			cacher->mBoneMatrices    = reinterpret_cast<Matrix4f*>(storage + matrixAt);
 			cacher->mInfo            = &info->mCachedMtxBlock;
 
 			for (int i = 0; i < numTextures; i++) {
@@ -3273,8 +3281,9 @@ void AnimFrameCacher::cacheFrameSpace(int numTextures, AnimCacheInfo* info)
 /**
  * @todo: Documentation
  */
-void BaseShape::updateAnim(Graphics& gfx, immut Matrix4f& mtx, f32* p3)
+void BaseShape::updateAnim(Graphics& gfx, immut Matrix4f& mtx, f32* p3, const void* visualOwner)
 {
+	(void)visualOwner;
 	gsys->mTimer->start("updateAnim", true);
 	gsys->mAnimatedPolygons++;
 	mAnimMatrices = gfx.getMatrices(mAnimMtxCount);
@@ -3380,6 +3389,7 @@ static inline void addMatrixWeights(register f32* animMtx, register f32* weighte
  */
 void BaseShape::calcWeightedMatrices()
 {
+
 	for (int envIdx = 0; envIdx < mEnvelopeCount; envIdx++) {
 		f32* animMtxFloats = reinterpret_cast<f32*>(&mAnimMatrices[mJointCount + envIdx].mMtx);
 #ifdef WIN32
@@ -3406,7 +3416,7 @@ void BaseShape::calcWeightedMatrices()
 #endif
 			weightedMtxFloats = reinterpret_cast<f32*>(&weightedMtx);
 			animMtxFloats     = reinterpret_cast<f32*>(&mAnimMatrices[mJointCount + envIdx]);
-#if defined(WIN32)
+	#if defined(WIN32) || defined(PIKI_PC_PORT)
 			for (int count = 0; count < 12; count++) {
 				*animMtxFloats += *weightedMtxFloats * weight;
 				weightedMtxFloats++;

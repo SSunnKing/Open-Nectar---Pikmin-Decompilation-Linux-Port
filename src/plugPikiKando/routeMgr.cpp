@@ -800,7 +800,7 @@ WayPoint* RouteMgr::findNearestWayPoint(u32 handle, immut Vector3f& pos, bool ex
 			}
 		}
 
-		return &mGroupList[idx].mWayPoints[nearestIdx];
+		return nearestIdx >= 0 ? &mGroupList[idx].mWayPoints[nearestIdx] : nullptr;
 	}
 
 	return nullptr;
@@ -834,7 +834,7 @@ WayPoint* RouteMgr::findNearestOffWayPoint(u32 handle, immut Vector3f& pos, bool
 			}
 		}
 
-		return &mGroupList[idx].mWayPoints[nearestIdx];
+		return nearestIdx >= 0 ? &mGroupList[idx].mWayPoints[nearestIdx] : nullptr;
 	}
 
 	return nullptr;
@@ -915,7 +915,7 @@ WayPoint* RouteMgr::findNearestWayPointAll(u32 handle, immut Vector3f& pos)
 			}
 		}
 
-		return &mGroupList[idx].mWayPoints[nearestIdx];
+		return nearestIdx >= 0 ? &mGroupList[idx].mWayPoints[nearestIdx] : nullptr;
 	}
 
 	return nullptr;
@@ -927,11 +927,14 @@ WayPoint* RouteMgr::findNearestWayPointAll(u32 handle, immut Vector3f& pos)
 WayPoint* RouteMgr::getWayPoint(u32 handle, int wpIdx)
 {
 	int idx = id2idx(handle);
-	if (idx != -1) {
-		return &mGroupList[idx].mWayPoints[wpIdx];
-	} else {
+	if (idx == -1) {
 		return nullptr;
 	}
+	Group& group = mGroupList[idx];
+	if (wpIdx < 0 || wpIdx >= group.mNumPoints) {
+		return nullptr;
+	}
+	return &group.mWayPoints[wpIdx];
 }
 
 /**
@@ -972,6 +975,10 @@ void RouteMgr::construct(MapMgr* map)
 	for (int i = 0; i < mRouteCount; i++) {
 		Group& group      = mGroupList[i];
 		mRouteGroupIDs[i] = routeGroup->mIntID;
+#if defined(PIKI_PC_PORT)
+		fprintf(stderr, "[PC Route] group %d: id='%s' points=%d\n", i, routeGroup->mStringID,
+		        routeGroup->mPointListRoot.getChildCount());
+#endif
 		group.mNumPoints  = routeGroup->mPointListRoot.getChildCount();
 		group.mWayPoints  = new WayPoint[group.mNumPoints];
 

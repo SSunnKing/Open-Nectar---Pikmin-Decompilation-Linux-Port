@@ -3,9 +3,71 @@
 #include "OnePlayerSection.h"
 #include "Pellet.h"
 #include "PelletState.h"
+#include "PlayerState.h"
 #include "bugprint.h"
 #include "gameflow.h"
+#include "save/pc_generator_cache_validation.h"
 #include "sysNew.h"
+#include <array>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+namespace {
+class CheckedRamStream : public RamStream {
+public:
+	CheckedRamStream(void* buffer, int size)
+	    : RamStream(buffer, size)
+	    , mValid(size >= 0)
+	{
+	}
+
+	void read(void* dest, int size) override
+	{
+		if (!dest || size < 0 || mPosition < 0 || mPosition > mLength || size > mLength - mPosition) {
+			if (dest && size > 0) {
+				std::memset(dest, 0, size);
+			}
+			mPosition = mLength;
+			mValid = false;
+			return;
+		}
+		std::memcpy(dest, static_cast<const u8*>(mBufferAddr) + mPosition, size);
+		mPosition += size;
+	}
+
+	bool isValid() const { return mValid; }
+
+private:
+	bool mValid;
+};
+
+class CheckedWriteRamStream : public RamStream {
+public:
+	CheckedWriteRamStream(void* buffer, int size)
+	    : RamStream(buffer, size)
+	    , mValid(buffer != nullptr && size >= 0)
+	{
+	}
+
+	void write(const void* src, int size) override
+	{
+		if (!src || size < 0 || mPosition < 0 || mPosition > mLength || size > mLength - mPosition) {
+			mPosition = mLength;
+			mValid = false;
+			return;
+		}
+		std::memcpy(static_cast<u8*>(mBufferAddr) + mPosition, src, size);
+		mPosition += size;
+	}
+
+	bool isValid() const { return mValid; }
+
+private:
+	bool mValid;
+};
+
+} // namespace
 
 /**
  * @todo: Documentation
@@ -130,8 +192,22 @@ void GeneratorCache::saveCard(RandomAccessStream& output)
 void GeneratorCache::loadCard(RandomAccessStream& input)
 {
 	PRINT("********** LOAD FROM MEMORY CARD ********\n");
-	mUsedSize = input.readInt();
-	mFreeSize = input.readInt();
+	const int loadedUsedSize = input.readInt();
+	const int loadedFreeSize = input.readInt();
+
+	PRINT("heap load from %d\n", input.getPosition());
+	int i;
+	for (i = 0; i < GENCACHE_HEAP_SIZE; i++) {
+		mCacheHeap[i] = input.readByte();
+	}
+
+	std::array<u8, STAGE_COUNT> states {};
+	std::array<Cache, STAGE_COUNT> entries {};
+	for (i = STAGE_START; i < STAGE_COUNT; i++) {
+		states[i] = input.readByte(); // 0 = alive, 255 = dead
+		PRINT("load cache %d from %d\n", input.getPosition());
+		entries[i].loadCard(input);
+	}
 
 	CoreNode* node = mAliveCacheList.mChild;
 	while (node) {
@@ -142,50 +218,54 @@ void GeneratorCache::loadCard(RandomAccessStream& input)
 		node = next;
 	}
 
-	PRINT("heap load from %d\n", input.getPosition());
-	int i;
-	for (i = 0; i < GENCACHE_HEAP_SIZE; i++) {
-		mCacheHeap[i] = input.readByte();
+	if (!pc::save::validateGeneratorCacheLayout(loadedUsedSize, loadedFreeSize,
+	                                           GENCACHE_HEAP_SIZE, STAGE_START,
+	                                           states, entries)) {
+		fprintf(stderr, "[PC Generator] Rejected invalid generator-cache layout; stage data will be rebuilt from disk\n");
+		mUsedSize = 0;
+		mFreeSize = mTotalCacheSize;
+		for (i = STAGE_START; i < STAGE_COUNT; ++i) {
+			Cache* cache = findCache(mDeadCacheList, i);
+			if (!cache) {
+				continue;
+			}
+			cache->mCacheHeapOffset = 0;
+			cache->mTotalCacheSize = cache->mGenCacheSize = cache->mCreatureCacheSize = cache->mUfoPartsCacheSize = 0;
+			cache->mGenCount = cache->mCreatureCount = cache->mUfoPartsCount = 0;
+		}
+		return;
 	}
 
-	Cache tempList;
-	for (i = STAGE_START; i < STAGE_COUNT; i++) {
-		u8 deadOrAlive = input.readByte(); // 0 = alive, 255 = dead
-		Cache* cache   = findCache(mDeadCacheList, i);
+	mUsedSize = loadedUsedSize;
+	mFreeSize = loadedFreeSize;
+	std::array<int, STAGE_COUNT> aliveIndices {};
+	int aliveCount = 0;
+	for (i = STAGE_START; i < STAGE_COUNT; ++i) {
+		Cache* cache = findCache(mDeadCacheList, i);
 		if (!cache) {
-			PRINT("NO CACHE %d in DeadList\n", i);
-			FOREACH_NODE(Cache, mDeadCacheList.mChild, dead)
-			{
-				BUGPRINT("deadList : id %d", dead->mStageID);
-			}
-			ERROR("bikkuri %d", i);
+			ERROR("missing generator-cache descriptor for stage %d", i);
 		}
-
-		PRINT("load cache %d from %d\n", input.getPosition());
-		cache->loadCard(input);
-		if (deadOrAlive == 0) { // alive
-			cache->del();
-			tempList.add(cache);
-		} else { // dead
-			cache->del();
-			mDeadCacheList.add(cache);
+		cache->mStageID           = entries[i].mStageID;
+		cache->mCacheHeapOffset   = entries[i].mCacheHeapOffset;
+		cache->mTotalCacheSize    = entries[i].mTotalCacheSize;
+		cache->mGenCacheSize      = entries[i].mGenCacheSize;
+		cache->mCreatureCacheSize = entries[i].mCreatureCacheSize;
+		cache->mUfoPartsCacheSize = entries[i].mUfoPartsCacheSize;
+		cache->mGenCount          = entries[i].mGenCount;
+		cache->mCreatureCount     = entries[i].mCreatureCount;
+		cache->mUfoPartsCount     = entries[i].mUfoPartsCount;
+		if (states[i] == 0) {
+			aliveIndices[aliveCount++] = i;
 		}
 	}
-
-	for (Cache* cache = static_cast<Cache*>(tempList.mChild); cache; cache = static_cast<Cache*>(tempList.mChild)) {
-		int minVal      = -1;
-		Cache* minCache = nullptr;
-		FOREACH_NODE(Cache, tempList.mChild, subCache)
-		{
-			if (minVal > subCache->mCacheHeapOffset) {
-				minVal   = subCache->mCacheHeapOffset;
-				minCache = subCache;
-			}
-		}
-		if (minCache) {
-			minCache->del();
-			mAliveCacheList.add(minCache);
-		}
+	std::sort(aliveIndices.begin(), aliveIndices.begin() + aliveCount,
+	          [&entries](int lhs, int rhs) {
+		          return entries[lhs].mCacheHeapOffset < entries[rhs].mCacheHeapOffset;
+	          });
+	for (i = 0; i < aliveCount; ++i) {
+		Cache* cache = findCache(mDeadCacheList, aliveIndices[i]);
+		cache->del();
+		mAliveCacheList.add(cache);
 	}
 
 	assertValid();
@@ -241,7 +321,7 @@ GeneratorCache::Cache* GeneratorCache::findCache(GeneratorCache::Cache& list, u3
 /**
  * @todo: Documentation
  */
-void GeneratorCache::preload(u32 stageID)
+bool GeneratorCache::preload(u32 stageID)
 {
 	for (int printCount1 = 0; printCount1 < 10; printCount1++) {
 		PRINT("************** PRELOAD **************\n"); // lol
@@ -253,21 +333,51 @@ void GeneratorCache::preload(u32 stageID)
 		u8* cacheHeapEntry = &mCacheHeap[cache->mCacheHeapOffset];
 		PRINT("load from %x : %d generators\n", cacheHeapEntry, cache->mGenCount);
 
-		RamStream stream(cacheHeapEntry, cache->mTotalCacheSize);
+		CheckedRamStream stream(cacheHeapEntry, cache->mGenCacheSize);
+		std::vector<Generator*> stagedGenerators;
+		stagedGenerators.reserve(cache->mGenCount);
+		bool valid = true;
 		for (int i = 0; i < cache->mGenCount; i++) {
 			PRINT("reading generator %d from ram : %x\n", i, stream.getPosition());
+			const int startPosition = stream.getPosition();
 			Generator* gen = new Generator();
 			PRINT("NEW DONE\n");
 			Generator::ramMode = true;
 			gen->read(stream);
 			PRINT("generator read done\n");
-			Generator::ramMode      = false;
+			Generator::ramMode = false;
+			if (!stream.isValid() || stream.getPosition() <= startPosition || stream.getPosition() > stream.getLength()
+			    || !gen->mGenObject || !gen->mGenArea || !gen->mGenType) {
+				delete gen;
+				valid = false;
+				break;
+			}
 			gen->mGeneratorListIdx  = i;
 			gen->mIsRamReadDisabled = false;
-			generatorList->mGenListHead->add(gen);
+			stagedGenerators.push_back(gen);
 		}
 
+		if (stream.getPosition() != stream.getLength()) {
+			valid = false;
+		}
+		if (!valid) {
+			Generator::ramMode = false;
+			for (Generator* gen : stagedGenerators) {
+				delete gen;
+			}
+			fprintf(stderr, "[PC Generator] Rejected malformed stage-%u generator cache; rebuilding from init.gen\n", stageID);
+			// The caller will load init.gen as a recovery source. Remove this cache
+			// now so load() cannot subsequently apply its creature/part blocks on
+			// top of the rebuilt stage or consume corrupt data.
+			discardCache(cache);
+			return false;
+		}
+		for (Generator* gen : stagedGenerators) {
+			generatorList->mGenListHead->add(gen);
+		}
 		prepareUfoParts(cache);
+		fprintf(stderr, "[PC Generator] stage %u cache accepted: %u generators, %u creatures, %u ship parts\n",
+		        stageID, cache->mGenCount, cache->mCreatureCount, cache->mUfoPartsCount);
 	} else {
 		PRINT("no data for stage %d\n", stageID);
 	}
@@ -277,6 +387,9 @@ void GeneratorCache::preload(u32 stageID)
 	}
 
 	STACK_PAD_VAR(2); // idk, this has all the inlines in the map - probably some extra temp variable usage.
+	// An existing, validated zero-generator cache is still authoritative: it
+	// means the stage has no persistent generators to restore.
+	return cache != nullptr;
 }
 
 /**
@@ -286,16 +399,22 @@ bool GeneratorCache::hasUfoParts(u32 stageID, u32 ufoPartIdx)
 {
 	Cache* cache = findCache(mAliveCacheList, stageID);
 	if (cache) {
-		void* heap = (void*)(((u32)mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize) + cache->mCreatureCacheSize);
-		RamStream stream(heap, cache->mUfoPartsCacheSize);
+		void* heap = mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize + cache->mCreatureCacheSize;
+		CheckedRamStream stream(heap, cache->mUfoPartsCacheSize);
 		for (int i = 0; i < cache->mUfoPartsCount; i++) {
 			int thisPartIdx = stream.readInt();
+			if (!stream.isValid()) {
+				return false;
+			}
 			if (thisPartIdx == ufoPartIdx) {
 				return true;
 			}
 
 			stream.readFloat();
 			stream.readFloat();
+			if (!stream.isValid()) {
+				return false;
+			}
 			stream.readFloat();
 			stream.readByte();
 			stream.readFloat();
@@ -318,9 +437,9 @@ void GeneratorCache::load(u32 stageID)
 	PRINT("cahce = %x\n", cache);
 	if (cache) {
 		PRINT("cache = %x\n", cache);
-		void* heap = (void*)(((u32)mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize));
+		void* heap = mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize;
 		PRINT("load from %x : %d creatures\n", heap, cache->mCreatureCount);
-		RamStream stream(heap, cache->mCreatureCacheSize);
+		CheckedRamStream stream(heap, cache->mCreatureCacheSize);
 		for (int i = 0; i < cache->mCreatureCount; i++) {
 			PRINT("reading creature %d from ram\n", i);
 			int genNum = stream.readInt();
@@ -328,47 +447,55 @@ void GeneratorCache::load(u32 stageID)
 			PRINT("generator number : %d\n", genNum);
 			Generator* gen = generatorList->findGenerator(genNum);
 			if (!gen) {
-				PRINT("*******************************************************************\n");
-				PRINT("\tno generator : genNo = %d\n", genNum);
-				ERROR("why?\n");
+				fprintf(stderr, "[PC Generator] Missing cached generator %d; skipping cached creature block\n", genNum);
+				break;
 			}
 
 			gen->loadCreature(stream);
+			if (!stream.isValid()) {
+				fprintf(stderr, "[PC Generator] Truncated cached creature block; remaining creatures will be rebuilt from disk\n");
+				break;
+			}
 		}
 
 		loadUfoParts(cache);
-		PRINT("** VALID CHECK BEFORE SLIDING \n");
-		assertValid();
-		u32 size       = cache->mTotalCacheSize;
-		CoreNode* node = cache;
-		while (node->mNext) {
-			Cache* nextCache = static_cast<Cache*>(node->mNext);
-			node             = node->mNext;
-
-			PRINT("** n = %x n->sibling = %x\n", node, node->mNext);
-			PRINT("** start slide : length = %x size = %x\n", nextCache->mTotalCacheSize, size);
-
-			u8* srcCache = mCacheHeap + nextCache->mCacheHeapOffset;
-			u8* dstCache = srcCache - size;
-			PRINT("heap is %x to %x\n", mCacheHeap, mCacheHeap + GENCACHE_HEAP_SIZE);
-
-			PRINT("** COPY SRC %x(offset %x) TO DST %x\n", srcCache, nextCache->mCacheHeapOffset, dstCache);
-			for (int i = 0; i < nextCache->mTotalCacheSize; i++) {
-				dstCache[i] = srcCache[i];
-			}
-
-			nextCache->mCacheHeapOffset -= size;
-			PRINT("** (%d) length : copy done\n", nextCache->mTotalCacheSize);
-		}
-
-		cache->del();
-		mDeadCacheList.add(cache);
-		mUsedSize -= size;
-		mFreeSize += size;
-		PRINT("** VALID CHECK AFTER SLIDING \n");
-		assertValid();
+		discardCache(cache);
 		dump();
 	}
+}
+
+/**
+ * Remove one validated stage cache and compact all following cache blocks.
+ * Keeping this operation in one place is important: malformed generator data
+ * must be gone before init.gen recovery and normal loads must use the same
+ * offset update rules.
+ */
+void GeneratorCache::discardCache(GeneratorCache::Cache* cache)
+{
+	if (!cache || cache->mParent != &mAliveCacheList) {
+		return;
+	}
+
+	PRINT("** VALID CHECK BEFORE SLIDING \n");
+	assertValid();
+	const u32 size = cache->mTotalCacheSize;
+	for (CoreNode* node = cache->mNext; node; node = node->mNext) {
+		Cache* nextCache = static_cast<Cache*>(node);
+		u8* srcCache     = mCacheHeap + nextCache->mCacheHeapOffset;
+		u8* dstCache     = srcCache - size;
+		std::memmove(dstCache, srcCache, nextCache->mTotalCacheSize);
+		nextCache->mCacheHeapOffset -= size;
+	}
+
+	cache->del();
+	cache->mCacheHeapOffset = 0;
+	cache->mTotalCacheSize = cache->mGenCacheSize = cache->mCreatureCacheSize = cache->mUfoPartsCacheSize = 0;
+	cache->mGenCount = cache->mCreatureCount = cache->mUfoPartsCount = 0;
+	mDeadCacheList.add(cache);
+	mUsedSize -= size;
+	mFreeSize += size;
+	PRINT("** VALID CHECK AFTER SLIDING \n");
+	assertValid();
 }
 
 /**
@@ -424,10 +551,14 @@ void GeneratorCache::saveGenerator(Generator* gen)
 		if (!cache) {
 			ERROR("currID(%d) is broken !\n", mCurrentSaveCacheIdx);
 		}
+		if (mFreeSize <= 0) {
+			fprintf(stderr, "[PC Generator] Generator cache has no free space; generator was not saved\n");
+			return;
+		}
 
-		void* heap = (void*)(((u32)mCacheHeap + mUsedSize));
-		RamStream stream(heap, mFreeSize);
-		PRINT("ramStream :%08x - %08x (%.2fK free)\n", (u32)heap, (u32)heap + mFreeSize, mFreeSize / 1024.0f);
+		std::vector<u8> record(static_cast<size_t>(mFreeSize));
+		CheckedWriteRamStream stream(record.data(), mFreeSize);
+		PRINT("generator staging stream (%.2fK free)\n", mFreeSize / 1024.0f);
 
 		Generator::ramMode     = true;
 		gen->mGeneratorListIdx = cache->mGenCount;
@@ -435,6 +566,11 @@ void GeneratorCache::saveGenerator(Generator* gen)
 		Generator::ramMode = false;
 
 		int streamPos = stream.getPosition();
+		if (!stream.isValid()) {
+			fprintf(stderr, "[PC Generator] Generator cache is full; refusing to write a partial stage record\n");
+			return;
+		}
+		std::memcpy(mCacheHeap + mUsedSize, record.data(), static_cast<size_t>(streamPos));
 		mUsedSize += streamPos;
 		mFreeSize -= streamPos;
 
@@ -461,21 +597,30 @@ void GeneratorCache::prepareUfoParts(GeneratorCache::Cache* cache)
 {
 	PRINT("prepare ufo parts ** %d\n", cache->mUfoPartsCount);
 
-	void* heap = (void*)(((u32)mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize) + cache->mCreatureCacheSize);
-	RamStream stream(heap, cache->mUfoPartsCacheSize);
+	void* heap = mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize + cache->mCreatureCacheSize;
+	CheckedRamStream stream(heap, cache->mUfoPartsCacheSize);
 
 	for (int i = 0; i < cache->mUfoPartsCount; i++) {
 		u32 id = stream.readInt();
+		if (!stream.isValid()) {
+			fprintf(stderr, "[PC Generator] Truncated cached ship-part use list\n");
+			break;
+		}
 		ID32 partID(id);
 		PRINT("::preload ufoparts %d (id = %s)\n", i, partID.mStringID);
 
 		PelletConfig* config = pelletMgr->getConfig(id);
 		if (!config) {
-			ERROR("unknown pellet id %c%c%c%c\n", (u8)(id << 24), (u8)(id << 16), (u8)(id << 8), (u8)id);
+			fprintf(stderr, "[PC Generator] Unknown cached ship-part id 0x%08x; ignoring remaining part records\n", id);
+			break;
 		}
 
 		stream.readFloat();
 		stream.readFloat();
+		if (!stream.isValid()) {
+			fprintf(stderr, "[PC Generator] Truncated cached ship-part use list\n");
+			break;
+		}
 		stream.readFloat();
 		stream.readByte();
 		stream.readFloat();
@@ -492,20 +637,35 @@ void GeneratorCache::prepareUfoParts(GeneratorCache::Cache* cache)
  */
 void GeneratorCache::loadUfoParts(GeneratorCache::Cache* cache)
 {
-	void* heap = (void*)(((u32)mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize) + cache->mCreatureCacheSize);
+	void* heap = mCacheHeap + cache->mCacheHeapOffset + cache->mGenCacheSize + cache->mCreatureCacheSize;
 	PRINT("load from %x : %d ufo parts\n", (u32)heap, cache->mUfoPartsCount);
-	RamStream stream(heap, cache->mUfoPartsCacheSize);
+	CheckedRamStream stream(heap, cache->mUfoPartsCacheSize);
 	PRINT("********* LOAD UFO PARTS (%d)*************************\n", cache->mUfoPartsCount);
 
 	for (int i = 0; i < cache->mUfoPartsCount; i++) {
 		u32 id       = stream.readInt();
+		if (!stream.isValid()) {
+			fprintf(stderr, "[PC Generator] Truncated cached ship-part block\n");
+			break;
+		}
 		Pellet* part = pelletMgr->newPellet(id, nullptr);
 		if (!part) {
-			ERROR("loadUfoParts:create pellet failed!\n");
+			fprintf(stderr, "[PC Generator] Could not create cached ship part 0x%08x; ignoring remaining part records\n", id);
+			break;
 		}
 
 		part->load(stream, true);
+		if (!stream.isValid()) {
+			part->kill(false);
+			fprintf(stderr, "[PC Generator] Truncated cached ship-part block\n");
+			break;
+		}
 		part->init(part->mSRT.t);
+		if (playerState->hasUfoParts(id)) {
+			PRINT("Discarding cached duplicate UFO part %s\n", ID32(id).mStringID);
+			part->kill(false);
+			continue;
+		}
 		part->startAI(0);
 		part->mStateMachine->transit(part, 5);
 		PRINT("CREATE PELLET !!!!!!!!\n");
@@ -518,16 +678,29 @@ void GeneratorCache::loadUfoParts(GeneratorCache::Cache* cache)
  */
 void GeneratorCache::saveUfoParts(Pellet* part)
 {
+	if (playerState->hasUfoParts(part->mConfig->mModelId.mId)) {
+		PRINT("Not caching already-collected UFO part %s\n", part->mConfig->mModelId.mStringID);
+		return;
+	}
 	Cache* cache = findCache(mDeadCacheList, mCurrentSaveCacheIdx);
 	if (!cache) {
 		ERROR("currID(%d) is broken !\n", mCurrentSaveCacheIdx);
 	}
+	if (mFreeSize <= 0) {
+		fprintf(stderr, "[PC Generator] Generator cache has no free space; ship part was not saved\n");
+		return;
+	}
 
-	void* heap = (void*)(((u32)mCacheHeap + mUsedSize));
-	RamStream stream(heap, mFreeSize);
+	std::vector<u8> record(static_cast<size_t>(mFreeSize));
+	CheckedWriteRamStream stream(record.data(), mFreeSize);
 	stream.writeInt(part->mConfig->mModelId.mId);
 	part->save(stream, true);
 	int pos = stream.getPosition();
+	if (!stream.isValid()) {
+		fprintf(stderr, "[PC Generator] Generator cache is full; refusing to write a partial ship-part record\n");
+		return;
+	}
+	std::memcpy(mCacheHeap + mUsedSize, record.data(), static_cast<size_t>(pos));
 	mUsedSize += pos;
 	mFreeSize -= pos;
 	if (mFreeSize <= 0) {
@@ -556,10 +729,14 @@ void GeneratorCache::saveGeneratorCreature(Generator* gen)
 	if (!cache) {
 		ERROR("currID(%d) is broken !\n", mCurrentSaveCacheIdx);
 	}
+	if (mFreeSize <= 0) {
+		fprintf(stderr, "[PC Generator] Generator cache has no free space; creature was not saved\n");
+		return;
+	}
 
-	void* heap = (void*)(((u32)mCacheHeap + mUsedSize));
-	RamStream stream(heap, mFreeSize);
-	PRINT("ramStream :%08x - %08x (%.2fK free)\n", (u32)heap, (u32)heap + mFreeSize, mFreeSize / 1024.0f);
+	std::vector<u8> record(static_cast<size_t>(mFreeSize));
+	CheckedWriteRamStream stream(record.data(), mFreeSize);
+	PRINT("creature staging stream (%.2fK free)\n", mFreeSize / 1024.0f);
 	if (!gen->mLatestSpawnCreature) {
 		return;
 	}
@@ -572,6 +749,11 @@ void GeneratorCache::saveGeneratorCreature(Generator* gen)
 
 	Generator::ramMode = false;
 	int pos            = stream.getPosition();
+	if (!stream.isValid()) {
+		fprintf(stderr, "[PC Generator] Generator cache is full; refusing to write a partial creature record\n");
+		return;
+	}
+	std::memcpy(mCacheHeap + mUsedSize, record.data(), static_cast<size_t>(pos));
 	mUsedSize += pos;
 	mFreeSize -= pos;
 

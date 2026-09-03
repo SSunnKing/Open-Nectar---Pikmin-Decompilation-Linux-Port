@@ -1,6 +1,9 @@
 #include "DebugLog.h"
 #include "Graphics.h"
 #include "zen/particle.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -76,6 +79,12 @@ zen::particleGenerator* zen::particleManager::createGenerator(u8* data, Texture*
  */
 void zen::particleManager::update()
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	zenList* end  = mActiveGenList.getOrigin();
 	f32 timeStep  = _98 * gsys->getFrameTime();
 	zenList* list = mActiveGenList.getTopList();
@@ -284,9 +293,10 @@ void zen::particleManager::killGenerator(CallBack1<particleGenerator*>* cb1, Cal
  */
 bool zen::particleManager::pmCheckList(zen::particleGenerator* testGen)
 {
-	bool ret               = false;
-	particleGenerator* end = (particleGenerator*)mActiveGenList.getOrigin();
-	for (particleGenerator* gen = (particleGenerator*)mActiveGenList.getTopList(); gen != end; gen = (particleGenerator*)gen->mNext) {
+	bool ret     = false;
+	zenList* end = mActiveGenList.getOrigin();
+	for (zenList* node = mActiveGenList.getTopList(); node != end; node = node->mNext) {
+		particleGenerator* gen = static_cast<particleGenerator*>(node);
 		if (gen == testGen) {
 			ret = true;
 			break;

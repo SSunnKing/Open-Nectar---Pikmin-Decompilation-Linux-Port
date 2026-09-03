@@ -4,6 +4,9 @@
 #include "Graphics.h"
 #include "Texture.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -361,7 +364,14 @@ void CullFrustum::calcVectors(immut Vector3f& eyePos, immut Vector3f& targetPos)
 	mLookAtMtx.makeLookat(mPosition, mViewXAxis, mViewYAxis, mViewZAxis);
 	mLookAtMtx.inverse(&mInverseLookAtMtx);
 
+#if defined(PIKI_PC_PORT)
+	// Use configured aspect ratio from pc_gfx for frustum culling
+	f32 configuredAspect = pc_gfx_get_current_aspect_ratio();
+	if (configuredAspect <= 0.0f) configuredAspect = 1.0f;
+	update(configuredAspect, mFov, mNear, mFar);
+#else
 	update(1.0f, mFov, mNear, mFar);
+#endif
 }
 
 /**

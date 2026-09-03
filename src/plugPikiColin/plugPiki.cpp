@@ -9,6 +9,13 @@
 #include "sysNew.h"
 #include "timers.h"
 
+#include <chrono>
+#include <cstdlib>
+
+#include "timing/pc_render_phase.h"
+#include "timing/pc_tick_profiler.h"
+#include "pc_gfx.h"
+
 #define TIMER_STATE_X           (32) ///< Horizontal position to start printing timer debug text from.
 #define TIMER_STATE_Y           (32) ///< Vertical position to start printing timer debug text from.
 #define TIMER_STATE_LINE_HEIGHT (12) ///< How far down to offset each line of timer debug text from the previous.
@@ -135,7 +142,8 @@ void PlugPikiApp::draw(Graphics& gfx)
 			gameflow.mTargetLoadTextAlpha = 0.0f;
 		}
 
-		gameflow.mCurrLoadTextAlpha += gsys->getFrameTime() * 1.0f * (gameflow.mTargetLoadTextAlpha - gameflow.mCurrLoadTextAlpha);
+		gameflow.mCurrLoadTextAlpha
+		    += gsys->getFrameTime() * 1.0f * (gameflow.mTargetLoadTextAlpha - gameflow.mCurrLoadTextAlpha);
 		if (quickABS(gameflow.mCurrLoadTextAlpha - gameflow.mTargetLoadTextAlpha) < 0.1f) {
 			gameflow.mCurrLoadTextAlpha = gameflow.mTargetLoadTextAlpha;
 		}
@@ -184,8 +192,6 @@ void PlugPikiApp::draw(Graphics& gfx)
  */
 int PlugPikiApp::idle()
 {
-	// use correct heap based on game flow
-	// system heap for boot-up, overlay heap for transitions, app heap for all other times
 	gsys->setHeap(mHeapIndex);
 	gsys->mTimer->newFrame();
 	gsys->mTimer->_start("all", false);
@@ -204,22 +210,54 @@ int PlugPikiApp::idle()
 		PRINT("idle attach\n");
 		gsys->attachObjs();
 		PRINT("done attaching objs!\n");
-
 		return 1;
 	}
 
-	// trigger whole-app update cascade
+	// Begin authoritative tick
+	pc_render_begin_authoritative_tick();
+
+	// Cost of the work a 60 Hz gameplay mode would have to run twice as often.
+	// waitRetrace below is deliberately outside every span: it is the wait, not
+	// the work, and counting it would make every tick look exactly like the
+	// frame period no matter how cheap it really was.
+	const bool profiling = pc_tick_profiler_enabled();
+	const auto clockNow  = [] {
+		return std::chrono::duration<double, std::milli>(
+		           std::chrono::steady_clock::now().time_since_epoch())
+		    .count();
+	};
+	const double tickStart = profiling ? clockNow() : 0.0;
+
+	const double updateStart = profiling ? clockNow() : 0.0;
 	update();
+	if (profiling) {
+		pc_tick_profiler_record(kPcTickUpdate, clockNow() - updateStart);
+	}
 
 	gsys->beginRender();
-	// trigger whole-app rendering cascade
+
+	// Begin capture for immutable render packets
+	pc_gfx_begin_capture(pc_render_tick_serial());
+
+	const double renderStart = profiling ? clockNow() : 0.0;
 	renderall();
-	// also render any DVD errors
+	if (profiling) {
+		pc_tick_profiler_record(kPcTickRenderAll, clockNow() - renderStart);
+		pc_gfx_flush_submit_stats();
+	}
+
+	pc_gfx_end_capture();
+
 	if (gsys->mDvdErrorCallback) {
 		gsys->mDvdErrorCallback->invoke(*gsys->mDGXGfx);
 	}
 	gsys->mTimer->start("render", true);
+	const double doneStart = profiling ? clockNow() : 0.0;
 	gsys->doneRender();
+	if (profiling) {
+		pc_tick_profiler_record(kPcTickDoneRender, clockNow() - doneStart);
+		pc_tick_profiler_record(kPcTickWhole, clockNow() - tickStart);
+	}
 	gsys->mTimer->stop("render");
 
 	// process any messages that have built up this frame

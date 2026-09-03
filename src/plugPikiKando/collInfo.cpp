@@ -11,6 +11,9 @@
 #include "timers.h"
 
 #include "DebugLog.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @note UNUSED Size: 00009C
@@ -933,6 +936,12 @@ CollPart* CollInfo::getPlatform(DynCollObject* obj)
  */
 void CollInfo::updateInfo(Graphics& gfx, bool drawDebug)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	for (int i = 0; i < mPartsCount; i++) {
 		mCollParts[i].update(gfx, drawDebug);
 	}

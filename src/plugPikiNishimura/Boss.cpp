@@ -85,8 +85,9 @@ void Boss::initBoss(BirthInfo& birthInfo, int objType)
  */
 void Boss::calcFlickPiki()
 {
+	CndBossFlick flickCondition(this);
 	interactStickers(this, InteractFlick(this, BOSS_PARM(mFlickKnockback), BOSS_PARM(mFlickDamage), FLICK_BACKWARDS_ANGLE),
-	                 stack_new(CndBossFlick)(this));
+	                 &flickCondition);
 
 	mFlickDamageCount = 0;
 }
@@ -461,7 +462,8 @@ int Boss::getStickNoMouthPikiCount()
  */
 void Boss::killStickToMouthPiki()
 {
-	killStickers(this, stack_new(CndStickMouthKill)(this), 0);
+	CndStickMouthKill killCondition(this);
+	killStickers(this, &killCondition, 0);
 }
 
 /**

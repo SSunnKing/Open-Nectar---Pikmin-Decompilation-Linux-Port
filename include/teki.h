@@ -240,14 +240,32 @@ public:
 	virtual void createTekiEffect(int);                        // _1C8
 	virtual void setTekiOption(int opt)                        // _1CC
 	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
 		mTekiOptions |= opt;
 	}
-	virtual void clearTekiOption(int opt) { mTekiOptions &= ~opt; } // _1D0
+	virtual void clearTekiOption(int opt) // _1D0
+	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
+		mTekiOptions &= ~opt;
+	}
 	virtual void setTekiOptions(int opts)                           // _1D4
 	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
 		mTekiOptions = opts;
 	}
-	virtual void clearTekiOptions() { mTekiOptions = 0; } // _1D8
+	virtual void clearTekiOptions() // _1D8
+	{
+#if defined(PIKI_PC_PORT)
+		if (!pc_render_is_authoritative()) return;
+#endif
+		mTekiOptions = 0;
+	}
 	virtual void setAnimationKeyOption(int opt)           // _1DC
 	{
 		mAnimKeyOptions |= opt;

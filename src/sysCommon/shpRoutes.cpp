@@ -184,10 +184,10 @@ void RouteGroup::loadini(CmdStream* s)
 		s->getToken(true);
 
 		if (s->isToken("id")) {
-			sprintf(mStringID, s->getToken(true));
+			snprintf(mStringID, sizeof(mStringID), "%s", s->getToken(true));
 			updateID();
 		} else if (s->isToken("name")) {
-			sprintf(mRouteName, s->getToken(true));
+			snprintf(mRouteName, sizeof(mRouteName), "%s", s->getToken(true));
 		} else if (s->isToken("colour")) {
 			int r;
 			sscanf(s->getToken(true), "%d", &r);

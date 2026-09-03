@@ -25,7 +25,7 @@ void BufferedInputStream::init(Stream* stream, u8* buffer, int bufferSize)
 {
 	mPath             = StdSystem::stringDup(stream->mPath);
 	mBufferSize       = bufferSize;
-	mBuffer           = buffer ? buffer : new (0x20) u8[mBufferSize];
+	mBuffer           = buffer ? buffer : new (PIKI_ALIGNED(0x20)) u8[mBufferSize];
 	mPosition         = 0;
 	mCurrentBufferPos = 0;
 	mRemainingBytes   = 0;
@@ -69,6 +69,13 @@ void BufferedInputStream::read(void* input, int size)
 	while (size != 0) {
 		fillBuffer();
 		int diff     = mRemainingBytes - mCurrentBufferPos;
+		if (diff <= 0) {
+			// Stream has reached EOF. The original DVD layer supplied zero padding
+			// for aligned reads; emulate that instead of spinning forever.
+			memset(buf, 0, size);
+			mPosition += size;
+			return;
+		}
 		int copySize = size;
 		if (copySize > diff) {
 			copySize = diff;

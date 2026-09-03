@@ -714,18 +714,34 @@ void zen::ogScrFileSelectMgr::setDataNumber(int dataNum)
 void zen::ogScrFileSelectMgr::init()
 {
 	mSelectState                 = Inactive;
+	mOperation                   = Normal;
+	mCurrSlotIdx                 = 0;
+	mCopyTargetFileIndex         = 1;
+	mTitleMsg                    = SelectDataToSave;
+	mFadeOutTimer                = 0.0f;
+	mIsFadingOut                 = false;
+	mTitleAnimationTimer         = 0.0f;
+	mIsTitleAnimating            = false;
+	mIsDataAnimating             = false;
+	mDataAnimationTimer          = 0.0f;
 	mIsTailMoveEffectActive      = false;
 	_1194                        = false;
 	mCanCreateNewFile            = false;
 	mMemoryCardCheckState        = false;
 	mIsCopyCompleteMessageActive = false;
 	mSaveMode                    = 0;
+	mIsCopyingFileActive         = false;
+	mIsDeletingFileActive        = false;
+	mIsCopyTargetSelectionActive = false;
 	mMainInteractTimer           = 0.0f;
 	mDeleteCursorPictureOpacity  = 0;
 	mYesNoWindowChoice           = 0;
 	mTailEffectCounter           = 0;
 	mCursorMoveEffectOnyon       = 0;
 	mCursorMoveEffectPikminGroup = 0;
+	for (int i = 0; i < 3; ++i) {
+		mFileSlotSelectionStates[i] = false;
+	}
 }
 
 /**

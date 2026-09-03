@@ -287,7 +287,7 @@ public:
 	void backupAnimOverrides(AnimContext**);
 	void restoreAnimOverrides();
 	void overrideAnim(int, AnimContext*);
-	void updateAnim(Graphics&, immut Matrix4f&, f32*);
+	void updateAnim(Graphics&, immut Matrix4f&, f32*, const void* visualOwner = nullptr);
 	void calcWeightedMatrices();
 	void makeNormalIndexes(u16*);
 	f32 calcJointWorldPos(Graphics&, int, Vector3f&);

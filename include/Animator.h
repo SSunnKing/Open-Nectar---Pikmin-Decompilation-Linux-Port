@@ -86,7 +86,7 @@ public:
 				memcpy(newData, mData, mDataIndex * sizeof(f32));
 			}
 
-			delete mData;
+			delete[] mData;
 			mData = newData;
 		}
 
@@ -612,11 +612,9 @@ public:
  */
 struct FrameCacher : public CacheInfo {
 	// _00-_0C = CacheInfo
-	CacheInfo** mInfo;     // _0C
-	u8 _10[4];             // _10, unknown
-	u32* mBoneMatricesEnd; // _14
-	u32* mBoneMtxList;     // _18
-	u32 mBoneMatrices[1];  // _1C
+	CacheInfo** mInfo;            // owner slot cleared when this entry is evicted
+	Matrix4f* mBoneMatrices;      // one cached local transform per bone
+	Matrix4f** mBoneMtxList;      // null until the corresponding transform is built
 };
 
 /**

@@ -783,7 +783,7 @@ static int CommonCallbackLogicalChannel(dspch_* ch, u32 eventType)
 
 		ch->logicalChan   = 0;
 		ch->prio          = 0;
-		ch->logicalChanCb = nullptr;
+		ch->logicalChanCb = NULL;
 		return DSPCHAN_CALLBACK_STOP;
 	}
 

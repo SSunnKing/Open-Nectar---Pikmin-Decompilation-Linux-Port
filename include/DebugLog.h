@@ -61,6 +61,9 @@
 #elif defined(VERSION_DPIJ01_PIKIDEMO) or defined(VERSION_GPIJ01)
 #define PRINT
 #define ERROR _Error
+#elif defined(PIKI_PC_PORT)
+#define PRINT _Print
+#define ERROR _Error
 #else
 #define PRINT
 #define ERROR

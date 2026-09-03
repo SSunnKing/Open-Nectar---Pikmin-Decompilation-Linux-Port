@@ -133,7 +133,12 @@ public:
 	BufferedInputStream(Stream*, u8*, int);
 
 	virtual void read(void*, int);                                         // _3C
-	virtual int getPending() { return mStream->getPending() - mPosition; } // _44 (weak)
+	virtual int getPending()
+	{
+		int buffered = mRemainingBytes - mCurrentBufferPos;
+		int upstream = mStream ? mStream->getPending() : 0;
+		return buffered + upstream;
+	} // _44 (weak)
 	virtual void close() { mStream->close(); }                             // _4C (weak)
 	virtual int getPosition() { return mPosition; }                        // _58 (weak)
 

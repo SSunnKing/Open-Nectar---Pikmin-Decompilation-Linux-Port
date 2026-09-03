@@ -14,6 +14,9 @@
 #include "gameflow.h"
 #include "sysNew.h"
 #include "zen/Math.h"
+#ifdef PIKI_PC_PORT
+#include "gl/pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -471,7 +474,13 @@ BOOL CinematicPlayer::update()
 		}
 	}
 
-	mCurrentPlaybackTime += 1.0f;
+	// Playback time is counted in cinema frames, which are authored at the
+	// game's original 30 Hz. Adding a flat 1.0 per tick ties the cutscene's
+	// speed to the tick rate, so at 60 Hz every cinematic -- the onions
+	// landing, Olimar waking after the crash -- plays at double speed. Advance
+	// by the real elapsed time instead, expressed in those 30 Hz frames, which
+	// is exactly 1.0 per tick at 30 Hz and leaves the original timing intact.
+	mCurrentPlaybackTime += gsys->getFrameTime() * 30.0f;
 
 	if (isFinished) {
 		mPreviousScene = nullptr;
@@ -509,7 +518,13 @@ void CinematicPlayer::refresh(Graphics& gfx)
 	if (mCurrentScene) {
 		FOREACH_NODE(ActorInstance, mCurrentScene->mActorList.mChild, actor)
 		{
+#ifdef PIKI_PC_PORT
+			pc_gfx_perf_scope_begin(actor->mActiveActor ? actor->mActiveActor->mName : "cinematic/null");
+#endif
 			actor->refresh(mtx, gfx, !(actor->mFlags & CAF_NoSync) ? &mCurrentSceneFrame : nullptr);
+#ifdef PIKI_PC_PORT
+			pc_gfx_perf_scope_end();
+#endif
 		}
 	}
 }
@@ -980,7 +995,7 @@ void ActorInstance::refresh(immut Matrix4f& mtx, Graphics& gfx, f32* p3)
 
 		AnimFrameCacher* prevCacher        = mActiveActor->mModel->mFrameCacher;
 		mActiveActor->mModel->mFrameCacher = nullptr;
-		mActiveActor->mModel->updateAnim(gfx, mtx, d);
+		mActiveActor->mModel->updateAnim(gfx, mtx, d, mActiveActor);
 		mActiveActor->mModel->mFrameCacher = prevCacher;
 
 		mJointPositions[0].set(0.0f, 0.0f, 0.0f);
@@ -1015,7 +1030,7 @@ void ActorInstance::refresh(immut Matrix4f& mtx, Graphics& gfx, f32* p3)
 
 		AnimFrameCacher* prevCacher        = mActiveActor->mModel->mFrameCacher;
 		mActiveActor->mModel->mFrameCacher = nullptr;
-		mActiveActor->mModel->updateAnim(gfx, mtx, d);
+		mActiveActor->mModel->updateAnim(gfx, mtx, d, mActiveActor);
 		mActiveActor->mModel->mFrameCacher = prevCacher;
 		if (mParentPlayer->mTarget) {
 			mParentPlayer->mTarget->demoDraw(gfx, nullptr);
@@ -1087,7 +1102,7 @@ void ActorInstance::refresh(immut Matrix4f& mtx, Graphics& gfx, f32* p3)
 
 	AnimFrameCacher* prevCacher        = mActiveActor->mModel->mFrameCacher;
 	mActiveActor->mModel->mFrameCacher = nullptr;
-	mActiveActor->mModel->updateAnim(gfx, mtx, d);
+	mActiveActor->mModel->updateAnim(gfx, mtx, d, mActiveActor);
 	mActiveActor->mModel->mFrameCacher = prevCacher;
 
 	mCenterPosition.set(0.0f, 0.0f, 0.0f);

@@ -92,7 +92,7 @@ void Nucleus::refresh(Graphics& gfx)
 	Matrix4f mtx;
 	gfx.mCamera->mLookAtMtx.multiplyTo(mWorldMtx, mtx);
 	mAnimator.updateContext();
-	mShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+	mShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 	mCollInfo->updateInfo(gfx, false);
 }
 

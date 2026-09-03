@@ -9,6 +9,9 @@
 #include "RadarInfo.h"
 #include "RumbleMgr.h"
 #include "SoundMgr.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -497,6 +500,12 @@ void KingBody::returnJoint(BossShapeObject* shapeObj, Graphics& gfx, immut Matri
  */
 void KingBody::refresh(BossShapeObject* shapeObj, Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	Matrix4f animMatrices[66];
 	makeAnimation(shapeObj, gfx, animMatrices);
 	checkBlendingParm(animMatrices);

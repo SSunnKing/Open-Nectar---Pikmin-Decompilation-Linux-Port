@@ -20,6 +20,9 @@
 #include "MemStat.h"
 #include "MoviePlayer.h"
 #include "NaviMgr.h"
+#if defined(PIKI_PC_PORT)
+#include "timing/pc_render_phase.h"
+#endif
 #include "NaviState.h"
 #include "Pcam/Camera.h"
 #include "Pcam/CameraManager.h"
@@ -38,6 +41,7 @@
 #include "UfoItem.h"
 #include "UtEffect.h"
 #include "WorkObject.h"
+#include "pc_window.h"
 #include "bugprint.h"
 #include "gameflow.h"
 #include "jaudio/piki_player.h"
@@ -70,7 +74,7 @@ void Navi::viewDraw(Graphics& gfx, immut Matrix4f& mtx)
 {
 	gfx.useMatrix(Matrix4f::ident, 0);
 	mNaviAnimMgr.updateContext();
-	mNaviShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+	mNaviShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 	demoDraw(gfx, &mtx);
 }
 
@@ -456,6 +460,7 @@ Navi::Navi(CreatureProp* props, int naviID)
 	memStat->end("naviEff");
 
 	mPlateMgr        = nullptr;
+	mGoalItem        = nullptr;
 	_AD8             = 0.0f;
 	mNaviID          = naviID;
 	_ACC             = false;
@@ -1771,7 +1776,94 @@ void Navi::makeVelocity(bool isSunset)
 
 	f32 stickMag = stickVec.length();
 
-	Vector3f stickVec2(stickVec);
+	Vector3f stickVec2;
+
+	// Use virtual cursor (mouse) in PC mouse modes, otherwise use movement stick
+	#ifdef PIKI_PC_PORT
+	if (pc_window_get_control_mode() == PC_CONTROL_MOUSE_CURSOR) {
+		// Direct mouse delta mode: use raw deltas, no normalization or frame time scaling
+		// SDL already provides distance since last poll
+		static const float kMouseCursorWorldScale = 0.5f; // Convert SDL counts to world units
+
+		const float mouseX = pc_window_get_mouse_cursor_delta_x();
+		const float mouseY = pc_window_get_mouse_cursor_delta_y();
+		pc_window_clear_mouse_cursor_delta();
+
+		// mCursorPosition is a world-space offset from Olimar.  SDL deltas are
+		// screen-space, so fixed world X/Z axes make the cursor rotate or invert
+		// as the camera turns.  Project the camera basis onto the ground instead.
+		Vector3f screenRight(mNaviCamera->mViewXAxis.x, 0.0f, mNaviCamera->mViewXAxis.z);
+		// SDL Y grows downwards, whereas the gameplay cursor's positive screen
+		// vertical direction is camera-forward on the ground plane.
+		Vector3f screenDown(-mNaviCamera->mViewZAxis.x, 0.0f, -mNaviCamera->mViewZAxis.z);
+		if (screenRight.length() > 0.0001f) {
+			screenRight.normalise();
+		}
+		if (screenDown.length() > 0.0001f) {
+			screenDown.normalise();
+		}
+		Vector3f mouseDelta = (screenRight * mouseX + screenDown * mouseY) * kMouseCursorWorldScale;
+
+		// Direct displacement: targetPos = currentPos + delta
+		Vector3f targetPos = mCursorPosition + mouseDelta;
+
+		// Enforce radial limit
+		if (targetPos.length() > NAVI_PARM(mCursorMaxRadius)) {
+			targetPos.normalise();
+			targetPos = targetPos * NAVI_PARM(mCursorMaxRadius);
+		}
+
+		// Update cursor positions - both position and target should be equal to avoid interpolation
+		mCursorPosition       = targetPos;
+		f32 dist              = targetPos.length();
+		mCursorNaviDist       = dist;
+		mCursorTargetPosition = targetPos;
+
+		// For cursor-facing logic: use delta magnitude (activity-based)
+		f32 moveStickMag = stickMag;
+		f32 cursorStickMag = mouseDelta.length();
+
+		if (!(moveStickMag <= NAVI_PARM(mNeutralStickThreshold))) {
+			mNeutralTime = 0.0f;
+		}
+
+		bool check = false;
+		if (mNeutralTime >= NAVI_PARM(mCursorMoveDelayTime)) {
+			check = true;
+		}
+
+		// Cursor-facing logic: when cursor is moving but movement stick is small
+		if ((check || (!check && cursorStickMag > NAVI_PARM(mNeutralStickThreshold))) && cursorStickMag <= NAVI_PARM(mCursorMoveStickThreshold)) {
+			mTargetVelocity.set(0.0f, 0.0f, 0.0f);
+			Vector3f cursorPos(mCursorPosition);
+			mFaceDirection += 0.2f * angDist(roundAng(atan2f(cursorPos.x, cursorPos.z)), mFaceDirection);
+			mFaceDirection = roundAng(mFaceDirection);
+			mSRT.r.set(0.0f, mFaceDirection, 0.0f);
+			setCreatureFlag(CF_UsePriorityFaceDir);
+		} else {
+			resetCreatureFlag(CF_UsePriorityFaceDir);
+		}
+
+		stickVec.set(0.0f, 0.0f, 0.0f);
+		makeCStick(false);
+
+		// this hides many developer sins i am sure.
+		STACK_PAD_VAR(5);
+		return;
+	} else if (pc_window_get_control_mode() != PC_CONTROL_CLASSIC) {
+		// Fallback for other non-classic modes (if any): use virtual cursor
+		NVector3f cursorStickVec(
+			pc_window_get_virtual_cursor_x() / 127.0f,
+			0.0f,
+			-pc_window_get_virtual_cursor_y() / 127.0f
+		);
+		stickVec2 = cursorStickVec;
+	} else
+	#endif
+	{
+		// Original: cursor follows movement stick
+		stickVec2 = stickVec;
+	}
 
 	stickVec2.normalise();
 	stickVec2 = stickVec2 * NAVI_PARM(mCursorMoveSpeed);
@@ -1790,7 +1882,23 @@ void Navi::makeVelocity(bool isSunset)
 	mCursorNaviDist       = dist;
 	mCursorTargetPosition = targetPos;
 
-	if (!(stickMag <= NAVI_PARM(mNeutralStickThreshold))) {
+	// Use movement stick magnitude for movement-related checks
+	f32 moveStickMag = stickMag;
+
+	// For cursor-facing logic, use virtual cursor in mouse modes
+	#ifdef PIKI_PC_PORT
+	f32 cursorStickMag = moveStickMag;
+	if (pc_window_get_control_mode() != PC_CONTROL_CLASSIC) {
+		cursorStickMag = sqrtf(
+			(pc_window_get_virtual_cursor_x() / 127.0f) * (pc_window_get_virtual_cursor_x() / 127.0f) +
+			(pc_window_get_virtual_cursor_y() / 127.0f) * (pc_window_get_virtual_cursor_y() / 127.0f)
+		);
+	}
+	#else
+	f32 cursorStickMag = moveStickMag;
+	#endif
+
+	if (!(moveStickMag <= NAVI_PARM(mNeutralStickThreshold))) {
 		mNeutralTime = 0.0f;
 	}
 
@@ -1799,7 +1907,8 @@ void Navi::makeVelocity(bool isSunset)
 		check = true;
 	}
 
-	if ((check || (!check && stickMag > NAVI_PARM(mNeutralStickThreshold))) && stickMag <= NAVI_PARM(mCursorMoveStickThreshold)) {
+	// Cursor-facing logic: when cursor is moving but movement stick is small
+	if ((check || (!check && cursorStickMag > NAVI_PARM(mNeutralStickThreshold))) && cursorStickMag <= NAVI_PARM(mCursorMoveStickThreshold)) {
 		mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 		Vector3f cursorPos(mCursorPosition);
 		mFaceDirection += 0.2f * angDist(roundAng(atan2f(cursorPos.x, cursorPos.z)), mFaceDirection);
@@ -2055,7 +2164,15 @@ void Navi::demoDraw(Graphics& gfx, immut Matrix4f* mtx)
 	mShadowCaster.mTargetPosition.set(mSRT.t.x, mSRT.t.y + 10.0f, mSRT.t.z);
 	mNaviShapeObject->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 	mCollInfo->updateInfo(gfx, false);
-	mNaviLightPosition = mCollInfo->getSphere('ante')->mCentre;
+	CollPart* antenna = mCollInfo->getSphere('ante');
+	if (antenna) {
+		mNaviLightPosition = antenna->mCentre;
+	} else {
+		// Some cinematic Navi models do not expose the gameplay antenna
+		// collision sphere. Keep the light attached to a safe fallback instead
+		// of dereferencing a missing collision part during the transition.
+		mNaviLightPosition.set(mSRT.t.x, mSRT.t.y + 10.0f, mSRT.t.z);
+	}
 	mNaviLightEfx->updatePos(mNaviLightPosition);
 	mNaviLightGlowEfx->updatePos(mNaviLightPosition);
 }
@@ -2105,7 +2222,7 @@ void Navi::draw(Graphics& gfx)
 	}
 
 	if (!hasAnimError) {
-		mNaviShapeObject->mShape->updateAnim(gfx, viewMtx, nullptr);
+		mNaviShapeObject->mShape->updateAnim(gfx, viewMtx, nullptr, this);
 	}
 
 	updateHeadMatrix();
@@ -2740,6 +2857,12 @@ void Navi::updateLook()
  */
 void Navi::updateHeadMatrix()
 {
+#if defined(PIKI_PC_PORT)
+	if (!pc_render_is_authoritative()) {
+		return;
+	}
+#endif
+
 	if (!mLookAtPosPtr && mLookTimer == 0) {
 		return;
 	}

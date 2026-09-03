@@ -1,4 +1,16 @@
 #include "system.h"
+#if PIKI_PC_PORT
+#include "pc_window.h"
+#include <chrono>
+#include <thread>
+#include "timing/pc_frame_scheduler.h"
+#include "timing/pc_tick_profiler.h"
+#include "audio/pc_audio.h"
+#include "timing/pc_render_phase.h"
+#include "pc_gfx.h"
+#include "settings/pc_settings.h"
+#include "timing/pc_render_packet.h"
+#endif
 
 #include "bigFont.h"
 
@@ -58,7 +70,11 @@ struct DVDStream : public RandomAccessStream {
 
 		mOffset += roundedSize;
 	}
-	virtual int getPending() { return mPending; } // _44 (weak)
+	virtual int getPending()
+	{
+		int remaining = mPending - mOffset;
+		return remaining > 0 ? remaining : 0;
+	} // _44 (weak)
 	virtual void close()                          // _4C (weak)
 	{
 		numOpen--;
@@ -111,6 +127,10 @@ static char lastName[PATH_MAX];
 static DVDStream dvdStream;
 static BufferedInputStream dvdBufferedStream;
 
+#if defined(PIKI_PC_PORT)
+extern "C" void* PCResolveARQToken(u32 token);
+#endif
+
 /**
  * @todo: Documentation
  * @note UNUSED Size: 000044 (Matching by size)
@@ -135,6 +155,11 @@ RandomAccessStream* System::openFile(immut char* path, bool isRelativePath, bool
 	sprintf(strPath, "%s", isRelativePath ? mActiveDir : "");
 	sprintf(strPath, "%s%s%s", strPath, isRelativePath ? mDataRoot : "", path);
 
+	// The original game serves many resources from a 32-bit ARAM address space.
+	// On the native 64-bit port the assets are already extracted under dataDir;
+	// using the emulated ARAM entries truncates host pointers and returns corrupt
+	// streams. Prefer the extracted files on PC and retain the archive path on GC.
+#if !defined(PIKI_PC_PORT)
 	if (isRelativePath && (mDvdRoot.getChildCount() || mAramRoot.getChildCount())) {
 
 		FOREACH_NODE(DirEntry, mDvdRoot.mChild, dvdDirEnt)
@@ -153,6 +178,7 @@ RandomAccessStream* System::openFile(immut char* path, bool isRelativePath, bool
 			}
 		}
 	}
+#endif
 
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
 	if (DVDStream::numOpen != 0) {
@@ -235,19 +261,128 @@ void System::waitRetrace()
 /**
  * @todo: Documentation
  */
+#if PIKI_PC_PORT
+// Read once; see the call site below for why this is not the 60 FPS switch.
+static bool pc_replay_test_enabled()
+{
+	static const bool enabled = [] {
+		const char* value = getenv("PIKMIN_REPLAY_TEST");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+#endif
+
 void System::run(BaseApp* app)
 {
 	GXInvalidateTexAll();
+    printf("[PC Port] Starting System::run main loop...\n");
+
+    auto lastFpsPrint = std::chrono::steady_clock::now();
+
+    // Initialize frame scheduler for fixed-step timing
+    PcFrameScheduler frameScheduler;
+    frameScheduler.reset(std::chrono::steady_clock::now().time_since_epoch().count() / 1e9, mFrameRate);
+
+    // Render packet capture only pays for itself in the experimental 60 FPS
+    // mode. Left on unconditionally it copied every display list on the default
+    // 30 FPS path for nothing. Re-evaluated each tick so the settings menu can
+    // switch modes at runtime.
 
 	while (true) {
 		Jac_Gsync();
 		CARDProbe(0);
 		CARDProbe(1);
 		mControllerMgr.update();
-		updateSysClock();
-		OSCheckActiveThreads();
-		app->idle();
+
+#if PIKI_PC_PORT
+		if (pc_window_should_close()) {
+			break;
+		}
+#endif
+
+		// Get schedule from fixed-step scheduler
+		double now = std::chrono::steady_clock::now().time_since_epoch().count() / 1e9;
+		PcFrameSchedule schedule = frameScheduler.advance(now, mFrameRate);
+
+		if (schedule.logicalTicks > 0) {
+#if PIKI_PC_PORT
+			pc_gfx_enable_capture(pc_replay_test_enabled());
+#endif
+			updateSysClock();
+			OSCheckActiveThreads();
+			app->idle();
+
+			// Identity-replay experiment: re-execute the tick's captured display
+			// lists into a cleared framebuffer and present that. It is NOT the
+			// 60 FPS mode -- it repaints the same frame rather than running the
+			// game faster; the frame rate comes from setFrameClamp(1) instead.
+			//
+			// It is off by default because the replay does not restore the GX
+			// vertex descriptor that was in force when each list was captured:
+			// the lists are then stepped with whatever descriptor the last draw
+			// left, 9 bytes per vertex where the data holds 11, which reads
+			// vertex indices out of neighbouring fields and stretches triangles
+			// across the screen. Enable with PIKMIN_REPLAY_TEST=1 to work on it.
+#if PIKI_PC_PORT
+			if (pc_replay_test_enabled()) {
+				if (pc_gfx_replay_captured_frame()) {
+					pc_window_swap_buffers();
+				}
+			}
+#endif
+		}
+
+#if PIKI_PC_PORT
+		// Without a tick to run there is nothing to do until the next deadline.
+		// Spinning here burns a core and, worse, polls the pad thousands of
+		// times per tick; anything edge- or delta-shaped in the input path gets
+		// resampled away before the tick that would consume it. Sleep instead,
+		// keeping a short margin so the wake-up cannot overshoot the deadline.
+		if (schedule.logicalTicks == 0) {
+			const double margin  = 0.001;
+			const double wakeAt  = schedule.nextDeadline - margin;
+			const double timeNow = std::chrono::steady_clock::now().time_since_epoch().count() / 1e9;
+			double waitFor       = wakeAt - timeNow;
+			if (waitFor > 0.0) {
+				// Never sleep past one whole frame: a clock jump or a clamp
+				// change must not park the loop for an unbounded stretch.
+				if (waitFor > schedule.fixedDelta) waitFor = schedule.fixedDelta;
+				std::this_thread::sleep_for(std::chrono::duration<double>(waitFor));
+			} else {
+				std::this_thread::yield();
+			}
+		}
+#endif
+
+        // Print FPS every 2 seconds
+        auto nowChrono = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(nowChrono - lastFpsPrint).count();
+        if (elapsed > 2000) {
+            // mFrameRate is the game's own setFrameClamp value: 1 means the
+            // section asked for 60 Hz, 2 for 30. Printing it says which
+            // sections the 60 FPS setting actually reaches, rather than
+            // inferring it from where the setting is read in the source.
+            pc_audio_report_levels();
+            printf("[PC Port] FPS: %.1f, DeltaTime: %.4fms, clamp: %d, TEV programs: %zu%s\n",
+                   getFrameRate(), mDeltaTime * 1000.0, mFrameRate,
+                   pc_gfx_get_specialised_program_count(),
+                   pc_gfx_get_shader_specialisation() ? "" : " (ubershader)");
+            // The budget is always the 60 Hz one: the question this answers is
+            // whether a tick would fit there, not whether it fits the 30 Hz
+            // period it is currently running at.
+            if (pc_tick_profiler_enabled()) {
+                fputs(pc_tick_profiler_report(1000.0 / 60.0).c_str(), stdout);
+            }
+            fflush(stdout);
+            lastFpsPrint = nowChrono;
+        }
 	}
+
+#if PIKI_PC_PORT
+	pc_gfx_enable_capture(false);
+	pc_window_shutdown();
+#endif
 
 	STACK_PAD_VAR(2);
 }
@@ -276,7 +411,7 @@ void System::updateSysClock()
 	if (mDeltaTime < 0.0f) {
 		mDeltaTime = 0.0f;
 	}
-
+	
 	int time = tick - mFpsSampleStart;
 	if (time > OS_TIMER_CLOCK) {
 		mFPS                 = (f64)(OS_TIMER_CLOCK * (mEngineFrames - mFramesAtSampleStart)) / time;
@@ -575,7 +710,11 @@ void System::hardReset()
 	mForcePrint = old;
 
 	mCacher  = new TextureCacher(0x96000);
+#if defined(PIKI_PC_PORT)
+	int size = 0x800000; // 8MB
+#else
 	int size = 0x20000;
+#endif
 	gsys->mHeaps[SYSHEAP_Lang].init("language", AYU_STACK_GROW_UP, alloc(size), size);
 	preloadLanguage();
 
@@ -905,9 +1044,15 @@ void System::Initialise()
 	CARDInit();
 	void* lo   = OSGetArenaLo();
 	void* hi   = OSGetArenaHi();
+	#if defined(PIKI_PC_PORT)
+	mHeapStart = (reinterpret_cast<uintptr_t>(OSInitAlloc(lo, hi, 1)) + 0x1f) & ~uintptr_t(0x1f);
+	uintptr_t heapHi = reinterpret_cast<uintptr_t>(hi) & ~uintptr_t(0x1f);
+	mHeapEnd = static_cast<u32>(heapHi - mHeapStart);
+	#else
 	mHeapStart = OSRoundUp32B(OSInitAlloc(lo, hi, 1));
 	hi         = (void*)OSRoundDown32B(hi);
 	mHeapEnd   = (u32)hi - mHeapStart;
+	#endif
 #if defined(VERSION_GPIP01)
 	if (mHeapEnd <= 0x1800000)
 #else
@@ -922,7 +1067,7 @@ void System::Initialise()
 	errCon = sysCon;
 	DVDInit();
 	if (!dvdStream.readBuffer) {
-		dvdStream.readBuffer = new (0x20) u8[dvdStream.mSize];
+		dvdStream.readBuffer = new (PIKI_ALIGNED(0x20)) u8[dvdStream.mSize];
 	}
 	!mHeapStart;
 	(gsys->getHeap(SYSHEAP_Sys)->getFree() / 1024.0f); // fakematch free size KB print?
@@ -957,7 +1102,7 @@ void System::Initialise()
 	startLoading(nullptr, true, 0);
 
 	u32 audioHeapSize = 0x80000;
-	Jac_Start(new (0x20) u8[audioHeapSize], audioHeapSize, 0x800000, "/dataDir/SndData/");
+	Jac_Start(new (PIKI_ALIGNED(0x20)) u8[audioHeapSize], audioHeapSize, 0x800000, "/dataDir/SndData/");
 	Jac_AddDVDBuffer((u8*)mMatrices, mMatrixCount * sizeof(Matrix4f));
 
 	mBaseAramAllocator.init(0x800000, 0x800000);
@@ -965,7 +1110,7 @@ void System::Initialise()
 
 	mDvdRoot.initCore("");
 	mAramRoot.initCore("");
-	mFileList = (DirEntry*)&mDvdRoot;
+	mFileList = &mDvdRoot;
 
 	mControllerMgr.init();
 	mTimer = new Timers();
@@ -998,7 +1143,7 @@ System::~System()
  */
 bool System::hasDebugInfo()
 {
-	TRAP_UNIMPLEMENTED;
+	return false;
 }
 
 /**
@@ -1183,7 +1328,11 @@ void System::endLoading()
 void doneDMA(u32 cache)
 {
 	// free the cache
+	#if defined(PIKI_PC_PORT)
+	SystemCache* sysCache = static_cast<SystemCache*>(PCResolveARQToken(cache));
+	#else
 	SystemCache* sysCache = (SystemCache*)((SystemCache*)cache)->owner;
+	#endif
 	sysCache->remove();
 	gsys->mFreeCacheList.insertAfter(sysCache);
 
@@ -1338,8 +1487,19 @@ void System::copyCacheToTexture(CacheTexture* tex)
 	OSRestoreInterrupts(inter);
 
 	gsys->mTexComplete = FALSE;
+	#if defined(PIKI_PC_PORT)
+	// The PC ARAM backend is currently synchronous and does not copy texture
+	// bytes. Complete the bookkeeping without truncating either 64-bit pointer
+	// through ARQRequest::owner.
+	cache->remove();
+	mFreeCacheList.insertAfter(cache);
+	tex->mSystemCache = nullptr;
+	tex->mPixelData = tex->mTexImage->mTextureData;
+	mTexComplete = TRUE;
+	#else
 	DCInvalidateRange((void*)mainMemAddr, size);
 	ARQPostRequest(cache, (u32)tex, ARQ_TYPE_ARAM_TO_MRAM, ARQ_PRIORITY_HIGH, aramAddr, (u32)mainMemAddr, size, freeBuffer);
+	#endif
 
 	while (mTexComplete == FALSE) { }
 }

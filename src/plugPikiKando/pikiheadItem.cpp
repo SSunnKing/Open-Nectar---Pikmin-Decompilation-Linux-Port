@@ -231,7 +231,7 @@ void PikiHeadItem::refresh(Graphics& gfx)
 		}
 
 		mItemAnimator.updateContext();
-		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr);
+		mItemShapeObject->mShape->updateAnim(gfx, mtx, nullptr, this);
 		gfx.useMatrix(Matrix4f::ident, 0);
 		mItemShapeObject->mShape->drawshape(gfx, *gfx.mCamera, nullptr);
 	}
