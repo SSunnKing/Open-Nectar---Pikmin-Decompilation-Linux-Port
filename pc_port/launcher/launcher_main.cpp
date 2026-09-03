@@ -140,14 +140,12 @@ bool respawnInTerminal()
         "x-terminal-emulator", "gnome-terminal", "konsole",
         "xfce4-terminal", "mate-terminal", "lxterminal", "xterm"
     };
-    const std::string command = "\"" + self.string()
-        + "\"; echo; echo 'Pulsa Enter para cerrar.'; read _pikmin_wait";
     for (const char* terminal : terminals) {
         if (!commandExists(terminal)) continue;
         const pid_t child = fork();
         if (child == 0) {
             setenv("PIKMIN_LAUNCHER_TERMINAL", "1", 1);
-            execlp(terminal, terminal, "-e", "sh", "-c", command.c_str(),
+            execlp(terminal, terminal, "-e", self.c_str(),
                    static_cast<char*>(nullptr));
             _exit(127);
         }
@@ -363,6 +361,13 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                                       && fs::equivalent(sourceLib, destLib, eqEc) && !eqEc;
         if (!libAlreadyInstalled) {
             if (fs::exists(destLib)) {
+                const fs::path destLoader = destLib / "ld-linux-x86-64.so.2";
+                const fs::path sourceLoader = sourceLib / "ld-linux-x86-64.so.2";
+                if (!fs::is_regular_file(destLoader) || !fs::is_regular_file(sourceLoader)) {
+                    failure = "El directorio lib existente no pertenece a Nectar. "
+                              "Elige otra carpeta de instalación o elimina manualmente " + destLib.string();
+                    return false;
+                }
                 fs::remove_all(destLib, ec);
                 if (ec) {
                     failure = "No se pudo limpiar el directorio lib anterior: " + ec.message();
