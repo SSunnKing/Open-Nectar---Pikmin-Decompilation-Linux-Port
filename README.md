@@ -11,7 +11,7 @@ This project builds upon the decompilation by [projectPiki/pikmin](https://githu
 **Functional:**
 - Complete compilation on Linux x86-64
 - Most of the game playable from start to finish
-- 60 FPS in menus/titles, 30 FPS in gameplay (original behavior)
+- 60 FPS in menus/titles, 30 FPS in gameplay (original behavior)/60 FPS in gameplay
 - TEV specialization for optimal performance
 - Controller and mouse support
 
