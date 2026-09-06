@@ -1,5 +1,7 @@
 # Open Nectar — Pikmin Decompilation Linux Port
 
+<img width="2172" height="476" alt="opennectarlogo (1)" src="https://github.com/user-attachments/assets/71283101-1be5-4ca4-9b16-488320343cc8" />
+
 Native, experimental, and open-source port of *Pikmin* (GameCube, 2001) for Linux. Runs the game code directly on the host system and translates GX to OpenGL; does not use Dolphin or any emulator.
 
 This project builds upon the decompilation by [projectPiki/pikmin](https://github.com/projectPiki/pikmin) and adds a native PC port layer.
