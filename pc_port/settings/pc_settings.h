@@ -1,0 +1,52 @@
+#ifndef PC_SETTINGS_H
+#define PC_SETTINGS_H
+
+/**
+ * @file pc_settings.h
+ * @brief Settings menu for the Pikmin PC port, opened with F1.
+ *
+ * This module is entirely PC-only and can be removed by deleting this file,
+ * `pc_settings.cpp` and the three hook sites marked `PIKI_PC_SETTINGS_MENU`
+ * in `pc_window.cpp` and `vi_stubs.cpp`.
+ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Called once from pc_main after the window exists. Loads persisted settings.
+void pc_settings_init(void);
+
+// Polled every frame from pc_window_poll_events (after SDL events are read).
+// Handles the F1 toggle and navigation. If the menu is open it consumes the
+// pad (returns true) so the game does not react to the same input.
+bool pc_settings_consume_game_input(void);
+
+// Draws the overlay through the game's GX/GL stack. Called from VIWaitForRetrace
+// just before the framebuffer is blitted to the window, so it appears on top.
+void pc_settings_draw(void);
+
+// Applies the currently selected video settings to the SDL window.
+void pc_settings_apply_video(void);
+
+// True while the confirmation/revert dialog is pending after a video change.
+bool pc_settings_has_pending_video(void);
+
+// Returns the current FPS mode (0=30 FPS, 1=60 FPS experimental).
+int pc_settings_get_fps_mode(void);
+
+// Returns 1 while the "chain Pikmin actions" mod is enabled, 0 otherwise.
+//
+// This is a deliberate change of behaviour, not a bug fix: the original game
+// sends a Pikmin back to the squad once it finishes a job, and that was
+// verified against the retail game. With the mod on, a Pikmin that would head
+// back instead looks for more work nearby -- so one thrown at a Pellet Posy
+// breaks it and then carries the pellet to the Onion. Off by default, so the
+// stock port stays faithful.
+int pc_settings_get_chain_actions(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // PC_SETTINGS_H
