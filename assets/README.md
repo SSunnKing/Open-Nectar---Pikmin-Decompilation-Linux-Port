@@ -1,9 +1,9 @@
-# Datos locales del juego
+# Local Game Data
 
-Este directorio está reservado para los datos extraídos de una copia legítima
-del juego. Todo su contenido salvo este archivo está ignorado por Git y no debe
-subirse, redistribuirse ni incluirse en una release.
+This directory is reserved for data extracted from a legitimate copy of the
+game. All of its contents except this file are ignored by Git and must not be
+uploaded, redistributed, or included in a release.
 
-Los usuarios normales no necesitan copiar nada aquí: `pikmin-launcher` instala
-los datos en su directorio XDG personal. Este árbol sólo se conserva como
-compatibilidad para el flujo local de desarrollo existente.
+Normal users do not need to copy anything here: nectar-launcher installs the
+data in their personal XDG directory. This tree is kept only for compatibility
+with the existing local development workflow.

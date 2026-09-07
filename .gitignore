@@ -82,3 +82,23 @@ tools/vc6
 # Port a Windows (MinGW)
 build-windows/
 third_party/SDL2-mingw64/
+
+# Documentos internos de trabajo: notas de sesión, planes y auditorías. Viven
+# en el disco de quien desarrolla, no en el repositorio público.
+/AI_HANDOFF.md
+/SIGUIENTE_SESION.md
+/60FPS_FAILED_ATTEMPTS.md
+/PORT_AUDIT.md
+/PORTABILIDAD.md
+/RENDIMIENTO.md
+/REFERENCIAS_EXTERNAS.md
+/REFRESH_RATE_TIMING_PLAN.md
+/PLAN_MAQUINA_ESTADOS_PIKI.md
+/SEPARATION_PLAN.md
+/TEST_PLAN.md
+/MOUSE_INPUT_IMPLEMENTATION_GUIDE.md
+/ROADMAP.md
+/CONTROL_SCHEMES.md
+/README-WINDOWS.md
+/PLAN_WINDOWS.md
+/docs/
