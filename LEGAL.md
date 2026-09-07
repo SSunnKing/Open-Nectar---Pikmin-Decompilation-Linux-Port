@@ -1,28 +1,20 @@
-# Aviso legal y contenido de terceros
+# Legal notice and third-party content
 
-Este repositorio es un proyecto comunitario independiente de ingeniería y
-preservación. No está afiliado, patrocinado ni aprobado por Nintendo.
+This repository is an independent community engineering and preservation project. It is not affiliated, sponsored, or endorsed by Nintendo.
 
-*Pikmin*, Nintendo, Nintendo GameCube y sus nombres, personajes, gráficos,
-audio y demás recursos son marcas o materiales de sus respectivos titulares.
-El repositorio no pretende conceder ninguna licencia sobre ellos.
+*Pikmin*, Nintendo, Nintendo GameCube and their names, characters, graphics, audio, and other resources are trademarks or materials of their respective owners. The repository does not intend to grant any license over them.
 
-La licencia [CC0 1.0](LICENSE.MD) sólo se aplica a aportaciones sobre las que el
-autor tenga capacidad legal para efectuar esa renuncia. No convierte en libres
-los materiales de terceros que puedan ser necesarios para ejecutar el juego.
+The [CC0 1.0](LICENSE.MD) license only applies to contributions over which the author has legal capacity to make such waiver. It does not make third-party materials that may be necessary to run the game freely available.
 
-## Regla de distribución
+## Distribution rule
 
-Ni el repositorio, ni las releases, ni los artefactos de CI deben contener:
+Neither the repository, nor releases, nor CI artifacts should contain:
 
-- imágenes ISO/GCM/RVZ/WIA/GCZ u otros volcados del disco;
-- el directorio `assets/dataDir` o archivos extraídos del juego;
-- claves, partidas personales o configuraciones del usuario;
-- paquetes que combinen el port con datos propietarios.
+- ISO/GCM/RVZ/WIA/GCZ images or other disc dumps;
+- the `assets/dataDir` directory or game-extracted files;
+- keys, personal saves, or user configurations;
+- packages combining the port with proprietary data.
 
-El launcher sólo procesa una imagen facilitada localmente por el usuario. No la
-descarga, no la incluye en el binario y no intenta eludir protecciones de acceso.
-Cada usuario es responsable de obtener y usar su copia conforme a las leyes que
-le sean aplicables.
+The launcher only processes an image provided locally by the user. It does not download it, does not include it in the binary, and does not attempt to circumvent access protections. Each user is responsible for obtaining and using their copy in accordance with applicable laws.
 
-Este texto es una guía del proyecto y no constituye asesoramiento legal.
+This text is a project guide and does not constitute legal advice.
