@@ -1,7 +1,20 @@
 #if defined(PIKI_PC_PORT)
 #include "port/jaudio_host.h"
+#include <stdio.h>
 #endif
 #include "jaudio/pikidemo.h"
+
+#ifdef PIKI_PC_PORT
+#include <chrono>
+// Monotonic seconds for the bounded BGM hand-off below. Local to this file so
+// the decompiled sources gain no new shared dependency.
+static double bgmHandshakeNow()
+{
+	return std::chrono::duration<double>(
+	           std::chrono::steady_clock::now().time_since_epoch())
+	    .count();
+}
+#endif
 #include "GlobalGameOptions.h"
 #include "MoviePlayer.h"
 #include "jaudio/cmdqueue.h"
@@ -32,6 +45,14 @@ int demo_seq_active = -1;
 int demo_mml_active = -1;
 BOOL demo_inited;
 vu32 now_loading;
+
+#ifdef PIKI_PC_PORT
+// Set when the player skipped the cutscene rather than watching it out.
+// __Jac_FinishDemo consults it; see the comment there.
+static BOOL demo_was_skipped;
+
+void Jac_NoteDemoSkipped(void) { demo_was_skipped = TRUE; }
+#endif
 int parts_find_demo_state;
 int text_demo_state;
 u8 demo_parts_id;
@@ -587,12 +608,35 @@ void Jac_StartDemo(u32 cinID)
 	}
 	default:
 	{
-		while (now_loading < 3) {
 #ifdef PIKI_PC_PORT
-			PikiJAudioTick();
-			OSYieldThread();
-#endif
+		// now_loading is set from the DVD task thread and read here on the game
+		// thread. The console could spin on that safely: its scheduler was
+		// cooperative and the hand-off was ordered. Here it is a race, and a
+		// missed signal used to wedge the game forever -- a hang on Linux, a
+		// crash on Windows. Adding tracing was enough to make it pass, which is
+		// what a race looks like.
+		//
+		// Bound the wait. Losing the hand-off then costs a late music cue
+		// instead of the whole session, and says so.
+		{
+			const double deadline = bgmHandshakeNow() + 5.0;
+			while (now_loading < 3) {
+				PikiJAudioTick();
+				OSYieldThread();
+				if (bgmHandshakeNow() > deadline) {
+					fprintf(stderr,
+					        "[jaudio] BGM load handshake lost for cinematic %d "
+					        "(now_loading=%u); continuing without it.\n",
+					        (int)cinID, (unsigned)now_loading);
+					fflush(stderr);
+					break;
+				}
+			}
 		}
+#else
+		while (now_loading < 3) {
+		}
+#endif
 		break;
 	}
 	}
@@ -846,6 +890,17 @@ void __Jac_FinishDemo()
 	}
 
 	int flag = status->mAudioConfig;
+#ifdef PIKI_PC_PORT
+	// Bit 0x20 marks a cutscene whose music is meant to carry on into the scene
+	// that follows, so finishing it deliberately leaves the stream running.
+	// That only holds when the cutscene actually played to its end: skipping it
+	// leaves the stream with nothing to carry into, and it kept playing over
+	// the next scene. Treat a skip as if the bit were not set.
+	if (demo_was_skipped) {
+		flag &= ~0x20;
+	}
+	demo_was_skipped = FALSE;
+#endif
 	if (flag && !(flag & 0x20)) {
 		if (flag & 0x80) {
 			Jac_StopDemoSound(flag & 0xf);

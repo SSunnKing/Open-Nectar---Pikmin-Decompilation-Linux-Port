@@ -78,6 +78,10 @@ struct PcConfig {
     // Off by default. The stock behaviour -- finish a job, walk back to the
     // squad -- is what the retail game does; this only changes it on request.
     int chainActions = 0;
+    // What the mouse wheel does: 0 = pick the Pikmin colour to throw,
+    // 1 = zoom the camera. One setting rather than two toggles, so the two
+    // uses cannot both be on or both be off.
+    int mouseWheelAction = 0;
 
     void applyDefaults() {
         windowWidth = 1280;
@@ -94,6 +98,7 @@ struct PcConfig {
         stickInvert = 0;
         cStickInvert = 0;
         chainActions = 0;
+        mouseWheelAction = 0;
         for (int i = 0; i < PC_KEY_ACT_COUNT; i++) {
             keyboardBindings[i] = kDefaultKeyBindings[i];
             gamepadBindings[i] = -1; // -1 = not remapped (use default)
@@ -187,7 +192,7 @@ constexpr int kAdvancedRowCount = 4;
 // alone. 0=control scheme, 1=chain Pikmin actions.
 bool sInModsSubmenu = false;
 int sModsSelection = 0;
-constexpr int kModsRowCount = 2;
+constexpr int kModsRowCount = 3;
 
 // Submenu de resolucion. La lista sale del monitor, asi que puede traer veinte
 // o cuarenta entradas segun el panel: recorrerlas de una en una con
@@ -407,6 +412,7 @@ void saveConfig() {
     out << "renderScale = " << sConfig.renderScale << "\n";
     out << "fpsMode = " << sConfig.fpsMode << "\n";
     out << "chainActions = " << sConfig.chainActions << "\n";
+    out << "mouseWheelAction = " << sConfig.mouseWheelAction << "\n";
     out << "controlMode = " << sConfig.controlMode << "\n";
     out << "mouseSensitivity = " << sConfig.mouseSensitivity << "\n";
     out << "stickDeadZone = " << sConfig.stickDeadZone << "\n";
@@ -490,6 +496,10 @@ void loadConfig() {
         }
         else if (key == "chainActions") {
             sConfig.chainActions = atoi(val.c_str()) ? 1 : 0;
+        }
+        else if (key == "mouseWheelAction") {
+            sConfig.mouseWheelAction = atoi(val.c_str());
+            if (sConfig.mouseWheelAction < 0 || sConfig.mouseWheelAction > 1) sConfig.mouseWheelAction = 0;
         }
         else if (key == "stickInvert") sConfig.stickInvert = atoi(val.c_str()) & 3;
         else if (key == "cStickInvert") sConfig.cStickInvert = atoi(val.c_str()) & 3;
@@ -891,6 +901,10 @@ void pollMenuInput() {
         // Chain Pikmin actions.
         else if (sModsSelection == 1) {
             if (left || right) sPending.chainActions = sPending.chainActions ? 0 : 1;
+        }
+        // What the mouse wheel controls.
+        else if (sModsSelection == 2) {
+            if (left || right) sPending.mouseWheelAction = sPending.mouseWheelAction ? 0 : 1;
         }
         return;
     }
@@ -1620,6 +1634,7 @@ void pc_settings_draw(void) {
         const char* modsLabels[kModsRowCount] = {
             "Control Scheme",
             "Chain Pikmin Actions",
+            "Mouse Wheel",
         };
 
         const int listStartY = subY + 62;
@@ -1634,9 +1649,12 @@ void pc_settings_draw(void) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.controlMode == PC_CONTROL_CLASSIC ? "Classic (original)"
                                                                     : "Mouse Cursor");
-            } else {
+            } else if (i == 1) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.chainActions ? "On" : "Off (original)");
+            } else {
+                snprintf(value, sizeof(value), "%s",
+                         sPending.mouseWheelAction ? "Camera Zoom" : "Pikmin Colour");
             }
             drawSubmenuRow(gfx, subX + 20, itemY, subW - 40,
                            modsLabels[i], value, selected);
@@ -1663,4 +1681,8 @@ int pc_settings_get_fps_mode(void) {
 
 int pc_settings_get_chain_actions(void) {
     return sConfig.chainActions;
+}
+
+int pc_settings_get_mouse_wheel_action(void) {
+    return sConfig.mouseWheelAction;
 }

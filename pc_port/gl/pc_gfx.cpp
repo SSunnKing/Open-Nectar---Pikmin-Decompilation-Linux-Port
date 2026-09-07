@@ -152,6 +152,38 @@ static void load_gl_functions() {
     glEndQuery_ptr = (PCGLENDQUERYPROC)SDL_GL_GetProcAddress("glEndQuery");
     glGetQueryObjectiv_ptr = (PCGLGETQUERYOBJECTIVPROC)SDL_GL_GetProcAddress("glGetQueryObjectiv");
     glGetQueryObjectui64v_ptr = (PCGLGETQUERYOBJECTUI64VPROC)SDL_GL_GetProcAddress("glGetQueryObjectui64v");
+
+    // Every pointer above is called without a null check, so a missing entry
+    // point crashes the moment that feature is first used -- which can be deep
+    // into a level rather than at startup. Windows' opengl32 exports only
+    // OpenGL 1.1, so this is where a driver too old for the port shows up.
+    // Name what is missing instead of leaving a silent landmine.
+    {
+        struct Entry { const char* name; const void* ptr; };
+        const Entry entries[] = {
+            { "glActiveTexture", (const void*)glActiveTexture_ptr },
+            { "glBlendEquation", (const void*)glBlendEquation_ptr },
+            { "glGenBuffers", (const void*)glGenBuffers_ptr },
+            { "glBindBuffer", (const void*)glBindBuffer_ptr },
+            { "glBufferData", (const void*)glBufferData_ptr },
+            { "glCreateShader", (const void*)glCreateShader_ptr },
+            { "glCreateProgram", (const void*)glCreateProgram_ptr },
+            { "glUseProgram", (const void*)glUseProgram_ptr },
+            { "glUniformMatrix4fv", (const void*)glUniformMatrix4fv_ptr },
+        };
+        int missing = 0;
+        for (const Entry& entry : entries) {
+            if (entry.ptr == nullptr) {
+                fprintf(stderr, "[PC GX] OpenGL entry point missing: %s\n", entry.name);
+                ++missing;
+            }
+        }
+        if (missing != 0) {
+            fprintf(stderr, "[PC GX] %d OpenGL entry point(s) unavailable. The driver is "
+                            "too old for this port; expect a crash when they are used.\n",
+                    missing);
+        }
+    }
 }
 
 // OpenGL uniform calls carry non-trivial validation/dispatch overhead. GX code

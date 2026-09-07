@@ -1,4 +1,8 @@
 #include "CPlate.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_window.h"
+#include "settings/pc_settings.h"
+#endif
 #include "Creature.h"
 #include "DebugLog.h"
 #include "FlowController.h"
@@ -202,6 +206,26 @@ void PcamCamera::parameterUpdated()
 void PcamCamera::control(Controller& controller)
 {
 	STACK_PAD_VAR(2);
+
+#if defined(PIKI_PC_PORT)
+	// Mouse wheel zoom. mDistanceMultiplier already scales the follow distance
+	// in getGoalDistance(); the original sets it to 1.0 once and never touches
+	// it again, so it is free to drive from here without disturbing the
+	// existing zoom levels or the smoothing that reads it.
+	if (pc_settings_get_mouse_wheel_action() == 1) {
+		const int steps = pc_window_take_wheel_steps();
+		if (steps != 0) {
+			// Away from the user pulls the camera back.
+			mDistanceMultiplier += 0.08f * static_cast<f32>(steps);
+			if (mDistanceMultiplier < 0.45f) mDistanceMultiplier = 0.45f;
+			if (mDistanceMultiplier > 2.50f) mDistanceMultiplier = 2.50f;
+		}
+	} else if (mDistanceMultiplier != 1.0f) {
+		// Switching the wheel back to picking Pikmin leaves the camera where
+		// the player last put it otherwise, which reads as a stuck zoom.
+		mDistanceMultiplier = 1.0f;
+	}
+#endif
 
 	bool doRotate = controller.mTriggerL / 170.0f >= getParameterF(PCAMF_RotationButtonThreshold);
 	bool isZClick = false;

@@ -571,7 +571,8 @@ void DGXGraphics::waitRetrace()
 	// On GameCube mFrameRate is the number of VI retraces per logical frame:
 	// 1 = 60 Hz, 2 = 30 Hz. Preserve that contract on PC so legacy systems
 	// which advance once per update do not speed up as rendering gets faster.
-	pc_window_set_swap_interval(mSystemFrameRate > 0 ? mSystemFrameRate : 1);
+	// Pass the clamp through untouched: 0 is the 120 Hz mode, not an error.
+	pc_window_set_swap_interval(mSystemFrameRate >= 0 ? mSystemFrameRate : 1);
 #endif
 	VIWaitForRetrace();
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);

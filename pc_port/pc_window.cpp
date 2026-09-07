@@ -17,6 +17,12 @@ static bool sShouldClose = false;
 static int sWindowWidth = 1280;
 static int sWindowHeight = 720;
 static int sLogicalRetraceInterval = 1;
+
+// Mouse wheel notches accumulated since the last consumer read them. The wheel
+// is a discrete, edge-shaped input: events arrive once per notch and are gone,
+// so they have to be banked here until a logical tick collects them, exactly
+// like the pad's edge-shaped buttons.
+static int sMouseWheelSteps = 0;
 static double sTargetRefreshRate = 60.0;
 static std::chrono::steady_clock::time_point sNextPresentDeadline;
 
@@ -354,6 +360,17 @@ void pc_window_poll_events(PADStatus* pad) {
             case SDL_QUIT:
                 sShouldClose = true;
                 break;
+            case SDL_MOUSEWHEEL: {
+                // SDL reports natural-scroll flipping through the direction
+                // field; undo it so a notch away from the user is always
+                // positive regardless of the system setting.
+                int steps = event.wheel.y;
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+                    steps = -steps;
+                }
+                sMouseWheelSteps += steps;
+                break;
+            }
             case SDL_WINDOWEVENT:
                 if (event.window.event == SDL_WINDOWEVENT_RESIZED || 
                     event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -654,8 +671,14 @@ void pc_window_swap_buffers(void) {
         // VSync Off must not retain the software presentation limiter. Game
         // simulation uses the fixed-step scheduler independently.
         if (sVsyncEnabled) {
+            // The interval is the game's setFrameClamp: retraces per logical
+            // frame against a 60 Hz base, so 1 is 60 Hz and 2 is 30 Hz. The
+            // port adds 0 for 120 Hz, which has no 60 Hz divisor. Mirror
+            // PcFrameScheduler::deltaForClamp, or the 120 FPS mode simulates
+            // at 120 and then presents at 60.
             const auto targetDuration = std::chrono::duration<double>(
-                sLogicalRetraceInterval / 60.0);
+                sLogicalRetraceInterval == 0 ? (1.0 / 120.0)
+                                             : (sLogicalRetraceInterval / 60.0));
             const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(targetDuration);
             auto now = std::chrono::steady_clock::now();
             if (sNextPresentDeadline.time_since_epoch().count() == 0) {
@@ -673,8 +696,16 @@ void pc_window_swap_buffers(void) {
     }
 }
 
+int pc_window_take_wheel_steps(void) {
+    const int steps = sMouseWheelSteps;
+    sMouseWheelSteps = 0;
+    return steps;
+}
+
 void pc_window_set_swap_interval(int interval) {
-    if (interval < 1) interval = 1;
+    // 0 is meaningful here: it is the port's 120 Hz mode. Only negatives are
+    // nonsense.
+    if (interval < 0) interval = 1;
     if (sLogicalRetraceInterval == interval) return;
     // Use one pacing mechanism only. SDL_GL_SwapWindow must not add a second,
     // driver-controlled wait on top of the emulated 60 Hz VI interval.

@@ -1,4 +1,5 @@
 #include "MoviePlayer.h"
+#include <cstdio>
 #include "DebugLog.h"
 #include "EffectMgr.h"
 #include "FlowController.h"
@@ -713,7 +714,14 @@ void MoviePlayer::update()
 				bool togglePrint   = gsys->mTogglePrint != FALSE;
 				gsys->mTogglePrint = TRUE;
 				PRINT("clearing top heap!\n");
+				// Unconditional: PRINT obeys gsys->mTogglePrint, which is
+				// restored right below, so the usual trace goes quiet exactly
+				// where a crash here needs to be pinned down.
+				fprintf(stderr, "[MOVIE] resetHeap(SYSHEAP_Movie) enter\n");
+				fflush(stderr);
 				gsys->resetHeap(SYSHEAP_Movie, AYU_STACK_GROW_DOWN);
+				fprintf(stderr, "[MOVIE] resetHeap(SYSHEAP_Movie) done\n");
+				fflush(stderr);
 				gsys->mTogglePrint = togglePrint;
 				gameflow.mPauseAll = FALSE;
 				PRINT("all movies ended!\n");
@@ -730,6 +738,11 @@ void MoviePlayer::update()
  */
 void MoviePlayer::skipScene(int sceneSkipFlag)
 {
+#if defined(PIKI_PC_PORT)
+	if (sceneSkipFlag == SCENESKIP_Skip || sceneSkipFlag == SCENESKIP_SkipAll) {
+		Jac_NoteDemoSkipped();
+	}
+#endif
 	if (sceneSkipFlag == SCENESKIP_SkipAll) {
 		PRINT("SKIP ALL !!! SKIP ALL !!! SKIP ALL !!! SKIP ALL !!! SKIP ALL !!! \n");
 		while (mStackInfoList.getChildCount()) {

@@ -293,7 +293,9 @@ void System::run(BaseApp* app)
 		Jac_Gsync();
 		CARDProbe(0);
 		CARDProbe(1);
+#if !PIKI_PC_PORT
 		mControllerMgr.update();
+#endif
 
 #if PIKI_PC_PORT
 		if (pc_window_should_close()) {
@@ -307,6 +309,14 @@ void System::run(BaseApp* app)
 
 		if (schedule.logicalTicks > 0) {
 #if PIKI_PC_PORT
+			// Sample input once per logical tick, not once per loop iteration.
+			// Only a tick consumes it, and the pad reader is edge shaped: a
+			// press seen by two polls before the tick that would read it is a
+			// press the game never sees. The loop can spin several times per
+			// tick -- the deadline sleep leaves a margin, and Windows' default
+			// timer granularity is coarse enough to overshoot it -- which lost
+			// walking and throw inputs at high refresh rates.
+			mControllerMgr.update();
 			pc_gfx_enable_capture(pc_replay_test_enabled());
 #endif
 			updateSysClock();

@@ -45,6 +45,9 @@ int pc_settings_get_fps_mode(void);
 // stock port stays faithful.
 int pc_settings_get_chain_actions(void);
 
+/// What the mouse wheel controls: 0 = Pikmin colour to throw, 1 = camera zoom.
+int pc_settings_get_mouse_wheel_action(void);
+
 #ifdef __cplusplus
 }
 #endif

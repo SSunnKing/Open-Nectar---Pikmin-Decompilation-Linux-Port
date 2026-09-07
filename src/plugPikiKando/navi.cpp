@@ -1,4 +1,9 @@
 #include "Navi.h"
+#if defined(PIKI_PC_PORT)
+#include "GameStat.h"
+#include "pc_window.h"
+#include "settings/pc_settings.h"
+#endif
 #include "AIConstant.h"
 #include "BombItem.h"
 #include "CPlate.h"
@@ -641,8 +646,72 @@ f32 Navi::getiMass()
 /**
  * @todo: Documentation
  */
+#if defined(PIKI_PC_PORT)
+/**
+ * Colour the player asked to throw next, or -1 for the original behaviour of
+ * simply taking the nearest Pikmin. Driven by the mouse wheel.
+ */
+static int sPreferredThrowColor = -1;
+
+/// True when the squad holds at least one Pikmin of @p color.
+static bool pcSquadHasColor(int color)
+{
+	if (color < 0 || color >= PikiColorCount) {
+		return false;
+	}
+	return GameStat::formationPikis.mCounts[color] > 0;
+}
+
+/**
+ * @brief Advances the preferred colour by the wheel notches banked since the
+ *        last tick.
+ *
+ * Only colours actually in the squad take part, so one colour means the wheel
+ * does nothing, two colours alternate and three cycle -- without special-casing
+ * any of them. A preference whose colour ran out snaps to one that exists,
+ * otherwise the wheel would appear stuck on an empty colour.
+ */
+static void pcUpdatePreferredThrowColor()
+{
+	if (pc_settings_get_mouse_wheel_action() != 0) {
+		sPreferredThrowColor = -1;
+		return;
+	}
+
+	int present[PikiColorCount];
+	int presentCount = 0;
+	for (int color = 0; color < PikiColorCount; color++) {
+		if (pcSquadHasColor(color)) {
+			present[presentCount++] = color;
+		}
+	}
+	if (presentCount == 0) {
+		sPreferredThrowColor = -1;
+		return;
+	}
+
+	// Where the current preference sits among the colours on hand.
+	int index = 0;
+	for (int i = 0; i < presentCount; i++) {
+		if (present[i] == sPreferredThrowColor) {
+			index = i;
+			break;
+		}
+	}
+
+	const int steps = pc_window_take_wheel_steps();
+	if (steps != 0) {
+		index = ((index + steps) % presentCount + presentCount) % presentCount;
+	}
+	sPreferredThrowColor = present[index];
+}
+#endif
+
 void Navi::findNextThrowPiki()
 {
+#if defined(PIKI_PC_PORT)
+	pcUpdatePreferredThrowColor();
+#endif
 	mNextThrowPiki = nullptr;
 	Iterator iter(mPlateMgr);
 	f32 minDist = 200.0f;
@@ -655,10 +724,38 @@ void Navi::findNextThrowPiki()
 
 		f32 dist = qdist2(piki, this);
 		if (dist < minDist && piki->getState() == PIKISTATE_Normal && piki->isThrowable()) {
+#if defined(PIKI_PC_PORT)
+			// With a colour chosen, only that colour competes for nearest.
+			if (sPreferredThrowColor >= 0 && piki->mColor != sPreferredThrowColor) {
+				continue;
+			}
+#endif
 			mNextThrowPiki = piki;
 			minDist        = dist;
 		}
 	}
+
+#if defined(PIKI_PC_PORT)
+	// Nothing of the chosen colour within reach: fall back to the original
+	// search rather than leaving the captain with nothing to throw, which would
+	// read as the game ignoring the button.
+	if (mNextThrowPiki == nullptr && sPreferredThrowColor >= 0) {
+		Iterator fallback(mPlateMgr);
+		minDist = 200.0f;
+		CI_LOOP(fallback)
+		{
+			Piki* piki = static_cast<Piki*>(*fallback);
+			if (roughCull(this, piki, minDist)) {
+				continue;
+			}
+			f32 dist = qdist2(piki, this);
+			if (dist < minDist && piki->getState() == PIKISTATE_Normal && piki->isThrowable()) {
+				mNextThrowPiki = piki;
+				minDist        = dist;
+			}
+		}
+	}
+#endif
 }
 
 /**

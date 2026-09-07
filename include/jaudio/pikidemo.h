@@ -35,4 +35,10 @@ void Jac_SetDemoPartsCount(int);                            // args
 
 END_SCOPE_EXTERN_C
 
+#ifdef PIKI_PC_PORT
+/// Records that the current cutscene was skipped rather than watched to the
+/// end, so finishing it also stops a stream that would otherwise carry over.
+void Jac_NoteDemoSkipped(void);
+#endif
+
 #endif

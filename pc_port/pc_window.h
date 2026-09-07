@@ -118,4 +118,13 @@ extern "C" void pc_window_clear_mouse_cursor_delta(void);
 }
 #endif
 
+/**
+ * @brief Returns mouse wheel notches banked since the last call, and clears
+ *        them. Positive is away from the user.
+ *
+ * Read once per logical tick. The wheel is edge shaped: reading it twice
+ * before the tick that acts on it throws the first read away.
+ */
+int pc_window_take_wheel_steps(void);
+
 #endif // PC_WINDOW_H
