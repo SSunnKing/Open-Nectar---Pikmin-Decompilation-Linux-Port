@@ -1101,7 +1101,7 @@ void NaviContainerState::exec(Navi* navi)
 void NaviContainerState::enterPikis(Navi* navi, int countToEnter)
 {
 	PRINT("goal color = %d\n", navi->mGoalItem->mOnionColour);
-	Piki* pikiList[MAX_PIKI_ON_FIELD * 2]; // This has a capacity of 200 for some reason.
+	Piki* pikiList[PIKI_LIST_CAPACITY]; // This has a capacity of 200 for some reason.
 	int numPikis = 0;
 	Iterator it(navi->mPlateMgr);
 
@@ -1114,6 +1114,11 @@ void NaviContainerState::enterPikis(Navi* navi, int countToEnter)
 			continue;
 		}
 		if (piki->mColor == navi->mGoalItem->mOnionColour) {
+			#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (numPikis >= PIKI_LIST_CAPACITY) break;
+#endif
 			pikiList[numPikis++] = piki;
 			if (numPikis == countToEnter) {
 				break;

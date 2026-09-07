@@ -82,6 +82,10 @@ struct PcConfig {
     // 1 = zoom the camera. One setting rather than two toggles, so the two
     // uses cannot both be on or both be off.
     int mouseWheelAction = 0;
+    // Pikmin allowed on the field at once. The game treats this as a design
+    // parameter of its own (AIConstant "p15"), so raising it is supported
+    // rather than forced. 100 is the original.
+    int pikiLimit = 100;
 
     void applyDefaults() {
         windowWidth = 1280;
@@ -99,6 +103,7 @@ struct PcConfig {
         cStickInvert = 0;
         chainActions = 0;
         mouseWheelAction = 0;
+        pikiLimit = 100;
         for (int i = 0; i < PC_KEY_ACT_COUNT; i++) {
             keyboardBindings[i] = kDefaultKeyBindings[i];
             gamepadBindings[i] = -1; // -1 = not remapped (use default)
@@ -192,7 +197,11 @@ constexpr int kAdvancedRowCount = 4;
 // alone. 0=control scheme, 1=chain Pikmin actions.
 bool sInModsSubmenu = false;
 int sModsSelection = 0;
-constexpr int kModsRowCount = 3;
+constexpr int kModsRowCount = 4;
+
+// Field-limit stops. 100 is what the original game uses.
+constexpr int kPikiLimits[]   = { 50, 100, 150, 200, 300, 500, 750, 999 };
+constexpr int kPikiLimitCount = int(sizeof(kPikiLimits) / sizeof(kPikiLimits[0]));
 
 // Submenu de resolucion. La lista sale del monitor, asi que puede traer veinte
 // o cuarenta entradas segun el panel: recorrerlas de una en una con
@@ -413,6 +422,7 @@ void saveConfig() {
     out << "fpsMode = " << sConfig.fpsMode << "\n";
     out << "chainActions = " << sConfig.chainActions << "\n";
     out << "mouseWheelAction = " << sConfig.mouseWheelAction << "\n";
+    out << "pikiLimit = " << sConfig.pikiLimit << "\n";
     out << "controlMode = " << sConfig.controlMode << "\n";
     out << "mouseSensitivity = " << sConfig.mouseSensitivity << "\n";
     out << "stickDeadZone = " << sConfig.stickDeadZone << "\n";
@@ -500,6 +510,10 @@ void loadConfig() {
         else if (key == "mouseWheelAction") {
             sConfig.mouseWheelAction = atoi(val.c_str());
             if (sConfig.mouseWheelAction < 0 || sConfig.mouseWheelAction > 1) sConfig.mouseWheelAction = 0;
+        }
+        else if (key == "pikiLimit") {
+            sConfig.pikiLimit = atoi(val.c_str());
+            if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
         }
         else if (key == "stickInvert") sConfig.stickInvert = atoi(val.c_str()) & 3;
         else if (key == "cStickInvert") sConfig.cStickInvert = atoi(val.c_str()) & 3;
@@ -905,6 +919,18 @@ void pollMenuInput() {
         // What the mouse wheel controls.
         else if (sModsSelection == 2) {
             if (left || right) sPending.mouseWheelAction = sPending.mouseWheelAction ? 0 : 1;
+        }
+        // Pikmin field limit. Stepped through meaningful values rather than one
+        // at a time: the menu has no key repeat, so a fine slider would take
+        // hundreds of presses to cross the range.
+        else if (sModsSelection == 3) {
+            int idx = 0;
+            for (int i = 0; i < kPikiLimitCount; i++) {
+                if (kPikiLimits[i] == sPending.pikiLimit) { idx = i; break; }
+            }
+            if (left) idx = (idx + kPikiLimitCount - 1) % kPikiLimitCount;
+            else if (right) idx = (idx + 1) % kPikiLimitCount;
+            sPending.pikiLimit = kPikiLimits[idx];
         }
         return;
     }
@@ -1635,6 +1661,7 @@ void pc_settings_draw(void) {
             "Control Scheme",
             "Chain Pikmin Actions",
             "Mouse Wheel",
+            "Pikmin Limit",
         };
 
         const int listStartY = subY + 62;
@@ -1652,9 +1679,18 @@ void pc_settings_draw(void) {
             } else if (i == 1) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.chainActions ? "On" : "Off (original)");
-            } else {
+            } else if (i == 2) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.mouseWheelAction ? "Camera Zoom" : "Pikmin Colour");
+            } else {
+                if (sPending.pikiLimit == 100) {
+                    snprintf(value, sizeof(value), "100 (original)");
+                } else if (sPending.pikiLimit > 200) {
+                    snprintf(value, sizeof(value), "%d  (may cost performance)",
+                             sPending.pikiLimit);
+                } else {
+                    snprintf(value, sizeof(value), "%d", sPending.pikiLimit);
+                }
             }
             drawSubmenuRow(gfx, subX + 20, itemY, subW - 40,
                            modsLabels[i], value, selected);
@@ -1685,4 +1721,8 @@ int pc_settings_get_chain_actions(void) {
 
 int pc_settings_get_mouse_wheel_action(void) {
     return sConfig.mouseWheelAction;
+}
+
+int pc_settings_get_piki_limit(void) {
+    return sConfig.pikiLimit;
 }

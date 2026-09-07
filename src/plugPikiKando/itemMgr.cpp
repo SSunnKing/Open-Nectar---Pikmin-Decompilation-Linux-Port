@@ -1,4 +1,7 @@
 #include "ItemMgr.h"
+#if defined(PIKI_PC_PORT)
+#include "settings/pc_settings.h"
+#endif
 #include "AIConstant.h"
 #include "BaseInf.h"
 #include "BombItem.h"
@@ -1339,7 +1342,12 @@ PikiHeadMgr::PikiHeadMgr(ItemMgr* mgr)
 	PRINT_KANDO("PIKIHEADMGR *** this = %x\n", this);
 	mPikiHeadProps = new PikiHeadItemProp();
 	mPikiHeadAI    = new PikiHeadAI();
+#if defined(PIKI_PC_PORT)
+	// Buried sprouts have their own pool, sized from the same limit.
+	create(pc_settings_get_piki_limit());
+#else
 	create(MAX_PIKI_ON_FIELD);
+#endif
 	PRINT_KANDO("=====================================\n");
 }
 

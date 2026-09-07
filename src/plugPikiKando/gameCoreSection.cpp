@@ -1,4 +1,12 @@
 #include "GameCoreSection.h"
+#if defined(PIKI_PC_PORT)
+#include <SDL.h>
+#include <cstdlib>
+#include <cstdio>
+#endif
+#if defined(PIKI_PC_PORT)
+#include "settings/pc_settings.h"
+#endif
 
 #include "AIConstant.h"
 #include "AIPerf.h"
@@ -962,7 +970,15 @@ void GameCoreSection::initStage()
 	pikiMgr->mMapMgr    = mMapMgr;
 
 	memStat->start("pikiCreate");
+#if defined(PIKI_PC_PORT)
+	// The object pool, and the real ceiling on how many Pikmin can exist: ask
+	// for one past it and birth fails outright. 102 in the original, the field
+	// limit plus a small margin, so keep that relationship to the configured
+	// limit instead of the default.
+	pikiMgr->create(pc_settings_get_piki_limit() + 2);
+#else
 	pikiMgr->create(MAX_PIKI_ON_FIELD + 2); // This has a capacity of 102 for some reason.
+#endif
 	memStat->end("pikiCreate");
 
 	memStat->end("piki");
@@ -1394,6 +1410,17 @@ GameCoreSection::GameCoreSection(Controller* controller, MapMgr* mgr, Camera& ca
 	seMgr = new SeMgr();
 
 	AIConstant::createInstance();
+#if defined(PIKI_PC_PORT)
+	// Field limit, straight after the constants exist. AICONST dereferences
+	// AIConstant::_instance, which is null until this point and is set back to
+	// null on teardown, so this cannot be done from the game's own start-up
+	// message handler.
+	//
+	// Every consumer reads the value through AICONST.mMaxPikisOnField(), so
+	// writing it once here covers the spawn gates in pikiMgr and itemMgr as
+	// well as the HUD counter.
+	AICONST.mMaxPikisOnField(pc_settings_get_piki_limit());
+#endif
 	gameflow.addGenNode("AI定数", AIConstant::_instance); // 'AI Constants'
 
 	KeyConfig::createInstance();
@@ -1499,9 +1526,72 @@ GameCoreSection::GameCoreSection(Controller* controller, MapMgr* mgr, Camera& ca
 /**
  * @todo: Documentation
  */
+#if defined(PIKI_PC_PORT)
+/**
+ * @brief Debug shortcut: F5 puts 20 more red Pikmin in the Onion.
+ *
+ * Purely a testing aid for the configurable field limit -- reaching 200 the
+ * honest way takes far too long to iterate on. Adds them as leaf Pikmin
+ * straight into the Onion's stock, updating both the stock and the running
+ * total the HUD reads, which is what growing a seed does.
+ */
+static void pcDebugStockRedPikmin()
+{
+	// Off unless asked for: a stray F5 would otherwise fill someone's Onion
+	// mid-game. Enable with PIKMIN_DEBUG_KEYS=1.
+	static const bool enabled = getenv("PIKMIN_DEBUG_KEYS") != nullptr;
+	if (!enabled) {
+		return;
+	}
+
+	const Uint8* keys = SDL_GetKeyboardState(nullptr);
+	static bool wasDown = false;
+	const bool isDown   = keys != nullptr && keys[SDL_SCANCODE_F5] != 0;
+	if (isDown && !wasDown) {
+		// GoalItem::enterGoal touches three things when a Pikmin walks into the
+		// Onion, and all three matter: pikiInfMgr is the stock carried between
+		// days, mHeldPikis is what the withdrawal screen actually counts, and
+		// GameStat feeds the HUD. Updating fewer just moves the number on
+		// screen without putting anything in the Onion.
+		GoalItem* onion = itemMgr ? itemMgr->getContainer(Red) : nullptr;
+		if (onion == nullptr) {
+			fprintf(stderr, "[DEBUG] no red Onion in this stage\n");
+			fflush(stderr);
+		} else {
+			// Do not stock past the configured limit: the pools are sized
+			// from it, and going over just trades this shortcut for a birth
+			// failure later.
+			const int limit   = pc_settings_get_piki_limit();
+			const int already = int(GameStat::allPikis);
+			int added         = 20;
+			if (already + added > limit) {
+				added = limit - already;
+			}
+			if (added <= 0) {
+				fprintf(stderr, "[DEBUG] already at the %d limit\n", limit);
+				fflush(stderr);
+				wasDown = isDown;
+				return;
+			}
+			pikiInfMgr.mPikiCounts[Red][Leaf] += added;
+			onion->mHeldPikis[Leaf] += added;
+			GameStat::containerPikis.add(Red, added);
+			GameStat::update();
+			fprintf(stderr, "[DEBUG] +%d red Pikmin in the Onion (holding %d)\n",
+			        added, onion->getTotalStorePikis());
+			fflush(stderr);
+		}
+	}
+	wasDown = isDown;
+}
+#endif
+
 void GameCoreSection::update()
 {
 	STACK_PAD_VAR(2);
+#if defined(PIKI_PC_PORT)
+	pcDebugStockRedPikmin();
+#endif
 	if (!gameflow.mMoviePlayer->mIsActive && !mDoneSundownWarn && gameflow.mWorldClock.mTimeOfDay >= gameflow.mParameters->mNightWarning()
 	    && (flowCont.mGameEndFlag != GAMEEND_PikminExtinction || flowCont.mGameEndFlag != GAMEEND_NaviDown)) {
 		if (playerState->inDayEnd()) {

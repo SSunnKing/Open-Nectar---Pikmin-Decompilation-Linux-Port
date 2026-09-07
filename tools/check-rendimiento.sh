@@ -124,7 +124,7 @@ fi
 echo
 if ((fallos == 0)); then
     printf '%sLa build está configurada para ir rápida.%s\n' "$verde" "$normal"
-    printf 'Si aun así va lenta, mide: PIKMIN_TICK_STATS=1 %s/bin/pikmin 2>&1 | grep -A9 "PC tick"\n' "${build}"
+    printf 'Si aun así va lenta, mide: PIKMIN_TICK_STATS=1 %s/bin/nectar 2>&1 | grep -A9 "PC tick"\n' "${build}"
     exit 0
 fi
 

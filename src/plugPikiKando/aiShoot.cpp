@@ -86,7 +86,7 @@ Creature* ActShoot::decideTarget()
 {
 	f32 minDist = 12800.0f;
 	u32 unused  = 0;
-	Creature* targets[MAX_PIKI_ON_FIELD];
+	Creature* targets[PIKI_LIST_CAPACITY];
 	Iterator iter(mTargetObjectPool);
 	int count = 0;
 	CI_LOOP(iter)
@@ -97,6 +97,11 @@ Creature* ActShoot::decideTarget()
 				return *iter;
 			}
 
+			#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (count >= PIKI_LIST_CAPACITY) break;
+#endif
 			targets[count++] = *iter;
 		}
 	}

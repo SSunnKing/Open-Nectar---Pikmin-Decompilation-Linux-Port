@@ -8,6 +8,15 @@
 
 #define MAX_UFO_PARTS       (30)
 #define MAX_PIKI_ON_FIELD   (100)
+
+#if defined(PIKI_PC_PORT)
+// MAX_PIKI_ON_FIELD is the default limit, and the port lets the player raise it
+// from the Mods menu. Several routines gather Pikmin into fixed stack arrays
+// sized from that macro, so they have to be dimensioned for the largest limit
+// the menu offers, not for the default. 999 is the ceiling the note above gives
+// before the on-screen counters run out of digits.
+#define PIKI_LIST_CAPACITY (999)
+#endif
 #define MAX_DAYS            (30)
 #define MAX_HI_SCORES       (5)
 #define MIN_HAPPY_END_PARTS (25) // NB: also need to edit the hard-coded IDs in PlayerState::getUfoParts

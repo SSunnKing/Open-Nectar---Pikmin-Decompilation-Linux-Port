@@ -39,7 +39,7 @@ void ActPullout::init(Creature* target)
 {
 	if (!target) {
 		Iterator iter(pikiMgr);
-		Creature* pikiList[MAX_PIKI_ON_FIELD];
+		Creature* pikiList[PIKI_LIST_CAPACITY];
 		// f32 minDist = 300.0f;
 		int count = 0;
 		CI_LOOP(iter)
@@ -47,7 +47,12 @@ void ActPullout::init(Creature* target)
 			Piki* piki = static_cast<Piki*>(*iter);
 			f32 dist   = qdist2(piki, mPiki);
 			if (piki != mPiki && piki->isBuried() && dist < 300.0f && count < MAX_PIKI_ON_FIELD) {
-				pikiList[count++] = piki;
+				#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (count >= PIKI_LIST_CAPACITY) break;
+#endif
+			pikiList[count++] = piki;
 			}
 		}
 		if (count > 0) {

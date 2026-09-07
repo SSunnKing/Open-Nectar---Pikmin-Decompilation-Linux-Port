@@ -261,7 +261,7 @@ void Navi::updateDayEnd(immut Vector3f& pos)
  */
 void Navi::enterAllPikis()
 {
-	Piki* pikiList[MAX_PIKI_ON_FIELD * 2]; // This has a capacity of 200 for some reason.
+	Piki* pikiList[PIKI_LIST_CAPACITY]; // This has a capacity of 200 for some reason.
 	GoalItem* onyons[PikiColorCount];
 	int i;
 	for (i = 0; i < PikiColorCount; i++) {
@@ -282,6 +282,11 @@ void Navi::enterAllPikis()
 	{
 		Piki* piki = static_cast<Piki*>(*iter);
 		if (piki->isAlive() && piki->mMode == PikiMode::FormationMode) {
+			#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (pikiCount >= PIKI_LIST_CAPACITY) break;
+#endif
 			pikiList[pikiCount++] = piki;
 		}
 	}
@@ -1273,7 +1278,7 @@ void Navi::callDebugs(f32 radius)
 void Navi::releasePikis()
 {
 	Iterator iter(mPlateMgr);
-	Piki* pikiList[MAX_PIKI_ON_FIELD * 2]; // This has a capacity of 200 for some reason.
+	Piki* pikiList[PIKI_LIST_CAPACITY]; // This has a capacity of 200 for some reason.
 	int pikiCount = 0;
 	int pikiIdx;
 
@@ -1285,6 +1290,11 @@ void Navi::releasePikis()
 		    && state != PIKISTATE_Swallowed && state != PIKISTATE_LookAt && state != PIKISTATE_Dying && state != PIKISTATE_Dead
 		    && state != PIKISTATE_Nukare && state != PIKISTATE_NukareWait && state != PIKISTATE_Pressed && state != PIKISTATE_Drown
 		    && state != PIKISTATE_KinokoChange && state != PIKISTATE_Flick && !piki->isKinoko() && piki->isAIActive()) {
+			#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (pikiCount >= PIKI_LIST_CAPACITY) break;
+#endif
 			pikiList[pikiCount++] = static_cast<Piki*>(*iter);
 		}
 	}

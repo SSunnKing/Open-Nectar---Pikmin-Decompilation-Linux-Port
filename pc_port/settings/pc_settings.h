@@ -48,6 +48,9 @@ int pc_settings_get_chain_actions(void);
 /// What the mouse wheel controls: 0 = Pikmin colour to throw, 1 = camera zoom.
 int pc_settings_get_mouse_wheel_action(void);
 
+/// Pikmin allowed on the field at once. 100 is the original.
+int pc_settings_get_piki_limit(void);
+
 #ifdef __cplusplus
 }
 #endif

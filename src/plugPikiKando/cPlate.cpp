@@ -1,4 +1,7 @@
 #include "CPlate.h"
+#if defined(PIKI_PC_PORT)
+#include "settings/pc_settings.h"
+#endif
 #include "AIPerf.h"
 #include "DebugLog.h"
 #include "GlobalShape.h"
@@ -32,7 +35,15 @@ Creature* CPlate::getCreature(int idx)
  */
 CPlate::CPlate(MapMgr* mgr)
 {
+#if defined(PIKI_PC_PORT)
+	// 110 in the original: the 100 Pikmin field limit plus a margin. The port
+	// lets the player raise that limit, and the formation would then run past
+	// the end of its slot list, so keep the same relationship to whatever
+	// limit is in force.
+	mSlotListSize = pc_settings_get_piki_limit() + 10;
+#else
 	mSlotListSize = 110;
+#endif
 	mPlateSize    = 10.0f;
 	mPlateLength  = 10.0f;
 	mOriginPosition.set(0.0f, 0.0f, 0.0f);

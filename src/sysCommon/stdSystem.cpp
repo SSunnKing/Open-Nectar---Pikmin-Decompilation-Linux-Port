@@ -1,4 +1,8 @@
 #include "Age.h"
+#if defined(PIKI_PC_PORT)
+#include "GlobalGameOptions.h"
+#include "settings/pc_settings.h"
+#endif
 #include "Animator.h"
 #include "CmdStream.h"
 #include "DebugLog.h"
@@ -65,6 +69,22 @@ void StdSystem::onceInit()
 	mMatrixCount = 0x1000;
 #else
 	mMatrixCount = 0x2000;
+#endif
+#if defined(PIKI_PC_PORT)
+	// Every animated model draws from this bank once per frame, one matrix per
+	// joint, and running out is fatal. 0x2000 comfortably fits the original
+	// hundred Pikmin; raising the field limit scales the demand with it, so
+	// scale the bank the same way. A matrix is 64 bytes, so even the largest
+	// limit costs a few megabytes.
+	{
+		const int limit = pc_settings_get_piki_limit();
+		if (limit > MAX_PIKI_ON_FIELD) {
+			const int scaled = int((long long)mMatrixCount * limit / MAX_PIKI_ON_FIELD);
+			if (scaled > mMatrixCount) {
+				mMatrixCount = scaled;
+			}
+		}
+	}
 #endif
 	mMatrices = new (PIKI_ALIGNED(0x20)) Matrix4f[mMatrixCount];
 }

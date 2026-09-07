@@ -207,7 +207,7 @@ void NaviDemoSunsetState::WhistleState::procAnimMsg(NaviDemoSunsetState* state, 
  */
 void NaviDemoSunsetState::WhistleState::enterAllPikis(NaviDemoSunsetState* state)
 {
-	Piki* pikiList[MAX_PIKI_ON_FIELD * 2]; // This has a capacity of 200 for some reason.
+	Piki* pikiList[PIKI_LIST_CAPACITY]; // This has a capacity of 200 for some reason.
 	Navi* navi = state->mNavi;
 	Iterator it(itemMgr);
 	GoalItem* goals[3];
@@ -236,6 +236,11 @@ void NaviDemoSunsetState::WhistleState::enterAllPikis(NaviDemoSunsetState* state
 	{
 		Piki* piki = (Piki*)*it2;
 		if (piki->isAlive()) {
+			#if defined(PIKI_PC_PORT)
+			// The field limit is configurable, so this gather can no longer
+			// assume the squad fits. Stop filling rather than run off the array.
+			if (pikis >= PIKI_LIST_CAPACITY) break;
+#endif
 			pikiList[pikis++] = piki;
 		}
 	}
