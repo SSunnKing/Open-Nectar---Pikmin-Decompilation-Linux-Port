@@ -81,6 +81,10 @@ set(NATIVE_COMPILE_OPTIONS
     -Werror=switch
 )
 
+# Off by default: the native mixer is the configuration known to work. Turn on
+# with -DPIKMIN_NATIVE_JAUDIO=ON to drive audio from the original engine.
+option(PIKMIN_NATIVE_JAUDIO "Drive audio with the original src/jaudio engine" OFF)
+
 # ─── Version define for USA Rev 1 ───
 add_compile_definitions(
     PIKI_PC_PORT=1
@@ -90,7 +94,11 @@ add_compile_definitions(
     # OpenGL.  Selecting the old Win32/OpenGL code path here mixes two
     # incompatible texture/rendering backends and leaves GXTexObj uninitialised.
     PIKI_USE_DGX=1
-    PIKI_USE_JAUDIO=0
+    # Selects which engine drives audio. 0 keeps the native PC mixer in
+    # pc_port/audio; 1 compiles the original engine in src/jaudio and renders
+    # its DSPchannel_ voice parameter blocks through pc_dsp_host. The two
+    # cannot coexist -- see the guards in dolphin_stubs/audio_stubs.cpp.
+    PIKI_USE_JAUDIO=$<BOOL:${PIKMIN_NATIVE_JAUDIO}>
     # Some SDL2 builds (including current Arch configurations) remap main to
     # SDL_main unless the application explicitly owns its entry point.
     SDL_MAIN_HANDLED=1
@@ -143,6 +151,8 @@ set(PC_PORT_SOURCES
     pc_port/audio/pc_instrument_bank.cpp
     pc_port/audio/pc_wave_bank.cpp
     pc_port/audio/pc_sequence_archive.cpp
+    pc_port/audio/pc_aram.cpp
+    pc_port/audio/pc_dsp_host.cpp
     pc_port/settings/pc_settings.cpp
     src/jaudio/pikiseq.c
     pc_port/dolphin_stubs/os_stubs.cpp
@@ -152,6 +162,7 @@ set(PC_PORT_SOURCES
     pc_port/dolphin_stubs/vi_stubs.cpp
     pc_port/dolphin_stubs/card_stubs.cpp
     pc_port/dolphin_stubs/audio_stubs.cpp
+    pc_port/dolphin_stubs/jaudio_hw_stubs.cpp
     pc_port/dolphin_stubs/misc_stubs.cpp
 )
 
@@ -173,8 +184,68 @@ set(SYSDOLPHIN_SOURCES
     src/sysDolphin/texture.cpp
 )
 
-# ─── JAudio library (GameCube audio system) ───
-file(GLOB JAUDIO_SOURCES "src/jaudio/*.c")
+# JAudio uses NextOS's host boundary, never the GameCube DSP boot/mailboxes.
+set(JAUDIO_TARGET_SOURCES "")
+if(PIKMIN_NATIVE_JAUDIO)
+    set(JAUDIO_TARGET_SOURCES
+        src/jaudio/aramcall.c
+        src/jaudio/audiomesg.c
+        src/jaudio/bankdrv.c
+        src/jaudio/bankloader.c
+        src/jaudio/bankread.c
+        src/jaudio/centcalc.c
+        src/jaudio/cmdqueue.c
+        src/jaudio/cmdstack.c
+        src/jaudio/connect.c
+        src/jaudio/driverinterface.c
+        src/jaudio/dspdriver.c
+        src/jaudio/dspinterface.c
+        src/jaudio/dummyprobe.c
+        src/jaudio/dummyrom.c
+        src/jaudio/dvdthread.c
+        src/jaudio/fat.c
+        src/jaudio/file_seq.c
+        src/jaudio/filter3d.c
+        src/jaudio/fxinterface.c
+        src/jaudio/heapctrl.c
+        src/jaudio/interface.c
+        src/jaudio/interleave.c
+        src/jaudio/ja_calc.c
+        src/jaudio/jammain_2.c
+        src/jaudio/jamosc.c
+        src/jaudio/memory.c
+        src/jaudio/midplay.c
+        src/jaudio/noteon.c
+        src/jaudio/oneshot.c
+        src/jaudio/piki_bgm.c
+        src/jaudio/piki_player.c
+        src/jaudio/piki_scene.c
+        src/jaudio/pikidemo.c
+        src/jaudio/pikiinter.c
+        src/jaudio/pikiseq.c
+        src/jaudio/playercall.c
+        src/jaudio/random.c
+        src/jaudio/rate.c
+        src/jaudio/sample.c
+        src/jaudio/seqsetup.c
+        src/jaudio/stackchecker.c
+        src/jaudio/streamctrl.c
+        src/jaudio/syncstream.c
+        src/jaudio/tables.c
+        src/jaudio/verysimple.c
+        src/jaudio/virload.c
+        src/jaudio/waveread.c
+    )
+    set_source_files_properties(${JAUDIO_TARGET_SOURCES} PROPERTIES LANGUAGE CXX)
+    list(REMOVE_ITEM PC_PORT_SOURCES src/jaudio/pikiseq.c
+        pc_port/audio/pc_dsp_host.cpp pc_port/dolphin_stubs/jaudio_hw_stubs.cpp)
+    list(APPEND PC_PORT_SOURCES pc_port/audio/jaudio_integration_test.cpp)
+    list(APPEND JAUDIO_TARGET_SOURCES pc_port/audio/jaudio_host.cpp
+        pc_port/audio/jaudio_bank_host.cpp pc_port/audio/jaudio_sink.cpp)
+    message(STATUS "Audio: JAudio + NextOS software DSP (SDL2)")
+else()
+    message(STATUS "Audio: legacy native PC mixer (pc_port/audio)")
+endif()
 
 # ─── Game plugin modules (the actual game code) ───
 file(GLOB PLUGPIKI_KANDO_SOURCES   "src/plugPikiKando/*.cpp")
@@ -233,6 +304,10 @@ add_library(pikmin_legacy STATIC
     ${PLUGPIKI_COLIN_SOURCES}
     ${PLUGPIKI_OGAWA_SOURCES}
     ${PLUGPIKI_YAMASHITA_SOURCES}
+    # Empty unless PIKMIN_NATIVE_JAUDIO is on. The engine belongs here rather
+    # than in pikmin_pc because it is decompiled code and needs the permissive
+    # legacy flags, not the strict ones the port's own sources build with.
+    ${JAUDIO_TARGET_SOURCES}
 )
 target_compile_options(pikmin_legacy PRIVATE ${LEGACY_COMPILE_OPTIONS})
 
@@ -382,6 +457,19 @@ target_link_libraries(pc_envelope_test PRIVATE m)
 target_compile_options(pc_envelope_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_envelope_test COMMAND pc_envelope_test)
 
+# Host-backed ARAM test (not linked into main game)
+add_executable(pc_aram_test pc_port/audio/pc_aram_test.cpp pc_port/audio/pc_aram.cpp)
+target_compile_options(pc_aram_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_aram_test COMMAND pc_aram_test)
+
+# Host software DSP test (not linked into main game)
+add_executable(pc_dsp_host_test
+    pc_port/audio/pc_dsp_host_test.cpp
+    pc_port/audio/pc_dsp_host.cpp
+    pc_port/audio/pc_aram.cpp)
+target_compile_options(pc_dsp_host_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_dsp_host_test COMMAND pc_dsp_host_test)
+
 add_executable(pc_jam_test
     pc_port/audio/pc_jam_test.cpp
     pc_port/audio/pc_jam.cpp
@@ -474,3 +562,9 @@ message(STATUS "║   Audio:    SDL mixer/STX; JAudio WIP   ║")
 message(STATUS "║   Input:    Native SDL keyboard/gamepad ║")
 message(STATUS "╚══════════════════════════════════════════╝")
 message(STATUS "")
+
+if(BUILD_TESTING AND PIKMIN_NATIVE_JAUDIO)
+    add_test(NAME pc_jaudio_integration_test COMMAND pikmin_pc --audio-self-test)
+    set_tests_properties(pc_jaudio_integration_test PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+endif()
