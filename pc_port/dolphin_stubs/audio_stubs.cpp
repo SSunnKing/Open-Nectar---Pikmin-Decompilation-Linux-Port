@@ -29,6 +29,7 @@
 // Volume preferences in this game are 0..10 sliders (see ogTitle.cpp).
 static constexpr u8 PIKI_JAC_VOLUME_STEPS = 10;
 
+#if !PIKI_USE_JAUDIO
 namespace {
 const char* const kDemoStreams[] = {
     "piki.stx", "o_dead.stx", "d_end1.stx", "gyoku.stx", "d_end3.stx", "fanf5.stx", "badend0.stx",
@@ -250,6 +251,8 @@ void start_demo_audio(u32 cinemaId) {
 }
 }
 
+#endif // !PIKI_USE_JAUDIO
+
 extern "C" {
 
 /* ── AI (from Dolphin/ai.h) ── */
@@ -264,6 +267,7 @@ u32  AIGetDMALength(void)                                 { return 0; }
 u32  AIGetDSPSampleRate(void)                             { return 32000; }
 void AISetDSPSampleRate(u32 rate)                         { (void)rate; }
 AISCallback AIRegisterStreamCallback(AISCallback callback){ (void)callback; return nullptr; }
+#if !PIKI_USE_JAUDIO
 u32  AIGetStreamSampleCount(void)                         { return 0; }
 void AIResetStreamSampleCount(void)                       { }
 void AISetStreamTrigger(u32 trigger)                      { (void)trigger; }
@@ -276,13 +280,24 @@ void AISetStreamVolLeft(u8 vol)                           { (void)vol; }
 void AISetStreamVolRight(u8 vol)                          { (void)vol; }
 u8   AIGetStreamVolLeft(void)                             { return 255; }
 u8   AIGetStreamVolRight(void)                            { return 255; }
-void AIInit(u8* stack)                                    { (void)stack; pc_audio_init(); }
+#endif
+void AIInit(u8* stack) {
+    (void)stack;
+#if !PIKI_USE_JAUDIO
+    pc_audio_init();
+#endif
+}
 BOOL AICheckInit(void)                                    { return TRUE; }
 void AIReset(void)                                        { }
 
 /* ── DSP (from Dolphin/dsp.h) ── */
 /* DSPCheckMail returns u32, not BOOL! */
+#if !PIKI_USE_JAUDIO
+// With JAudio active this comes from src/jaudio/dspboot.c. The mailbox
+// stubs below stay in both builds: src/dsp/ is never compiled, and the
+// host renderer deliberately produces no mailbox traffic.
 void         DSPInit(void)                                { }
+#endif
 u32          DSPCheckMailToDSP(void)                      { return 0; }
 u32          DSPCheckMailFromDSP(void)                    { return 0; }
 u32          DSPReadMailFromDSP(void)                     { return 0; }
@@ -292,6 +307,12 @@ DSPTaskInfo* DSPAddTask(DSPTaskInfo* task)                 { (void)task; return 
 
 } // extern "C"
 
+#if !PIKI_USE_JAUDIO
+// Everything below re-implements the JAudio public API on top of the
+// native PC mixer in pc_port/audio. With PIKI_USE_JAUDIO=1 the real
+// engine in src/jaudio provides these instead, driving DSPchannel_ voice
+// parameter blocks that pc_dsp_host renders. The two cannot coexist:
+// Jac_Start alone owns pc_audio_init and pc_audio_load_wave_bank.
 /* ── JAudio high-level stubs ── */
 extern "C" {
 void Jac_Start(void* heap, u32 heapSize, u32 aramBase, const char* dataPath) {
@@ -652,15 +673,6 @@ static float jac_slider_gain(u8 level)
 void Jac_SetBGMVolume(u8 volume) { pc_audio_set_bus_volume(PC_AUDIO_BUS_BGM, jac_slider_gain(volume)); }
 void Jac_SetSEVolume(u8 volume) { pc_audio_set_bus_volume(PC_AUDIO_BUS_SE, jac_slider_gain(volume)); }
 void Jac_OutputMode(int mode) { pc_audio_set_stereo(mode != 0); }
-void Jac_StreamMovieUpdate() {}
-void Jac_StreamMovieInit(const char*, u8*, int) {}
-int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut) {
-    if (pictureBuffer) *static_cast<void**>(pictureBuffer) = nullptr;
-    if (widthOut) *widthOut = 0;
-    if (heightOut) *heightOut = 0;
-    return -1;
-}
-void Jac_StreamMovieStop() {}
 void Jac_SetDemoPartsID(int id) { sDemoPartsId = static_cast<u8>(std::clamp(id, 0, 31)); }
 void Jac_SetDemoOnyons(int count) { sDemoOnyonCount = static_cast<u8>(std::clamp(count, 0, 3)); }
 void Jac_SetDemoPartsCount(int count) { sDemoPartsCount = static_cast<u8>(std::clamp(count, 0, 30)); }
@@ -1150,3 +1162,18 @@ void Jac_PauseOrimaSe() {
     pc_audio_set_se_track_paused(10, true);
 }
 void Jac_UnPauseOrimaSe() { apply_gameplay_audio_pause(); }
+
+#endif // !PIKI_USE_JAUDIO
+
+// H4M video decoding is not implemented by this Linux port.
+extern "C" {
+void Jac_StreamMovieUpdate() {}
+void Jac_StreamMovieInit(const char*, u8*, int) {}
+int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut) {
+    if (pictureBuffer) *static_cast<void**>(pictureBuffer) = nullptr;
+    if (widthOut) *widthOut = 0;
+    if (heightOut) *heightOut = 0;
+    return -1;
+}
+void Jac_StreamMovieStop() {}
+}

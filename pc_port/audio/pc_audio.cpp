@@ -523,6 +523,7 @@ bool pc_audio_init(void) {
 }
 
 void pc_audio_shutdown(void) {
+
     if (sAudioDevice != 0) {
         SDL_LockAudioDevice(sAudioDevice);
         sStreamVoice = {};
@@ -1674,6 +1675,7 @@ u32 pc_audio_get_dma_bytes_left(void) {
 }
 
 void pc_audio_tick(void) {
+
     advance_bgm_mix();
     if (sJamPlayer.result() == PCJamResult::Ok) {
         const u64 now = SDL_GetPerformanceCounter();

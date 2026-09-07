@@ -9,6 +9,7 @@
  */
 #include "Dolphin/os.h"
 #include "Dolphin/ar.h"
+#include "audio/pc_aram.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -458,10 +459,13 @@ static u32 sNextArqToken = 1;
 
 u32 ARInit(u32* stack_index_addr, u32 num_entries) {
     (void)stack_index_addr; (void)num_entries;
-    return (u32)(uintptr_t)sAramMemory;
+    pc_aram_init();
+    return 0x4000;
 }
 
-u32 ARGetBaseAddress() { return (u32)(uintptr_t)sAramMemory; }
+u32 ARGetBaseAddress() { return 0x4000; }
+void* ARGetStorageAddress() { pc_aram_init(); return pc_aram_write(0, PC_ARAM_SIZE); }
+u32 ARGetSize() { return PC_ARAM_SIZE; }
 
 ARCallback ARRegisterDMACallback(ARCallback callback) { (void)callback; return nullptr; }
 
@@ -478,6 +482,23 @@ void* PCResolveARQToken(u32 token) {
     return it != sArqRequestTokens.end() ? it->second : nullptr;
 }
 
+/**
+ * @brief Accepts an ARAM DMA request and completes it immediately.
+ *
+ * The transfer itself is deliberately not performed. Every caller passes the
+ * main-memory side as `(u32)pointer` -- ARQRequest's API is 32-bit, because on
+ * the console every address fitted -- so by the time the address arrives here
+ * the upper half of a 64-bit host pointer is already gone. Copying through it
+ * dereferences a truncated address and crashes, which is exactly what
+ * System::copyRamToCache did while a real copy was attempted here.
+ *
+ * Nothing needs the copy. The audio engine reads sample banks straight into
+ * the host ARAM store in DVDT_LoadtoARAM_Main, and the game's ARAM texture
+ * cache is bypassed on PC because assets are already resident.
+ *
+ * The completion callback still runs before returning, which is what the
+ * engine's busy-waits on buffer_full expect.
+ */
 void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority,
                     u32 source, u32 dest, u32 length, ARQCallback callback) {
     (void)owner; (void)type; (void)priority;
