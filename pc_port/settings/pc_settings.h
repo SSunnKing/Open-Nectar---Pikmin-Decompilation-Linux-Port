@@ -32,7 +32,7 @@ void pc_settings_apply_video(void);
 // True while the confirmation/revert dialog is pending after a video change.
 bool pc_settings_has_pending_video(void);
 
-// Returns the current FPS mode (0=30 FPS, 1=60 FPS experimental).
+// Returns the current FPS mode (0=30 FPS, 1=60 FPS, 2=120 FPS experimental).
 int pc_settings_get_fps_mode(void);
 
 // Returns 1 while the "chain Pikmin actions" mod is enabled, 0 otherwise.

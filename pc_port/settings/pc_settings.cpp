@@ -51,7 +51,7 @@ struct PcConfig {
     float renderScale = 2.0f / 3.0f;                 // internal 3D resolution multiplier
     int aspectRatioMode = 0;                         // 0=auto, 1=4:3, 2=16:10, 3=16:9, 4=21:9
 
-    // 60 FPS experimental mode (0=disabled/30fps, 1=enabled/60fps)
+    // FPS mode (0=30fps, 1=60fps, 2=120fps experimental)
     int fpsMode = 0;
 
     // Control mode (0=Classic, 1=Mouse Cursor)
@@ -486,7 +486,7 @@ void loadConfig() {
         else if (key == "fpsMode") {
             sConfig.fpsMode = atoi(val.c_str());
             if (sConfig.fpsMode < 0) sConfig.fpsMode = 0;
-            if (sConfig.fpsMode > 1) sConfig.fpsMode = 1;
+            if (sConfig.fpsMode > 2) sConfig.fpsMode = 2;
         }
         else if (key == "chainActions") {
             sConfig.chainActions = atoi(val.c_str()) ? 1 : 0;
@@ -1011,9 +1011,9 @@ void pollMenuInput() {
         break;
     case ROW_FPS_MODE:
         if (left) {
-            sPending.fpsMode = (sPending.fpsMode - 1 + 2) % 2;
+            sPending.fpsMode = (sPending.fpsMode - 1 + 3) % 3;
         } else if (right) {
-            sPending.fpsMode = (sPending.fpsMode + 1) % 2;
+            sPending.fpsMode = (sPending.fpsMode + 1) % 3;
         }
         break;
     case ROW_CONTROLS:
@@ -1347,9 +1347,9 @@ void pc_settings_draw(void) {
     char aspectBuf[32];
     snprintf(aspectBuf, sizeof(aspectBuf), "%s", aspectNames[sPending.aspectRatioMode >= 0 && sPending.aspectRatioMode < 5 ? sPending.aspectRatioMode : 0]);
 
-    const char* fpsModeNames[2] = { "30 FPS (stable)", "60 FPS (experimental)" };
+    const char* fpsModeNames[3] = { "30 FPS (stable)", "60 FPS (experimental)", "120 FPS (experimental)" };
     char fpsModeBuf[32];
-    snprintf(fpsModeBuf, sizeof(fpsModeBuf), "%s", fpsModeNames[sPending.fpsMode >= 0 && sPending.fpsMode < 2 ? sPending.fpsMode : 0]);
+    snprintf(fpsModeBuf, sizeof(fpsModeBuf), "%s", fpsModeNames[sPending.fpsMode >= 0 && sPending.fpsMode < 3 ? sPending.fpsMode : 0]);
 
     char valueBuf[7][128];
     snprintf(valueBuf[0], sizeof(valueBuf[0]), "%s",

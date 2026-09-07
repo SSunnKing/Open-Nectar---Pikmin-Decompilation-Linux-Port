@@ -10,6 +10,10 @@
  */
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#if PIKI_USE_JAUDIO
+int pc_jaudio_integration_test();
+#endif
 
 // Game headers
 #include "system.h"
@@ -31,6 +35,10 @@ int main(int argc, char* argv[])
     // Disable stdout buffering so we see logs immediately before any crash
     setvbuf(stdout, NULL, _IONBF, 0);
 
+#if PIKI_USE_JAUDIO
+    if (argc == 2 && std::strcmp(argv[1], "--audio-self-test") == 0)
+        return pc_jaudio_integration_test();
+#endif
     (void)argc;
     (void)argv;
 
