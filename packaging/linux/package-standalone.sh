@@ -58,6 +58,7 @@ cmake -S "${repo_root}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DPIKMIN_NATIVE_OPTIMIZE=OFF \
     -DPIKMIN_ENABLE_IPO=ON \
+    -DPIKMIN_NATIVE_JAUDIO=ON \
     -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build "${build_dir}" -j"$(nproc)"
 

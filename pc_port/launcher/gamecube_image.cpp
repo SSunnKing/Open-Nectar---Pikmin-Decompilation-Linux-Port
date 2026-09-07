@@ -1,6 +1,10 @@
 #include "gamecube_image.h"
 #include "sha256.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -12,6 +16,65 @@ namespace fs = std::filesystem;
 namespace pikmin {
 namespace launcher {
 namespace {
+
+/**
+ * @brief Turns a raw FST name into a path component.
+ *
+ * Names in a GameCube FST are raw bytes with no declared encoding. This disc
+ * carries a few left over in Shift-JIS -- "コピー ~ practice" and friends. On
+ * Linux those bytes become the filename unchanged, which is why extraction has
+ * always worked there. On Windows fs::path converts a narrow string through the
+ * active code page and throws filesystem_error on an illegal sequence, aborting
+ * the install a few percent in.
+ *
+ * Decode explicitly instead: UTF-8 first, then Shift-JIS, and finally a
+ * byte-preserving widening that cannot fail. The last step keeps a file with an
+ * unrecognisable name rather than losing the extraction.
+ */
+fs::path discNameToPath(const std::string& name)
+{
+#if defined(_WIN32)
+	if (name.empty()) return fs::path();
+
+	const auto tryCodePage = [&name](unsigned codePage, bool strict) -> std::wstring {
+		const DWORD flags = strict ? MB_ERR_INVALID_CHARS : 0;
+		const int needed = MultiByteToWideChar(codePage, flags, name.data(),
+		                                       static_cast<int>(name.size()), nullptr, 0);
+		if (needed <= 0) return std::wstring();
+		std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+		const int written = MultiByteToWideChar(codePage, flags, name.data(),
+		                                        static_cast<int>(name.size()), wide.data(), needed);
+		if (written <= 0) return std::wstring();
+		wide.resize(static_cast<std::size_t>(written));
+		return wide;
+	};
+
+	std::wstring wide = tryCodePage(CP_UTF8, true);
+	if (wide.empty()) wide = tryCodePage(932, true);   // Shift-JIS
+	if (wide.empty()) {
+		// Never fails: each byte becomes one character.
+		wide.reserve(name.size());
+		for (unsigned char byte : name) wide.push_back(static_cast<wchar_t>(byte));
+	}
+	return fs::path(wide);
+#else
+	return fs::path(name);
+#endif
+}
+
+/// Path text for messages. Windows' narrow conversion throws on characters the
+/// active code page cannot express, so go through UTF-8, which always can.
+std::string pathText(const fs::path& path)
+{
+#if defined(_WIN32)
+	// u8string() returns std::string under C++17 and std::u8string under C++20;
+	// the copy below works either way.
+	const auto utf8 = path.u8string();
+	return std::string(utf8.begin(), utf8.end());
+#else
+	return path.string();
+#endif
+}
 
 constexpr std::uint64_t kFstOffsetField = 0x424;
 constexpr std::uint64_t kFstSizeField   = 0x428;
@@ -247,14 +310,14 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
             error = "La FST contiene un nombre de archivo inseguro o inválido.";
             return false;
         }
-        const fs::path outputPath = stack.back().path / name;
+        const fs::path outputPath = stack.back().path / discNameToPath(name);
         if (progress) progress(i, static_cast<std::uint32_t>(entries.size() - 1),
-                               outputPath.lexically_relative(destination).string());
+                               pathText(outputPath.lexically_relative(destination)));
 
         if (entries[i].directory) {
             fs::create_directories(outputPath, ec);
             if (ec) {
-                error = "No se pudo crear " + outputPath.string() + ": " + ec.message();
+                error = "No se pudo crear " + pathText(outputPath) + ": " + ec.message();
                 return false;
             }
             stack.push_back({ entries[i].sizeOrNext, outputPath });
@@ -270,7 +333,7 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
         fs::create_directories(outputPath.parent_path(), ec);
         std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
         if (!output) {
-            error = "No se pudo escribir " + outputPath.string() + ".";
+            error = "No se pudo escribir " + pathText(outputPath) + ".";
             return false;
         }
         input.clear();

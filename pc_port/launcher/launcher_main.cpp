@@ -25,11 +25,11 @@ namespace platform = pikmin::launcher::platform;
 
 // Windows exige la extensión .exe; el resto de sistemas usan el nombre pelado.
 #ifdef _WIN32
-constexpr const char* kGameExecutable     = "pikmin.exe";
-constexpr const char* kLauncherExecutable = "pikmin-launcher.exe";
+constexpr const char* kGameExecutable     = "nectar.exe";
+constexpr const char* kLauncherExecutable = "nectar-launcher.exe";
 #else
-constexpr const char* kGameExecutable     = "pikmin";
-constexpr const char* kLauncherExecutable = "pikmin-launcher";
+constexpr const char* kGameExecutable     = "nectar";
+constexpr const char* kLauncherExecutable = "nectar-launcher";
 #endif
 
 
@@ -207,10 +207,11 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
     }
     return true;
 #else
-    const fs::path sourceGame = sourceDirectory / "pikmin";
-    const fs::path sourceLauncher = sourceDirectory / "pikmin-launcher";
-    const fs::path sourceGameReal = sourceDirectory / "pikmin.real";
-    const fs::path sourceLauncherReal = sourceDirectory / "pikmin-launcher.real";
+    const fs::path sourceGame = sourceDirectory / kGameExecutable;
+    const fs::path sourceLauncher = sourceDirectory / kLauncherExecutable;
+    const fs::path sourceGameReal = sourceDirectory / (std::string(kGameExecutable) + ".real");
+    const fs::path sourceLauncherReal
+        = sourceDirectory / (std::string(kLauncherExecutable) + ".real");
     const fs::path sourceLib = sourceDirectory / "lib";
 
     const bool isStandalone = fs::is_regular_file(sourceGameReal)
@@ -218,7 +219,8 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             && fs::is_directory(sourceLib);
 
     if (!isStandalone && (!fs::is_regular_file(sourceGame) || !fs::is_regular_file(sourceLauncher))) {
-        failure = "El paquete está incompleto: pikmin y pikmin-launcher deben estar juntos.";
+        failure = "El paquete está incompleto: " + std::string(kGameExecutable) + " y "
+                + kLauncherExecutable + " deben estar juntos.";
         return false;
     }
 
@@ -293,14 +295,14 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             fs::perm_options::add, permEc);
             return !permEc;
         };
-        if (!makeWrapper("pikmin") || !makeWrapper("pikmin-launcher")) {
+        if (!makeWrapper(kGameExecutable) || !makeWrapper(kLauncherExecutable)) {
             failure = "No se pudieron crear los lanzadores.";
             return false;
         }
         return true;
     }
 
-    for (const char* name : { "pikmin", "pikmin-launcher" }) {
+    for (const char* name : { kGameExecutable, kLauncherExecutable }) {
         const fs::path source = sourceDirectory / name;
         const fs::path destination = installDirectory / name;
         if (!sameFile(source, destination)) {
@@ -359,9 +361,10 @@ int main(int argc, char** argv)
     }
 
     const fs::path sourceDirectory = executableDirectory();
-    const bool hasStandaloneFiles = fs::is_regular_file(sourceDirectory / "pikmin.real")
-                                 && fs::is_regular_file(sourceDirectory / "pikmin-launcher.real")
-                                 && fs::is_directory(sourceDirectory / "lib");
+    const bool hasStandaloneFiles
+        = fs::is_regular_file(sourceDirectory / (std::string(kGameExecutable) + ".real"))
+       && fs::is_regular_file(sourceDirectory / (std::string(kLauncherExecutable) + ".real"))
+       && fs::is_directory(sourceDirectory / "lib");
     const bool installedBesideLauncher = assetsReady(sourceDirectory)
                                       && (fs::is_regular_file(sourceDirectory / kGameExecutable) || hasStandaloneFiles);
     const bool graphicalInstall = !directoryWasSpecified && !installedBesideLauncher;

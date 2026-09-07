@@ -1,0 +1,51 @@
+name: Linux build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config binutils libsdl2-dev libgl1-mesa-dev
+      - name: Build standalone package
+        # Compila (x86-64 genérico, sin -march=native), ejecuta los tests,
+        # genera el paquete autocontenido con sus librerías y lo verifica.
+        run: packaging/linux/package-standalone.sh --clean
+      - name: Verify distributable contains no game data
+        run: |
+          if find . -path './.git' -prune -o -type f \( -iname '*.iso' -o -iname '*.gcm' -o -iname '*.rvz' -o -path './assets/dataDir/*' \) -print -quit | grep -q .; then
+            echo 'Proprietary game data found in repository'
+            exit 1
+          fi
+      - name: Upload standalone package
+        uses: actions/upload-artifact@v4
+        with:
+          name: pikmin-native-linux
+          path: packaging/linux/out/pikmin-native-linux
+
+  smoke-clean-distro:
+    # Reproduce lo que verá otro equipo: una distro limpia donde SOLO se
+    # instala el driver OpenGL (libgl1). Ni SDL2 ni nada más: el paquete
+    # debe ser autocontenido.
+    needs: build
+    runs-on: ubuntu-latest
+    container: debian:12
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pikmin-native-linux
+      - name: Install only the documented requirement (OpenGL driver)
+        run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0
+      - name: Standalone package runs on clean Debian 12
+        run: |
+          cd pikmin-native-linux
+          chmod +x pikmin pikmin-launcher
+          ./pikmin-launcher --help
+          if LD_LIBRARY_PATH=lib ldd pikmin.real | grep 'not found'; then
+            echo 'Unresolved dependencies in the standalone package'
+            exit 1
+          fi

@@ -21,7 +21,8 @@ namespace launcher {
 namespace platform {
 
 // Ruta absoluta del ejecutable actual. Devuelve una ruta vacía si no se puede
-// determinar. Respeta PIKMIN_EXECUTABLE_PATH, que los envoltorios del paquete
+// determinar. Respeta NECTAR_EXECUTABLE_PATH (y PIKMIN_EXECUTABLE_PATH, el
+// nombre antiguo), que los envoltorios del paquete
 // autocontenido usan para señalar el binario real.
 std::filesystem::path executablePath();
 

@@ -67,7 +67,14 @@ fs::path executablePath()
 {
     // El paquete distribuible no usa envoltorios como en Linux, pero se respeta
     // la misma variable para que ambos sistemas se comporten igual.
-    if (const char* env = std::getenv("PIKMIN_EXECUTABLE_PATH")) {
+    // The self-contained package wrappers exec through ld-linux, so
+    // /proc/self/exe would name the loader rather than the launcher. They pass
+    // the real path in an environment variable instead. Two names are accepted:
+    // NECTAR_ is what package-standalone.sh writes today, PIKMIN_ is what
+    // launcher_main.cpp generates and what older packages carry.
+    const char* env = std::getenv("NECTAR_EXECUTABLE_PATH");
+    if (env == nullptr) env = std::getenv("PIKMIN_EXECUTABLE_PATH");
+    if (env != nullptr) {
         return fs::path(env);
     }
     std::vector<wchar_t> path(32768); // límite de ruta larga en Windows
