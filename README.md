@@ -17,7 +17,6 @@ This project builds upon the decompilation by [projectPiki/pikmin](https://githu
 - Controller, keyboard and mouse support
 
 **In development:**
-- Cutscene video is not decoded yet (the audio plays)
 - Some minor graphical differences
 - Ports to other operating systems
 
