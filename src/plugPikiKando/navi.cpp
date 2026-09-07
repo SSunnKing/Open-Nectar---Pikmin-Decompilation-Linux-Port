@@ -1,4 +1,5 @@
 #include "Navi.h"
+#include <cstdlib>
 #if defined(PIKI_PC_PORT)
 #include "GameStat.h"
 #include "pc_window.h"
@@ -653,6 +654,11 @@ f32 Navi::getiMass()
  */
 static int sPreferredThrowColor = -1;
 
+/// The colour the wheel currently points at, or -1 for the original behaviour.
+/// Read by the grab selection in naviState.cpp, which picks the Pikmin that is
+/// actually thrown.
+int pc_preferred_throw_color() { return sPreferredThrowColor; }
+
 /// True when the squad holds at least one Pikmin of @p color.
 static bool pcSquadHasColor(int color)
 {
@@ -703,7 +709,13 @@ static void pcUpdatePreferredThrowColor()
 	if (steps != 0) {
 		index = ((index + steps) % presentCount + presentCount) % presentCount;
 	}
+	const int previous = sPreferredThrowColor;
 	sPreferredThrowColor = present[index];
+	if (previous != sPreferredThrowColor && getenv("PIKMIN_WHEEL_TRACE") != nullptr) {
+		fprintf(stderr, "[WHEEL] preferred colour -> %d (in squad=%d)\n",
+		        sPreferredThrowColor, presentCount);
+		fflush(stderr);
+	}
 }
 #endif
 

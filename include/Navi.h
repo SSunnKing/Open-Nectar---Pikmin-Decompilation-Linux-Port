@@ -282,4 +282,9 @@ struct NaviDrawer : public Node {
 
 extern bool DelayPikiBirth;
 
+#if defined(PIKI_PC_PORT)
+/// Colour chosen with the mouse wheel, or -1 when no preference is active.
+int pc_preferred_throw_color();
+#endif
+
 #endif

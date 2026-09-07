@@ -1,4 +1,6 @@
 #include "NaviState.h"
+#include <cstdlib>
+#include <cstdio>
 #include "AIConstant.h"
 #include "AIPerf.h"
 #include "Dolphin/os.h"
@@ -729,6 +731,39 @@ void NaviWalkState::exec(Navi* navi)
 		}
 		Piki* nearestPiki = nullptr;
 		f32 maxDist       = C_NAVI_PARM(navi, mPluckGrabRange);
+#if defined(PIKI_PC_PORT)
+		// Third place that chooses a Pikmin to throw. Same two-pass colour
+		// preference as the others: the chosen colour first, then everyone.
+		const int preferredColor = pc_preferred_throw_color();
+		for (int pass = 0; pass < 2; pass++) {
+			const bool restrict = (pass == 0) && (preferredColor >= 0);
+			if (pass == 1 && (nearestPiki != nullptr || preferredColor < 0)) {
+				break;
+			}
+			nearestPiki = nullptr;
+			maxDist     = C_NAVI_PARM(navi, mPluckGrabRange);
+			Iterator pf(navi->mPlateMgr);
+			CI_LOOP(pf)
+			{
+				Piki* piki = (Piki*)*pf;
+				if (restrict && piki->mColor != preferredColor) {
+					continue;
+				}
+				if (!roughCull(piki, navi, maxDist)) {
+					f32 distance = qdist2(piki, navi);
+					if (distance < maxDist && piki->getState() == 0 && !piki->isHolding()) {
+						nearestPiki = piki;
+						maxDist     = distance;
+					}
+				}
+			}
+		}
+		if (getenv("PIKMIN_WHEEL_TRACE") != nullptr) {
+			fprintf(stderr, "[WHEEL] bullet preferred=%d chosen=%d\n", preferredColor,
+			        nearestPiki ? (int)nearestPiki->mColor : -1);
+			fflush(stderr);
+		}
+#else
 		Iterator plateIter(navi->mPlateMgr);
 		CI_LOOP(plateIter)
 		{
@@ -741,6 +776,7 @@ void NaviWalkState::exec(Navi* navi)
 				}
 			}
 		}
+#endif
 
 		if (nearestPiki) {
 			PRINT("roll over narita\n");
@@ -1899,9 +1935,54 @@ void NaviThrowWaitState::init(Navi* navi)
 	navi->mThrowHoldTime = 0.0f;
 	mHeldThrowPiki       = nullptr;
 	mPendingThrowPiki    = nullptr;
-	Iterator it(navi->mPlateMgr);
 	Piki* throwPiki = nullptr;
 	f32 maxDist     = 80.0f;
+#if defined(PIKI_PC_PORT)
+	// This is the selection that decides which Pikmin is actually grabbed and
+	// thrown. Navi::findNextThrowPiki only feeds the HUD preview, so applying
+	// the wheel's colour there alone changed the icon and nothing else.
+	//
+	// Two passes: first restricted to the chosen colour, then, if that found
+	// nobody in range, the original unrestricted search. Without the second
+	// pass, pointing the wheel at a colour standing further away would leave
+	// the captain grabbing nothing.
+	const int preferredColor = pc_preferred_throw_color();
+	for (int pass = 0; pass < 2; pass++) {
+		const bool restrict = (pass == 0) && (preferredColor >= 0);
+		if (pass == 1 && (throwPiki != nullptr || preferredColor < 0)) {
+			break;
+		}
+		throwPiki = nullptr;
+		// The unrestricted search keeps the original 80. The restricted one
+		// reaches as far as Navi::findNextThrowPiki, which is what the HUD
+		// preview uses: with a spread-out squad the nearest Pikmin of the
+		// chosen colour is often past 80 while some other colour sits at 20,
+		// and the fallback would fire almost every throw. Matching the preview
+		// also keeps the icon and the throw in agreement.
+		maxDist   = restrict ? 200.0f : 80.0f;
+		Iterator pf(navi->mPlateMgr);
+		CI_LOOP(pf)
+		{
+			Piki* piki = (Piki*)*pf;
+			if (restrict && piki->mColor != preferredColor) {
+				continue;
+			}
+			if (!roughCull(piki, navi, maxDist)) {
+				Vector3f diff = piki->mSRT.t - navi->mSRT.t;
+				Vector3f dir(sinf(navi->mFaceDirection), 0.0f, cosf(navi->mFaceDirection));
+				f32 length = diff.length();
+				if (diff.DP(dir) > -0.1f) {
+					length += 10.0f;
+				}
+				if (length < maxDist && piki->getState() == PIKISTATE_Normal && piki->isThrowable()) {
+					throwPiki = piki;
+					maxDist   = length;
+				}
+			}
+		}
+	}
+#else
+	Iterator it(navi->mPlateMgr);
 	CI_LOOP(it)
 	{
 		Piki* piki = (Piki*)*it;
@@ -1918,7 +1999,17 @@ void NaviThrowWaitState::init(Navi* navi)
 			}
 		}
 	}
+#endif
 
+#if defined(PIKI_PC_PORT)
+	if (getenv("PIKMIN_WHEEL_TRACE") != nullptr) {
+		fprintf(stderr, "[WHEEL] grab preferred=%d chosen=%d dist=%.1f range=%.1f\n",
+		        pc_preferred_throw_color(),
+		        throwPiki ? (int)throwPiki->mColor : -1,
+		        maxDist, C_NAVI_PARM(navi, mPluckGrabRange));
+		fflush(stderr);
+	}
+#endif
 	if (maxDist <= C_NAVI_PARM(navi, mPluckGrabRange)) {
 		mHeldThrowPiki = throwPiki;
 	} else {
