@@ -35,6 +35,7 @@ void* OSAlloc2(u32 size);
 void Jac_Init();
 void Jac_VframeWork();
 void Jac_UpdateDAC();
+void Jac_RegisterDacCallback(DACCallback callback);
 void Jac_SetOutputMode(int mode);
 int Jac_GetOutputMode();
 void Jac_SetMixerLevel(f32, f32);

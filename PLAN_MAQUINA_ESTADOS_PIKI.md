@@ -10,6 +10,67 @@ que queda es *cuándo* la lógica del juego pide las cosas.
 
 ---
 
+## 0. DESCARTADO POR MEDICIÓN (2026-09-04): no es la máquina de estados
+
+**Este plan partía de una hipótesis falsa. La ruta y la temporización del juego
+son correctas; el fallo está aguas abajo, en el mezclador.**
+
+Traza en juego, dos capturas independientes del mismo lanzamiento a una bomba:
+
+    reloj=3589294  evento 6 tipo 6 accion 22 -> enviado          (LAND)
+      nota de evento: banco 0 programa 230 tecla 18 -> voz asignada
+    reloj=3589925  accion 22 -> TERMINADA tras 631 ms
+    peak  bgm=7493  se= 9992                                     <- el LAND SUENA
+
+    [PC Piki] reloj=3591711 emocion 6 -> PIKISTATE_Emotion por doJoinParty
+    reloj=3591711  evento 6 tipo 6 accion 23 -> enviado          (YATTA)
+      nota de evento: banco 0 programa 230 tecla 19 -> voz asignada
+    reloj=3592185  accion 23 -> TERMINADA tras 474 ms
+    peak  bgm=5805  se=    0                                     <- el YATTA NO
+
+Lo que esto cierra, y no hay que volver a investigar:
+
+- **La emoción llega tarde y de sobra, no pronto.** El `YATTA` se pide 1,8 s
+  después de que el `LAND` haya liberado la ranura. La hipótesis de la sección 3
+  —que el `YATTA` caía dentro de la ventana de 637 ms del aterrizaje— es falsa.
+- **No se descarta: se envía.** Gana ranura, y el saltito `Jump_B1` se ve en
+  pantalla, así que `PikiEmotionState::init` corre entero.
+- **Se le asigna voz.** No es un fallo de resolución de instrumento ni de
+  muestra.
+- **La rama que consume la emoción es `doJoinParty`** (`aiAction.cpp:395`), que
+  es la que el plan daba por correcta. El paso 1 queda respondido.
+- **La muestra está intacta.** Decodificada offline con los propios cargadores
+  del port: onda 315, 7526 muestras a 16 kHz, pico 31911, media 2462. La onda
+  314 (`LAND`, que sí suena) da pico 32233 y media 2637. No se distinguen.
+
+O sea: voz asignada, muestra buena, ranura libre, y el bus SE da **cero** en la
+ventana entera. El fallo está entre `play_wave_info` y el mezclador.
+
+Sospecha principal a comprobar en la siguiente ejecución: el volumen real de la
+nota es `region.volume * instrumentVolume * (velocidad/127)²`, y la traza
+imprimía el volumen *de pista*, no la velocidad. Una velocidad baja deja la voz
+activa y muda. La traza ya imprime `vel`, `izq`/`der`, `paso` y `pcm`.
+
+Herramientas añadidas en esta sesión (todas bajo `PIKMIN_AUDIO_STATS=1`):
+
+- `PIKMIN_AUDIO_TRACE_TYPE=6` — filtra la traza por tipo de evento JACEVENT. Sin
+  él, la ambientación del UFO mete ~240 líneas por segundo y entierra todo. Los
+  fallos (tipo 0) salen siempre, con filtro o sin él.
+- `reloj=` en cada línea, y al descartar, **quién ocupa la ranura y desde hace
+  cuántos ms**. Sin marca de tiempo el orden de las líneas no distingue "llegó
+  30 ms tarde" de "llegó medio segundo tarde", que era justo la pregunta.
+- `PERDIDO (sin handle de evento)` en `SeContext::playSound`: un sonido que no
+  consigue handle no llegaba a `Jac_PlayEventAction` y desaparecía **sin ninguna
+  línea**, indistinguible de que el juego no lo pidiera.
+- La traza de nota imprime ahora los parámetros finales de la voz: `vel`, `paso`,
+  `base`, `pistaTono`, `izq`, `der`, `pcm`, `fin`.
+
+Lo de abajo se conserva porque el mapa de código y la lista de callejones
+cerrados siguen siendo válidos. La hipótesis de la sección 3 y el orden de
+trabajo de la sección 4 **no**.
+
+---
+
 ## 1. El caso concreto
 
 Al lanzar un Pikmin amarillo sobre una bomba, el juego original suelta un

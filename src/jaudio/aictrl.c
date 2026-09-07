@@ -1,4 +1,5 @@
 #include "jaudio/aictrl.h"
+#include <stdio.h>
 #include "Dolphin/ai.h"
 #include "Dolphin/os.h"
 #include "jaudio/audiocommon.h"
@@ -75,6 +76,11 @@ void* OSAlloc2(u32 size)
 	}
 
 	OSRestoreInterrupts(enabled);
+	if (!alloc) {
+		// Worth reporting: callers rarely check, and a null here surfaces later
+		// as a write through a null pointer rather than as a failed load.
+		fprintf(stderr, "[jaudio] OSAlloc2(%u) failed: audio heap exhausted\n", size);
+	}
 	return alloc;
 }
 

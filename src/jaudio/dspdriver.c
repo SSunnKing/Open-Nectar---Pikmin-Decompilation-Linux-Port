@@ -47,19 +47,19 @@ void InitDSPchannel()
 /**
  * @TODO: Documentation
  */
-dspch_* AllocDSPchannel(u32 channelMode, u32 ownerId)
+dspch_* AllocDSPchannel(u32 channelMode, uintptr_t ownerId)
 {
 
 	s32 i;
 	STACK_PAD_VAR(1);
-	u32* REF_ownerId = &ownerId;
+	uintptr_t* REF_ownerId = &ownerId;
 	s32* REF_i       = &i;
 	if (channelMode == 0) {
 
 		for (i = 0; i < DSPCH_LENGTH; ++i) {
 			if (DSPCH[i].allocState == DSPCHAN_Free) {
 				DSPCH[i].allocState  = DSPCHAN_MonoAllocated;
-				DSPCH[i].logicalChan = (jc_*)ownerId;
+				DSPCH[i].logicalChan = reinterpret_cast<jc_*>(ownerId);
 				DSPCH[i].prio        = 1;
 				DSP_AllocInit(i);
 				return &DSPCH[i];
@@ -75,8 +75,8 @@ dspch_* AllocDSPchannel(u32 channelMode, u32 ownerId)
 
 		DSPCH[i].allocState      = DSPCHAN_StereoRight;
 		DSPCH[i - 1].allocState  = DSPCHAN_StereoLeft;
-		DSPCH[i].logicalChan     = (jc_*)ownerId;
-		DSPCH[i - 1].logicalChan = (jc_*)ownerId;
+		DSPCH[i].logicalChan     = reinterpret_cast<jc_*>(ownerId);
+		DSPCH[i - 1].logicalChan = reinterpret_cast<jc_*>(ownerId);
 		DSP_AllocInit(i);
 		DSP_AllocInit(i - 1);
 		return &DSPCH[i - 1];
@@ -87,12 +87,12 @@ dspch_* AllocDSPchannel(u32 channelMode, u32 ownerId)
 /**
  * @TODO: Documentation
  */
-int DeAllocDSPchannel(dspch_* chan, u32 id)
+int DeAllocDSPchannel(dspch_* chan, uintptr_t id)
 {
 	if (chan == NULL) {
 		return -1;
 	}
-	if (chan->logicalChan != (jc_*)id) {
+	if (chan->logicalChan != reinterpret_cast<jc_*>(id)) {
 		return -2;
 	}
 
@@ -259,6 +259,10 @@ BOOL BreakLowerDSPchannel(u8 priority)
  */
 BOOL BreakLowerActiveDSPchannel(u8 id)
 {
+#ifdef PIKI_PC_PORT
+	(void)id;
+	return FALSE;
+#else
 	u8* id_ptr   = &id;
 	dspch_* chan = GetLowerActiveDSPchannel();
 
@@ -284,6 +288,7 @@ BOOL BreakLowerActiveDSPchannel(u8 id)
 	return TRUE;
 
 	STACK_PAD_VAR(2);
+#endif
 }
 
 /**
@@ -300,6 +305,7 @@ void UpdateDSPchannel(dspch_* chan)
  */
 void UpdateDSPchannelAll()
 {
+#ifndef PIKI_PC_PORT
 	// Calculate delta time since last update
 	int tick = OSGetTick();
 	u32 old  = tick - old_time;
@@ -313,6 +319,7 @@ void UpdateDSPchannelAll()
 	if (subframeIdx != 0 && (f32)history[0] / (f32)old < 1.1f) {
 		BreakLowerActiveDSPchannel(DSPCHAN_MAX_PRIO - 1);
 	}
+#endif
 
 	// Update all DSP channels
 	for (u32 i = 0; i < DSPCH_LENGTH; i++) {

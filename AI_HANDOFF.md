@@ -1,19 +1,51 @@
 # Pikmin Native Linux PC Port — Handoff operativo
 
-Última actualización: 2026-09-01
+Última actualización: 2026-09-07
 
-## Configuración de referencia alcanzada (2026-09-01)
+## Cómo funcionan de verdad los FPS altos (verificado en código 2026-09-07)
 
-**1080p nativo (`renderScale = 1`), 60 FPS en menús, 30 FPS en gameplay, sin
-fallos gráficos.** Validado in-game por el usuario sobre GTX 1050 4 GB con
-Ubuntu y Mesa 26.0. Este es el estado que debe conservarse; véase la
-configuración de referencia al principio de `ROADMAP.md`.
+Léelo antes que cualquier nota histórica de este archivo: **los 60 FPS en
+gameplay funcionan, y no se consiguieron interpolando.**
 
-Los 60/30 no son una limitación del port: son los `setFrameClamp(1)` de
-títulos, selección de datos y mapa, y el `setFrameClamp(2)` de `newPikiGame`,
-es decir el comportamiento original del juego. **El objetivo del usuario ya no
-incluye 60 FPS en gameplay**, lo que deja TIME-002 fuera del camino crítico y
-retira la presión de la ruta de captura/reproducción.
+El mecanismo es simple: `fpsMode` (menú F1, persistido en
+`pikmin_settings.conf`) elige el `setFrameClamp` que `newPikiGame` aplica —
+`2`=30 Hz, `1`=60 Hz, `0`=120 Hz (valor especial del port; ningún sitio del
+juego llama a `setFrameClamp(0)`). `PcFrameScheduler::deltaForClamp` lo traduce
+a periodo de tick, y `System::run` llama a `app->idle()` una vez por tick.
+
+Eso funciona porque **el juego es independiente de la tasa de frames**: hay
+~440 llamadas a `gsys->getFrameTime()` repartidas por toda la lógica, no solo en
+UI. Integran velocidad (`creature.cpp:1305`, `navi.cpp:250`), colisiones
+(`creatureCollision.cpp`), formación (`formationMgr.cpp`) y también las
+animaciones (`panianimator.cpp:214`, `speed *= NSystem::getFrameTime()`).
+`getFrameTime()` devuelve `mDeltaTime`, tiempo real transcurrido acotado a un
+máximo de 1/30 s. Subir la tasa de ticks no acelera el juego.
+
+**No hace falta interpolación para esto, y de hecho no hay ninguna activa.**
+`pc_render_begin_presentation()` no se llama desde ningún punto del juego: toda
+la maquinaria de TIME-002 (`pc_render_phase`, `pc_visual_snapshot`,
+`pc_camera_snapshot`, `pc_visual_runtime`) está compilada y probada pero
+inerte. Sus tests pasan porque se ejercitan directamente, no porque el juego
+los use.
+
+### Límite práctico de los 120
+
+Están correctamente montados, pero solo se ven en una pantalla capaz. Con
+`clamp=0` el intervalo de intercambio cae al fallback de 1
+(`dgxGraphics.cpp:574`, que ya protege el caso 0), así que con VSync la
+presentación queda atada al refresco del monitor. El panel del equipo de
+desarrollo (`eDP-1`) es de 60,05 Hz, de modo que ahí 120 no es observable por
+mucho que la simulación los genere.
+
+## Configuración de referencia alcanzada
+
+**1080p nativo (`renderScale = 1`), sin fallos gráficos.** Validado in-game por
+el usuario sobre GTX 1050 4 GB con Ubuntu y Mesa 26.0, y a 2026-09-02 con
+60 FPS reales en gameplay (batching activo). Véase también la configuración de
+referencia al principio de `ROADMAP.md`.
+
+Con `fpsMode` en 0 el juego corre a los 60/30 del original: `setFrameClamp(1)`
+en títulos, selección de datos y mapa, y `setFrameClamp(2)` en `newPikiGame`.
 
 Lo que lo hizo posible fue PERF-NATIVE-003, la especialización de pipelines
 TEV: el fragment shader interpretaba la configuración TEV por píxel y hundía la
@@ -64,12 +96,17 @@ barato. Los puntos de vaciado del lote son el riesgo real del trabajo.
 Snapshot de esta build medida:
 `snapshots/20260901-191759-medicion-cpu-2b.tar.zst`.
 
-## ALERTA 60 FPS — último intento fallido y retirado
+## ALERTA — la ruta de INTERPOLACIÓN sigue prohibida
+
+Nota de 2026-09-07: lo de abajo trata de generar frames *intermedios*
+interpolando, que es una ruta distinta y fallida. **No es cómo se consiguieron
+los 60 FPS** (ver la sección al principio de este archivo). Sigue siendo válido
+como advertencia de qué no reactivar.
 
 La última activación de presents intermedios volvió a ejecutar `renderall()`
 con los runtimes de cámara y pose habilitados. En la prueba in-game la imagen
 quedó en blanco y negro y aparecieron bugs gráficos. El usuario hizo rollback
-y recuperó el juego funcional a 30 FPS. **No reactivar ni reconstruir ese
+y recuperó el juego funcional. **No reactivar ni reconstruir ese
 parche.** El registro completo de los tres intentos, sus síntomas, causas y la
 arquitectura recomendada está en `60FPS_FAILED_ATTEMPTS.md`.
 

@@ -78,3 +78,7 @@ tools/vc6
 /backup_audio/
 *.bak
 /snapshots/
+
+# Port a Windows (MinGW)
+build-windows/
+third_party/SDL2-mingw64/

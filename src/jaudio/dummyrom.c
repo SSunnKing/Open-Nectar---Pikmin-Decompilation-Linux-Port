@@ -33,7 +33,7 @@ void mesg_finishcall(u32)
  * @TODO: Documentation
  * @note UNUSED Size: 00005C
  */
-void ARAMStartDMAmesg(u32, u32, u32, u32, s32, OSMesgQueue_s*)
+void ARAMStartDMAmesg(u32, u32, u32, u32, s32, OSMessageQueue*)
 {
 	TRAP_UNIMPLEMENTED;
 }
@@ -90,14 +90,30 @@ void Jac_InitARAM(u32 loadAudiorom)
 		aram_size = AUDIO_ARAM_SIZE;
 	}
 
+#ifdef PIKI_PC_PORT
+	/*
+	 * Aurora models ARAM addresses as offsets into ARGetStorageAddress().
+	 * ARInit reserves the first 0x4000 bytes, matching the console base.
+	 */
+	AUDIO_ARAM_TOP = 0x4000;
+	const u32 hostAramSize = ARGetSize();
+	if (aram_size > hostAramSize) {
+		aram_size = hostAramSize;
+	}
+#else
 	AUDIO_ARAM_TOP = ARGetBaseAddress();
+#endif
 	audiorom_size  = 0;
 
 	CARD_SECURITY_BUFFER = 0x40;
 	audiorom_size += AUDIO_ARAM_TOP;
 	JAC_ARAM_DMA_BUFFER_TOP = (u8*)audiorom_size;
 	audiorom_size += AUDIO_ARAM_HEAP_SIZE;
-	Nas_HeapInit(&aram_hp, (u8*)audiorom_size, aram_size - audiorom_size);
+	if (audiorom_size < aram_size) {
+		Nas_HeapInit(&aram_hp, (u8*)audiorom_size, aram_size - audiorom_size);
+	} else {
+		Nas_HeapInit(&aram_hp, NULL, 0);
+	}
 
 	/* Probably leftovers from some debug print statement */
 	(void)audiorom_size;

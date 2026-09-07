@@ -21,6 +21,11 @@
 
 #define TRACK_LIST_SIZE (32)
 
+#ifdef PIKI_PC_PORT
+static_assert(sizeof(OuterParam_) == 0x40,
+              "sequence EXT scratch must retain the GameCube OuterParam layout");
+#endif
+
 typedef struct TrackListPair TrackListPair;
 typedef struct ArgListPair ArgListPair;
 
@@ -630,7 +635,18 @@ void Jam_WriteRegParam(seqp_* track, u8 controlByte)
 	case 0x2A:
 	case 0x2B:
 	{
+#ifdef PIKI_PC_PORT
+		/*
+		 * The extended 32-bit registers share storage with two 16-bit
+		 * sequence registers in GameCube big-endian order. Writing the u32
+		 * member directly on a little-endian host swaps those two halves.
+		 */
+		const u32 extendedIndex = r29_regIdx - 0x28;
+		track->regParam.reg[16 + extendedIndex * 2] = static_cast<u16>(unaff_r27 >> 16);
+		track->regParam.reg[17 + extendedIndex * 2] = static_cast<u16>(unaff_r27);
+#else
 		track->regParam.param.extendedRegs[r29_regIdx - 0x28] = unaff_r27;
+#endif
 		return;
 	}
 	default:
@@ -701,7 +717,8 @@ u16 Jam_ReadRegDirect(seqp_* track, u8 regIdx)
 	}
 	case 0x30:
 	{
-		if (track->callStackDepth == 0) {
+		if (track->callStackDepth == 0
+		    || track->callStackDepth > ARRAY_SIZE(track->loopCounters)) {
 			result = 0;
 		} else {
 			result = track->loopCounters[track->callStackDepth - 1];
@@ -751,7 +768,13 @@ u32 Jam_ReadReg32(seqp_* track, u8 index)
 	case 42:
 	case 43:
 	{
+#ifdef PIKI_PC_PORT
+		const u32 extendedIndex = index - 40;
+		return (static_cast<u32>(track->regParam.reg[16 + extendedIndex * 2]) << 16)
+		     | track->regParam.reg[17 + extendedIndex * 2];
+#else
 		return track->regParam.param.extendedRegs[index - 40];
+#endif
 	}
 	case 35:
 	{
@@ -1860,6 +1883,9 @@ static u32 Cmd_OpenTrackBros()
  */
 static u32 Cmd_Call()
 {
+	if (SEQ_P->callStackDepth >= ARRAY_SIZE(SEQ_P->callStack)) {
+		return 0x80;
+	}
 	SEQ_P->callStack[SEQ_P->callStackDepth++] = SEQ_P->programCounter;
 	SEQ_P->programCounter                     = SEQ_ARG[0];
 	return 0;
@@ -1893,6 +1919,9 @@ static u32 Cmd_CallF()
 	}
 	if ((u8)__ConditionCheck(SEQ_P, flags & 0x0f) == TRUE) {
 		if (SEQ_CMD == (0xC0 + CMD_CALL_F)) {
+			if (SEQ_P->callStackDepth >= ARRAY_SIZE(SEQ_P->callStack)) {
+				return 0x80;
+			}
 			SEQ_P->callStack[SEQ_P->callStackDepth++] = SEQ_P->programCounter;
 		}
 		SEQ_P->programCounter = targetPc;
@@ -1905,6 +1934,10 @@ static u32 Cmd_CallF()
  */
 static u32 Cmd_Ret()
 {
+	if (SEQ_P->callStackDepth == 0
+	    || SEQ_P->callStackDepth > ARRAY_SIZE(SEQ_P->callStack)) {
+		return 0x80;
+	}
 	SEQ_P->programCounter = SEQ_P->callStack[--SEQ_P->callStackDepth];
 	return 0;
 }
@@ -1916,6 +1949,10 @@ static u32 Cmd_RetF()
 {
 	// But why cast it...?  And why check if it explicitly equals TRUE...?
 	if ((u8)__ConditionCheck(SEQ_P, SEQ_ARG[0] & 0x0f) == TRUE) {
+		if (SEQ_P->callStackDepth == 0
+		    || SEQ_P->callStackDepth > ARRAY_SIZE(SEQ_P->callStack)) {
+			return 0x80;
+		}
 		SEQ_P->programCounter = SEQ_P->callStack[--SEQ_P->callStackDepth];
 	}
 	return 0;
@@ -1943,6 +1980,9 @@ static u32 Cmd_JmpF()
  */
 static u32 Cmd_LoopS()
 {
+	if (SEQ_P->callStackDepth >= ARRAY_SIZE(SEQ_P->callStack)) {
+		return 0x80;
+	}
 	SEQ_P->callStack[SEQ_P->callStackDepth]      = SEQ_P->programCounter;
 	SEQ_P->loopCounters[SEQ_P->callStackDepth++] = SEQ_ARG[0];
 	return 0;
@@ -1955,7 +1995,8 @@ static u32 Cmd_LoopE()
 {
 	u16 loopCount;
 
-	if (SEQ_P->callStackDepth == 0) {
+	if (SEQ_P->callStackDepth == 0
+	    || SEQ_P->callStackDepth > ARRAY_SIZE(SEQ_P->callStack)) {
 		return 0x80;
 	}
 
@@ -2402,7 +2443,16 @@ static u32 Cmd_IIRSet()
  */
 static u32 Cmd_FIRSet()
 {
+#ifdef PIKI_PC_PORT
+	s16 coefficients[8];
+	const u32 offset = SEQ_ARG[0];
+	for (u32 i = 0; i < ARRAY_SIZE(coefficients); ++i) {
+		coefficients[i] = static_cast<s16>(__WordReadOfs(SEQ_P, offset + i * sizeof(s16)));
+	}
+	Jam_SetExtFirFilterD(SEQ_P->outerParams, coefficients);
+#else
 	Jam_SetExtFirFilterD(SEQ_P->outerParams, (s16*)Jam_OfsToAddr(SEQ_P, SEQ_ARG[0]));
+#endif
 	return 0;
 }
 
@@ -2450,6 +2500,9 @@ static u32 Cmd_OscRoute()
 
 	oscRoute = SEQ_ARG[0] & 0xf;
 	oscIndex = SEQ_ARG[0] >> 4 & 0xf;
+	if (oscIndex >= ARRAY_SIZE(SEQ_P->oscillatorRouting)) {
+		return 0x80;
+	}
 
 	SEQ_P->oscillatorRouting[oscIndex] = oscRoute;
 	if (oscRoute == 14) {
@@ -2808,14 +2861,7 @@ u32 RegCmd_Process(seqp_* track, BOOL isFromRegister, u32 argTypeCount)
 	u8 cmd;
 	u8 maskBits;
 	u16 bitPair;
-	u16 argMask; // Uninitialized!  Naughty!
-
-	// From a cursory glance at the value held in r30 (representing `argMask`) whenever this
-	// function is run, it MIRACULOUSLY manages to always be zero-initialized by dumb luck.
-	// Conditional breakpoint used for testing Pikmin 1 USA rev 1: $80012e00 nbc r30 != 0
-#if defined(BUGFIX)
-		argMask = 0;
-#endif
+	u16 argMask = 0;
 
 	cmd = __ByteRead(track);
 	if (isFromRegister == TRUE) {
@@ -3241,11 +3287,13 @@ timed:
 	}
 
 	// Update oscillator flags
-	if (track->oscillatorRouting[0] == 0x0E) {
+	if (track->oscillatorRouting[0] == 0x0E
+	    && track->oscillators[0].mode < ARRAY_SIZE(osc_table)) {
 		updateFlags |= osc_table[track->oscillators[0].mode];
 	}
 
-	if (track->oscillatorRouting[1] == 0x0E) {
+	if (track->oscillatorRouting[1] == 0x0E
+	    && track->oscillators[1].mode < ARRAY_SIZE(osc_table)) {
 		updateFlags |= osc_table[track->oscillators[1].mode];
 	}
 

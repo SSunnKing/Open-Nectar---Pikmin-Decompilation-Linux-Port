@@ -4,6 +4,9 @@
 #include "jaudio/connect.h"
 #include "jaudio/heapctrl.h"
 #include <stddef.h>
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_bank_host.h"
+#endif
 
 #define WAVEARC_SIZE   (0x100)
 #define WAVEGROUP_SIZE (0x100)
@@ -16,6 +19,7 @@ CtrlGroup_* CGRP_ARRAY[16];
  * @TODO: Documentation
  */
 
+#if !defined(PIKI_PC_PORT)
 static void PTconvert(void** pointer, u32 base_address)
 {
 	if (*pointer == NULL) {
@@ -107,6 +111,16 @@ CtrlGroup_* Wave_Test(u8* data)
 	}
 	return CGRP_ARRAY[0];
 }
+#else
+CtrlGroup_* Wave_Test(u8*)
+{
+	/*
+	 * The console relocator assumes both 32-bit pointers and native-endian
+	 * fields.  JAudioHost_LoadBX owns conversion on PIKI_PC_PORT.
+	 */
+	return NULL;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -122,6 +136,11 @@ void GetSound_Test(u32 id)
  */
 BOOL Wavegroup_Regist(void* wsysData, u32 id)
 {
+#if defined(PIKI_PC_PORT)
+	(void)wsysData;
+	(void)id;
+	return FALSE;
+#else
 	Wsys_* wsys = (Wsys_*)wsysData;
 	Jac_WsConnectTableSet(wsys->globalID, id);
 	wavegroup[id] = Wave_Test((u8*)wsys);
@@ -132,7 +151,25 @@ BOOL Wavegroup_Regist(void* wsysData, u32 id)
 	}
 	wavegroup[id]->mCurrentSceneIndex = 0;
 	return TRUE;
+#endif
 }
+
+#if defined(PIKI_PC_PORT)
+BOOL Wavegroup_Regist_Host(Wsys_* wsys, u32 id)
+{
+	if (wsys == NULL || id >= WAVEGROUP_SIZE || wsys->magic != 'WSYS'
+	    || wsys->waveArcBank == NULL || wsys->ctrlGroup == NULL
+	    || wsys->waveArcBank->magic != 'WINF' || wsys->ctrlGroup->magic != 'WBCT') {
+		return FALSE;
+	}
+	Jac_WsConnectTableSet(wsys->globalID, id);
+	wavegroup[id] = wsys->ctrlGroup;
+	wavearc[id]   = wsys->waveArcBank;
+	CGRP_ARRAY[0] = wsys->ctrlGroup;
+	wavegroup[id]->mCurrentSceneIndex = 0;
+	return TRUE;
+}
+#endif
 
 /**
  * @TODO: Documentation

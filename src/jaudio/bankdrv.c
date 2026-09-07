@@ -6,7 +6,24 @@
 #include "jaudio/rate.h"
 #include <stddef.h>
 
-static u32 FORCE_RELEASE_TABLE[3] = { 5, 15, 0 };
+/*
+ * This table is consumed as signed 16-bit envelope op/value pairs. Keeping
+ * it in its actual element type makes the sequence identical on big- and
+ * little-endian targets.
+ */
+static s16 FORCE_RELEASE_TABLE[6] = { 0, 5, 0, 15, 0, 0 };
+
+#ifdef PIKI_PC_PORT
+static s16 Bank_ReadOscTableValue(const s16* table, u32 index, u8 bigEndian)
+{
+	if (!bigEndian) {
+		return table[index];
+	}
+
+	const u8* bytes = reinterpret_cast<const u8*>(table) + index * sizeof(s16);
+	return static_cast<s16>((static_cast<u16>(bytes[0]) << 8) | bytes[1]);
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -75,12 +92,12 @@ int Bank_GetInstKeymap(Inst_* inst, u8 key)
 /**
  * @TODO: Documentation
  */
-int Bank_GetInstVmap(Inst_* inst, u8 key, u8 velocity)
+Vmap_* Bank_GetInstVmap(Inst_* inst, u8 key, u8 velocity)
 {
 	STACK_PAD_VAR(1);
 
 	if (!inst) {
-		return 0;
+		return NULL;
 	}
 
 	int instIndex = Bank_GetInstKeymap(inst, key);
@@ -90,14 +107,14 @@ int Bank_GetInstVmap(Inst_* inst, u8 key, u8 velocity)
 		for (u32 i = 0; i < keymap->mVelocityCount; i++) {
 			Vmap_* vmap = keymap->mVelocities[i];
 			if (velocity <= vmap->mBaseVelocity) {
-				return (int)vmap;
+				return vmap;
 			}
 		}
 
-		return 0;
+		return NULL;
 	}
 
-	return instIndex;
+	return NULL;
 }
 
 /**
@@ -180,6 +197,9 @@ f32 Bank_OscToOfs(Osc_* osc, Oscbuf_* buf)
 	s16 val0, val1, val2;
 	f32 calc;
 	s16* table;
+#ifdef PIKI_PC_PORT
+	u8 tableBigEndian;
+#endif
 
 	if (osc == NULL) {
 		buf->value = 1.0f;
@@ -220,10 +240,19 @@ f32 Bank_OscToOfs(Osc_* osc, Oscbuf_* buf)
 
 	if (buf->state == 5) {
 		table = osc->releaseVecOffset;
+#ifdef PIKI_PC_PORT
+		tableBigEndian = osc->releaseVecBigEndian;
+#endif
 	} else if (buf->state == 7) {
-		table = (s16*)FORCE_RELEASE_TABLE;
+		table = FORCE_RELEASE_TABLE;
+#ifdef PIKI_PC_PORT
+		tableBigEndian = FALSE;
+#endif
 	} else {
 		table = osc->attackVecOffset;
+#ifdef PIKI_PC_PORT
+		tableBigEndian = osc->attackVecBigEndian;
+#endif
 	}
 
 	if (table == NULL && buf->state != 8) {
@@ -259,9 +288,15 @@ f32 Bank_OscToOfs(Osc_* osc, Oscbuf_* buf)
 			buf->state = 0;
 			break;
 		}
+#ifdef PIKI_PC_PORT
+		val0 = Bank_ReadOscTableValue(table, offset + 0, tableBigEndian);
+		val1 = Bank_ReadOscTableValue(table, offset + 1, tableBigEndian);
+		val2 = Bank_ReadOscTableValue(table, offset + 2, tableBigEndian);
+#else
 		val0 = table[offset + 0];
 		val1 = table[offset + 1];
 		val2 = table[offset + 2];
+#endif
 
 		if (val0 == 0xd) {
 			buf->tableIndex = val2;

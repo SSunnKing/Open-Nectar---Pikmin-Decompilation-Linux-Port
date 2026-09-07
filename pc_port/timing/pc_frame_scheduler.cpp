@@ -19,13 +19,17 @@ PcFrameScheduler::PcFrameScheduler(int maxCatchUpTicks, double suspendThreshold)
 
 double PcFrameScheduler::deltaForClamp(int frameClamp)
 {
-	return std::max(1, frameClamp) / 60.0;
+	// Special case: frameClamp 0 means 120 Hz (0.5 frame periods at 60 Hz base)
+	if (frameClamp == 0) return 1.0 / 120.0;
+	if (frameClamp == 1) return 1.0 / 60.0;
+	if (frameClamp == 2) return 2.0 / 60.0;  // 30 Hz
+	return frameClamp / 60.0;
 }
 
 void PcFrameScheduler::reset(double now, int frameClamp)
 {
 	mInitialised   = true;
-	mFrameClamp    = std::max(1, frameClamp);
+	mFrameClamp    = frameClamp;
 	mFixedDelta    = deltaForClamp(mFrameClamp);
 	mLastTime      = now;
 	mAccumulator   = 0.0;
@@ -34,7 +38,6 @@ void PcFrameScheduler::reset(double now, int frameClamp)
 
 PcFrameSchedule PcFrameScheduler::advance(double now, int frameClamp)
 {
-	frameClamp = std::max(1, frameClamp);
 	if (!mInitialised || frameClamp != mFrameClamp || now < mLastTime) {
 		reset(now, frameClamp);
 		return { 0, mFixedDelta, 0.0, mNextDeadline, mDiscardedTicks };

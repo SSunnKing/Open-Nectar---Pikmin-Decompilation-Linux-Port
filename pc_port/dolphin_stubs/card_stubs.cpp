@@ -3,6 +3,7 @@
 #include "Dolphin/dvd.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -16,8 +17,14 @@ namespace fs = std::filesystem;
 namespace {
 constexpr std::uintmax_t kCapacity = 16u * 1024u * 1024u;
 constexpr s32 kSectorSize = 0x2000;
-s32 sLastResult[2] = { CARD_RESULT_READY, CARD_RESULT_READY };
-s32 sTransferred[2] = {};
+// El hilo trabajador de la tarjeta (CardUtilMain) escribe estos resultados
+// mientras el hilo principal los consulta en bucles de espera activa como
+// MemoryCard::waitWhileBusy(), cuyo cuerpo esta vacio. Con tipos normales eso
+// es una carrera de datos y, bajo LTO, un bucle infinito: el compilador saca la
+// carga fuera del bucle. Atomicos relajados cuestan lo mismo en x86 y obligan a
+// releer memoria en cada vuelta.
+std::atomic<s32> sLastResult[2] = { CARD_RESULT_READY, CARD_RESULT_READY };
+std::atomic<s32> sTransferred[2] = {};
 
 bool validChannel(s32 channel) { return channel >= 0 && channel < 2; }
 fs::path root(s32 channel) { return fs::path("save") / (channel == 0 ? "card0" : "card1"); }
@@ -216,7 +223,7 @@ s32 CARDWriteAsync(CARDFileInfo* info, void* address, s32 length, s32 offset, CA
 {
 	const s32 result = CARDWrite(info, address, length, offset); if (callback) callback(info ? info->chan : 0, result); return result;
 }
-s32 CARDGetXferredBytes(s32 channel) { return validChannel(channel) ? sTransferred[channel] : 0; }
+s32 CARDGetXferredBytes(s32 channel) { return validChannel(channel) ? sTransferred[channel].load() : 0; }
 
 s32 CARDFastDelete(s32 channel, s32 fileNo)
 {
@@ -285,7 +292,7 @@ s32 CARDFreeBlocks(s32 channel, s32* bytesUnused, s32* filesUnused)
 	if (filesUnused) *filesUnused = CARD_MAX_FILE - static_cast<s32>(files.size());
 	return finish(channel, CARD_RESULT_READY);
 }
-s32 CARDGetResultCode(s32 channel) { return validChannel(channel) ? sLastResult[channel] : CARD_RESULT_NOCARD; }
+s32 CARDGetResultCode(s32 channel) { return validChannel(channel) ? sLastResult[channel].load() : CARD_RESULT_NOCARD; }
 s32 CARDCheck(s32 channel) { return finish(channel, ensureCard(channel) ? CARD_RESULT_READY : CARD_RESULT_NOCARD); }
 s32 CARDCheckAsync(s32 channel, CARDCallback callback) { const s32 result = CARDCheck(channel); if (callback) callback(channel, result); return result; }
 s32 CARDCheckExAsync(s32 channel, s32* bytes, CARDCallback callback) { if (bytes) *bytes = 0; return CARDCheckAsync(channel, callback); }

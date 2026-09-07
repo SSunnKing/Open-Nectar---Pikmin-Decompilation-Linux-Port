@@ -15,6 +15,9 @@ bool pc_audio_init(void);
 void pc_audio_shutdown(void);
 bool pc_audio_play_stx(const char* path);
 void pc_audio_stop_stream(void);
+// Baja el stream a silencio en `fadeFrames` fotogramas de 60 Hz y lo apaga.
+// 0 equivale a pc_audio_stop_stream().
+void pc_audio_fade_stream(u32 fadeFrames);
 bool pc_audio_load_wave_bank(const char* path);
 bool pc_audio_play_sequence(u32 sequence);
 void pc_audio_stop_sequence(void);

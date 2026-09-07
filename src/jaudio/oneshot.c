@@ -19,6 +19,23 @@ Osc_ PERC_ENV    = { 0, 1.0f, 0, 0, 1.0f, 0 };
 Osc_ OSC_ENV     = { 0, 1.0f, 0, OSC_REL, 1.0f, 0 };
 u8 polys_table[] = { 0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32 };
 
+#ifdef PIKI_PC_PORT
+static u8 SoundIdByte(SOUNDID_ sound, u32 index)
+{
+	return static_cast<u8>(sound.value >> ((3 - index) * 8));
+}
+#else
+static u8 SoundIdByte(SOUNDID_ sound, u32 index)
+{
+	return sound.bytes[index];
+}
+#endif
+
+static u32 VmapWaveId(const Vmap_* map)
+{
+	return (static_cast<u32>(static_cast<u16>(map->mWsysID)) << 16) | static_cast<u16>(map->mWaveID);
+}
+
 /**
  * @TODO: Documentation
  */
@@ -137,7 +154,7 @@ static void EffecterInit(jc_* jc, Inst_* inst)
 /**
  * @TODO: Documentation
  */
-static void EffecterInit_Perc(jc_* jc, Pmap_* pmap, u16 id)
+static void EffecterInit_Perc(jc_* jc, PercKeymap_* keymap, u16 id)
 {
 	jc->pitchModifier            = 1.0f;
 	jc->volumeModifier           = 1.0f;
@@ -147,11 +164,11 @@ static void EffecterInit_Perc(jc_* jc, Pmap_* pmap, u16 id)
 
 	// PERC instruments only have rand and not osc
 	for (u32 i = 0; i < 2; i++) {
-		Pmap_* map = (Pmap_*)((int*)pmap + i + 2);
-		if (map->randomEffect) {
-			f32 r      = Bank_RandToOfs(map->randomEffect);
+		Rand_* randomEffect = static_cast<Rand_*>(i == 0 ? keymap->_08 : keymap->_0C);
+		if (randomEffect) {
+			f32 r      = Bank_RandToOfs(randomEffect);
 			f32* REF_r = &r;
-			__DoEffect(jc, map->randomEffect->id, r);
+			__DoEffect(jc, randomEffect->id, r);
 		}
 
 		jc->mOscillators[i] = NULL;
@@ -188,7 +205,7 @@ static void EffecterInit_Osc(jc_* jc)
  */
 void Effecter_Overwrite_1ShotD(jc_* jc, Osc_* osc, u32 id)
 {
-	if (id < 4) {
+	if (jc != NULL && osc != NULL && id < ARRAY_SIZE(jc->mOscBuffers)) {
 		jc->mOscBuffers[id].state = TRUE;
 		jc->mOscillators[id]      = osc;
 		DoEffectOsc(jc, jc->mOscillators[id]->mode, Bank_OscToOfs(jc->mOscillators[id], &jc->mOscBuffers[id]));
@@ -217,7 +234,7 @@ static jc_* __Oneshot_Play_Start(jcs_* jcs, jc_* jc, u32 noteId)
 	jc->noteId         = noteId;
 	jc->lastNotePlayed = jc->noteId;
 	jc->updateCallback = Jesus1Shot_Update;
-	jc->dspChannel     = AllocDSPchannel(0, (u32)jc);
+	jc->dspChannel     = AllocDSPchannel(0, reinterpret_cast<uintptr_t>(jc));
 
 	if (jc->dspChannel == NULL) {
 		play = CheckLogicalChannel(jc);
@@ -234,7 +251,7 @@ static jc_* __Oneshot_Play_Start(jcs_* jcs, jc_* jc, u32 noteId)
 			return NULL;
 		}
 	} else if (play == FALSE) {
-		DeAllocDSPchannel(jc->dspChannel, (u32)jc);
+		DeAllocDSPchannel(jc->dspChannel, reinterpret_cast<uintptr_t>(jc));
 		jc->dspChannel = NULL;
 		List_AddChannelTail(&jcs->freeChannels, jc);
 		return NULL;
@@ -247,9 +264,9 @@ static jc_* __Oneshot_Play_Start(jcs_* jcs, jc_* jc, u32 noteId)
 /**
  * @TODO: Documentation
  */
-static jc_* __Oneshot_GetLogicalChannel(jcs_* jcs, CtrlWave_* wave)
+static jc_* __Oneshot_GetLogicalChannel(jcs_* jcs, WaveID_* wave)
 {
-	if (wave && wave->sampleSrcType == 0) {
+	if (wave && (wave->heap.startAddress == 0 || wave->data == NULL)) {
 		return FALSE;
 	}
 
@@ -288,8 +305,8 @@ static jc_* __Oneshot_GetLogicalChannel(jcs_* jcs, CtrlWave_* wave)
 	}
 	Channel_Init(chan);
 	if (wave) {
-		chan->waveData        = (Wave_*)wave->waveAddr;
-		chan->chanData        = wave->sampleSrcType;
+		chan->waveData        = wave->data;
+		chan->chanData        = wave->heap.startAddress;
 		chan->logicalChanType = 0;
 	}
 	chan->_18 = 0;
@@ -329,7 +346,7 @@ Inst_* InstRead(u32 bankIndex, u32 instIndex)
  */
 Vmap_* VmapRead(Inst_* inst, u8 key, u8 velocity)
 {
-	Vmap_* map = (Vmap_*)Bank_GetInstVmap(inst, key, velocity);
+	Vmap_* map = Bank_GetInstVmap(inst, key, velocity);
 	return !map ? NULL : map;
 }
 
@@ -770,24 +787,24 @@ static BOOL Jesus1Shot_Update(jc_* jc, JCSTATUS jstatus)
  */
 u32 One_CheckInstWave(SOUNDID_ sound)
 {
-	Inst_* inst = InstRead(sound.bytes[0], sound.bytes[1]);
+	const u8 bankId = SoundIdByte(sound, 0);
+	Inst_* inst     = InstRead(bankId, SoundIdByte(sound, 1));
 	if (inst == NULL) {
 		return 1;
 	}
 
-	// TODO: fix this conversion to something wave-related once we've sorted that out
-	int* map = (int*)VmapRead(inst, sound.bytes[2], sound.bytes[3]);
+	Vmap_* map = VmapRead(inst, SoundIdByte(sound, 2), SoundIdByte(sound, 3));
 	if (map == NULL) {
 		return 2;
 	}
 
-	// clearly need something better than map[1]
-	CtrlGroup_* group = WaveidToWavegroup(map[1], sound.bytes[0]);
+	const u32 waveId  = VmapWaveId(map);
+	CtrlGroup_* group = WaveidToWavegroup(waveId, bankId);
 	if (group == NULL) {
 		return 3;
 	}
 
-	WaveID_* handle = GetSoundHandle(group, map[1]);
+	WaveID_* handle = GetSoundHandle(group, waveId);
 	if (handle == 0) {
 		return 4;
 	}
@@ -804,13 +821,6 @@ void Get_CtrlWave(SOUNDID_ sound)
 	TRAP_UNIMPLEMENTED;
 }
 
-typedef struct testPercMap {
-	int _00; // this clearly should one of the existing structs, but Vmap doesnt work so I have no idea
-	int mWaveId;
-	f32 mVolumeScale;
-	f32 mPitchScale;
-} testPercMap;
-
 /**
  * @TODO: Documentation
  */
@@ -821,32 +831,38 @@ jc_* Play_1shot(jcs_* jcs, SOUNDID_ sound, u32 id)
 	WaveID_* wave;
 	BOOL test = FALSE;
 
-	inst = InstRead(sound.bytes[0], sound.bytes[1]);
+	const u8 bankId     = SoundIdByte(sound, 0);
+	const u8 instrument = SoundIdByte(sound, 1);
+	const u8 key        = SoundIdByte(sound, 2);
+	const u8 velocity   = SoundIdByte(sound, 3);
+
+	inst = InstRead(bankId, instrument);
 	if (inst == NULL) {
 		return NULL;
 	}
 
-	testPercMap* map = (testPercMap*)VmapRead(inst, sound.bytes[2], sound.bytes[3]);
+	Vmap_* map = VmapRead(inst, key, velocity);
 	if (map == NULL) {
 		return NULL;
 	}
 
-	CtrlGroup_* group = WaveidToWavegroup(map->mWaveId, sound.bytes[0]);
+	const u32 waveId  = VmapWaveId(map);
+	CtrlGroup_* group = WaveidToWavegroup(waveId, bankId);
 	if (group == NULL) {
 		return NULL;
 	}
 
-	wave = GetSoundHandle(group, map->mWaveId);
+	wave = GetSoundHandle(group, waveId);
 	if (wave == NULL) {
 		return NULL;
 	}
 
-	chan = __Oneshot_GetLogicalChannel(jcs, (CtrlWave_*)wave);
+	chan = __Oneshot_GetLogicalChannel(jcs, wave);
 	if (chan == NULL) {
 		return NULL;
 	}
 
-	int val = sound.bytes[2] + 60 - wave->data->key;
+	int val = key + 60 - wave->data->key;
 	if (val < 0) {
 		val = 0;
 	}
@@ -854,11 +870,11 @@ jc_* Play_1shot(jcs_* jcs, SOUNDID_ sound, u32 id)
 		val = 127;
 	}
 	f32 pitch                      = C5BASE_PITCHTABLE[val];
-	chan->velocity                 = sound.bytes[3];
-	chan->note                     = sound.bytes[2];
-	chan->basePitch                = map->mPitchScale * (wave->data->sampleRate / JAC_DAC_RATE) * inst->mGainMultiplier;
+	chan->velocity                 = velocity;
+	chan->note                     = key;
+	chan->basePitch                = map->mPitch * (wave->data->sampleRate / JAC_DAC_RATE) * inst->mGainMultiplier;
 	chan->currentPitch             = chan->basePitch * pitch;
-	chan->baseVolume               = map->mVolumeScale * inst->mFreqMultiplier;
+	chan->baseVolume               = map->mVolume * inst->mFreqMultiplier;
 	chan->currentVolume            = chan->velocity / 127.0f;
 	chan->currentVolume            = chan->currentVolume * chan->currentVolume * chan->baseVolume;
 	chan->panMatrices[1].values[0] = 0.5f;
@@ -880,7 +896,7 @@ jc_* Play_1shot(jcs_* jcs, SOUNDID_ sound, u32 id)
 	}
 	case 0x40:
 	{
-		flag |= Bank_GetInstKeymap(inst, sound.bytes[2]) << 0x10;
+		flag |= Bank_GetInstKeymap(inst, key) << 0x10;
 		break;
 	}
 	}
@@ -913,55 +929,61 @@ jc_* Play_1shot_Perc(jcs_* jcs, SOUNDID_ sound, u32 id)
 	Perc_* perc;
 	u32* idp = &id;
 
-	perc = PercRead(sound.bytes[0], sound.bytes[1]);
+	const u8 bankId    = SoundIdByte(sound, 0);
+	const u8 percussion = SoundIdByte(sound, 1);
+	const u8 key        = SoundIdByte(sound, 2);
+	const u8 velocity   = SoundIdByte(sound, 3);
+
+	perc = PercRead(bankId, percussion);
 	if (perc == NULL) {
 		return NULL;
 	}
 
-	testPercMap* map   = (testPercMap*)Bank_GetPercVmap(perc, sound.bytes[2], sound.bytes[3]);
-	testPercMap** mapp = &map;
+	PercKeymap_* keymap = perc->mKeyRegions[key];
+	Vmap_* map           = Bank_GetPercVmap(perc, key, velocity);
 	if (map == NULL) {
 		return NULL;
 	}
 
 	u32 x;
 
-	CtrlGroup_* group = WaveidToWavegroup(map->mWaveId, sound.bytes[0]);
+	const u32 waveId  = VmapWaveId(map);
+	CtrlGroup_* group = WaveidToWavegroup(waveId, bankId);
 	if (group == NULL) {
 		return NULL;
 	}
 
-	WaveID_* wave = GetSoundHandle(group, map->mWaveId);
+	WaveID_* wave = GetSoundHandle(group, waveId);
 	if (wave == NULL) {
 		return NULL;
 	}
 
-	chan = __Oneshot_GetLogicalChannel(jcs, (CtrlWave_*)wave);
+	chan = __Oneshot_GetLogicalChannel(jcs, wave);
 	if (chan == NULL) {
 		return NULL;
 	}
 
-	chan->velocity = sound.bytes[3];
-	chan->note     = sound.bytes[2];
+	chan->velocity = velocity;
+	chan->note     = key;
 
-	chan->basePitch    = (wave->data->sampleRate / JAC_DAC_RATE) * map->mPitchScale * perc->mKeyRegions[sound.bytes[2]]->mVolume;
+	chan->basePitch    = (wave->data->sampleRate / JAC_DAC_RATE) * map->mPitch * keymap->mVolume;
 	chan->currentPitch = chan->basePitch;
 
-	chan->baseVolume    = map->mVolumeScale * perc->mKeyRegions[sound.bytes[2]]->mPitch;
+	chan->baseVolume    = map->mVolume * keymap->mPitch;
 	chan->currentVolume = chan->velocity / 127.0f;
 	chan->currentVolume = chan->currentVolume * chan->currentVolume * chan->baseVolume;
 
 	u16 flag;
 	if (perc->mMagic == 'PER2') {
-		chan->panMatrices[1].values[0] = perc->panTable[sound.bytes[2]] / 127.0f;
-		flag                           = perc->releaseTable[sound.bytes[2]];
+		chan->panMatrices[1].values[0] = perc->panTable[key] / 127.0f;
+		flag                           = perc->releaseTable[key];
 	} else {
 		flag                           = 1000;
 		chan->panMatrices[1].values[0] = 0.5f;
 	}
 	chan->panMatrices[2].values[0] = 0.0f;
 	chan->panMatrices[3].values[0] = 0.0f;
-	EffecterInit_Perc(chan, (Pmap_*)perc->mKeyRegions[sound.bytes[2]], flag);
+	EffecterInit_Perc(chan, keymap, flag);
 	chan->soundId = 0;
 
 	return __Oneshot_Play_Start(jcs, chan, id);
@@ -984,10 +1006,10 @@ jc_* Play_1shot_Osc(jcs_* jcs, SOUNDID_ sound, u32 id)
 		return NULL;
 	}
 
-	chan->chanData        = sound.bytes[1] - 0xf0;
+	chan->chanData        = SoundIdByte(sound, 1) - 0xf0;
 	chan->logicalChanType = 2;
 
-	pit = sound.bytes[2];
+	pit = SoundIdByte(sound, 2);
 	if (pit < 0) {
 		pit = 0;
 	}
@@ -995,8 +1017,8 @@ jc_* Play_1shot_Osc(jcs_* jcs, SOUNDID_ sound, u32 id)
 		pit = 127;
 	}
 	f32 pitch                      = C5BASE_PITCHTABLE[pit];
-	chan->velocity                 = sound.bytes[3];
-	chan->note                     = sound.bytes[2];
+	chan->velocity                 = SoundIdByte(sound, 3);
+	chan->note                     = SoundIdByte(sound, 2);
 	chan->basePitch                = 16736.016f / JAC_DAC_RATE;
 	chan->currentPitch             = chan->basePitch * pitch;
 	chan->baseVolume               = 1.0f;

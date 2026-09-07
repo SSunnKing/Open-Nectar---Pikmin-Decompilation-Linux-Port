@@ -29,6 +29,7 @@
 // Volume preferences in this game are 0..10 sliders (see ogTitle.cpp).
 static constexpr u8 PIKI_JAC_VOLUME_STEPS = 10;
 
+#if !PIKI_USE_JAUDIO
 namespace {
 const char* const kDemoStreams[] = {
     "piki.stx", "o_dead.stx", "d_end1.stx", "gyoku.stx", "d_end3.stx", "fanf5.stx", "badend0.stx",
@@ -250,6 +251,8 @@ void start_demo_audio(u32 cinemaId) {
 }
 }
 
+#endif // !PIKI_USE_JAUDIO
+
 extern "C" {
 
 /* ── AI (from Dolphin/ai.h) ── */
@@ -264,6 +267,7 @@ u32  AIGetDMALength(void)                                 { return 0; }
 u32  AIGetDSPSampleRate(void)                             { return 32000; }
 void AISetDSPSampleRate(u32 rate)                         { (void)rate; }
 AISCallback AIRegisterStreamCallback(AISCallback callback){ (void)callback; return nullptr; }
+#if !PIKI_USE_JAUDIO
 u32  AIGetStreamSampleCount(void)                         { return 0; }
 void AIResetStreamSampleCount(void)                       { }
 void AISetStreamTrigger(u32 trigger)                      { (void)trigger; }
@@ -276,13 +280,24 @@ void AISetStreamVolLeft(u8 vol)                           { (void)vol; }
 void AISetStreamVolRight(u8 vol)                          { (void)vol; }
 u8   AIGetStreamVolLeft(void)                             { return 255; }
 u8   AIGetStreamVolRight(void)                            { return 255; }
-void AIInit(u8* stack)                                    { (void)stack; pc_audio_init(); }
+#endif
+void AIInit(u8* stack) {
+    (void)stack;
+#if !PIKI_USE_JAUDIO
+    pc_audio_init();
+#endif
+}
 BOOL AICheckInit(void)                                    { return TRUE; }
 void AIReset(void)                                        { }
 
 /* ── DSP (from Dolphin/dsp.h) ── */
 /* DSPCheckMail returns u32, not BOOL! */
+#if !PIKI_USE_JAUDIO
+// With JAudio active this comes from src/jaudio/dspboot.c. The mailbox
+// stubs below stay in both builds: src/dsp/ is never compiled, and the
+// host renderer deliberately produces no mailbox traffic.
 void         DSPInit(void)                                { }
+#endif
 u32          DSPCheckMailToDSP(void)                      { return 0; }
 u32          DSPCheckMailFromDSP(void)                    { return 0; }
 u32          DSPReadMailFromDSP(void)                     { return 0; }
@@ -292,6 +307,12 @@ DSPTaskInfo* DSPAddTask(DSPTaskInfo* task)                 { (void)task; return 
 
 } // extern "C"
 
+#if !PIKI_USE_JAUDIO
+// Everything below re-implements the JAudio public API on top of the
+// native PC mixer in pc_port/audio. With PIKI_USE_JAUDIO=1 the real
+// engine in src/jaudio provides these instead, driving DSPchannel_ voice
+// parameter blocks that pc_dsp_host renders. The two cannot coexist:
+// Jac_Start alone owns pc_audio_init and pc_audio_load_wave_bank.
 /* ── JAudio high-level stubs ── */
 extern "C" {
 void Jac_Start(void* heap, u32 heapSize, u32 aramBase, const char* dataPath) {
@@ -327,6 +348,36 @@ void Jac_SceneSetup(u32 sceneID, u32 stageID) {
     else if (sceneID == SCENE_WorldMap || sceneID == SCENE_Title) sChallengeMode = false;
     if (sceneID == SCENE_Course) sNativeStage = stageID;
     sNativeScene = sceneID;
+    // Las tres banderas de pausa son cerrojos: las levanta un SE de sistema
+    // (JACSYS_MenuOn/Pause/DVDPause) y solo las baja su pareja exacta. El menú
+    // de pausa en juego emite SYSSE_PAUSE al abrirse pero solo emite
+    // SYSSE_UNPAUSE por la salida "continuar": cualquier otra salida —ir a
+    // guardar o cargar, por ejemplo— dejaba `sPauseActive` puesto, y con él
+    // TODOS los eventos de SE en pausa el resto de la sesión. El juego seguía
+    // corriendo y no había ni aviso ni caída: simplemente no volvía a sonar un
+    // silbato ni un Pikmin. Entrar en una escena es, por definición, un punto
+    // sin menús abiertos, así que aquí se reponen.
+    //
+    // Y son CINCO, no tres: `paused` en apply_gameplay_audio_pause() suma
+    // además sPartsFindDemoActive y sTextDemoActive. Esos dos alimentan también
+    // audio_demo_active(), que es la puerta con la que Jac_PlayOrimaSe silencia
+    // todas las voces de Pikmin. Un "parts find" o un mensaje de texto que no
+    // llegue a su Finish deja ambas puertas cerradas para el resto de la
+    // partida, y entrar en una escena descarta por definición cualquier
+    // cinemática de la anterior.
+    sMenuActive = false;
+    sPauseActive = false;
+    sDVDPauseActive = false;
+    sPartsFindDemoActive = false;
+    sTextDemoActive = false;
+    // sCurrentDemo NO se toca aqui. Se probo y no recupero ninguna voz, asi que
+    // era riesgo sin beneficio: Jac_FinishDemo lo necesita para saber el modo de
+    // fundido y las banderas de la cinematica que termina, y perderlo a mitad
+    // dejaria la musica sin restaurar. Lo limpia Jac_SceneExit, que es donde
+    // corresponde.
+    sDemoEventPaused = false;
+    sEventResumeFrames = 0;
+    apply_gameplay_audio_pause();
     int bgm = -1;
     switch (sceneID) {
     case SCENE_Title: bgm = BGM_Jungle; break;
@@ -370,6 +421,15 @@ void Jac_SceneExit(u32 sceneID, u32 stageID) {
     sDemoTimedEvent = kNoDemoTimedEvent;
     sDemoEventPaused = false;
     sEventResumeFrames = 0;
+    // Mismo motivo que en Jac_SceneSetup: estos cerrojos sobreviven al cambio
+    // de sección, así que un menú que no emitió su "off" envenenaba la escena
+    // siguiente. Lo mismo vale para los dos cerrojos de cinemática: cierran
+    // audio_demo_active() y con él todas las voces de Pikmin.
+    sMenuActive = false;
+    sPauseActive = false;
+    sDVDPauseActive = false;
+    sPartsFindDemoActive = false;
+    sTextDemoActive = false;
     apply_gameplay_audio_pause();
 }
 u32 Jac_GetCurrentScene() { return sNativeScene; }
@@ -613,15 +673,6 @@ static float jac_slider_gain(u8 level)
 void Jac_SetBGMVolume(u8 volume) { pc_audio_set_bus_volume(PC_AUDIO_BUS_BGM, jac_slider_gain(volume)); }
 void Jac_SetSEVolume(u8 volume) { pc_audio_set_bus_volume(PC_AUDIO_BUS_SE, jac_slider_gain(volume)); }
 void Jac_OutputMode(int mode) { pc_audio_set_stereo(mode != 0); }
-void Jac_StreamMovieUpdate() {}
-void Jac_StreamMovieInit(const char*, u8*, int) {}
-int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut) {
-    if (pictureBuffer) *static_cast<void**>(pictureBuffer) = nullptr;
-    if (widthOut) *widthOut = 0;
-    if (heightOut) *heightOut = 0;
-    return -1;
-}
-void Jac_StreamMovieStop() {}
 void Jac_SetDemoPartsID(int id) { sDemoPartsId = static_cast<u8>(std::clamp(id, 0, 31)); }
 void Jac_SetDemoOnyons(int count) { sDemoOnyonCount = static_cast<u8>(std::clamp(count, 0, 3)); }
 void Jac_SetDemoPartsCount(int count) { sDemoPartsCount = static_cast<u8>(std::clamp(count, 0, 30)); }
@@ -632,12 +683,16 @@ void Jac_StartDemo(u32 cinemaId) {
     (void)sDemoPartsId;
     (void)sDemoOnyonCount;
     (void)sDemoPartsCount;
+    printf("[DEBUG] Jac_StartDemo(%u) called\n", cinemaId);
     const u8 fadeMode = cinemaId < std::size(kDemoBgmFadeMode)
         ? kDemoBgmFadeMode[cinemaId] : 1;
+    printf("[DEBUG] fadeMode=%u (0=stop all BGM immediately)\n", fadeMode);
     switch (fadeMode) {
     case 0:
+        printf("[DEBUG] Stopping BGM tracks 0 and 1\n");
         pc_audio_stop_sequence();
         pc_audio_stop_sequence_track(1);
+        printf("[DEBUG] BGM tracks stopped\n");
         break;
     case 2: Jac_DemoFade(1, 15, 0.01f); break;
     case 3: Jac_DemoFade(1, 8, 0.0f); break;
@@ -712,7 +767,13 @@ void Jac_FinishDemo() {
     sDemoEventPaused = false;
     apply_gameplay_audio_pause();
     if (!sKeepDemoStreamOnFinish) {
-        pc_audio_stop_stream();
+        // La musica de las cinematicas es un stream (.stx), y hasta ahora se
+        // cortaba en seco: Jac_DemoFade solo funde la secuencia, nunca el
+        // stream. Medio segundo basta para quitar el corte sin que la pista se
+        // solape con la musica de la escena siguiente. Medio segundo se probo
+        // en juego y seguia sonando seco.
+        constexpr u32 kDemoStreamFadeFrames = 90; // 1,5 s a 60 Hz
+        pc_audio_fade_stream(kDemoStreamFadeFrames);
     }
     sKeepDemoStreamOnFinish = false;
     sCurrentDemo = -1;
@@ -746,7 +807,16 @@ void Jac_StartPartsFindDemo(u32 jingleType, BOOL hasAudio) {
     apply_gameplay_audio_pause();
 }
 void Jac_StartTextDemo(int) {
-    if (sTextDemoActive || sPartsFindDemoActive) return;
+    // pikidemo.c exige tres condiciones, no dos: text_demo_state != 1,
+    // parts_find_demo_state == 0 y **current_demo_no == DEMOID_FINISHED**, es
+    // decir, que no haya ninguna cinemática en curso.
+    //
+    // Sin esa tercera, un mensaje de texto que aparezca durante una cinemática
+    // ejecuta su Jac_DemoFade(1, ..) y guarda como «volumen anterior» el que la
+    // cinemática ya había atenuado —a veces cero—. Al terminar la cinemática,
+    // el Jac_DemoFade(0, ..) de Jac_FinishDemo restaura ese valor y la música
+    // se queda baja o muda de forma permanente.
+    if (sTextDemoActive || sPartsFindDemoActive || sCurrentDemo >= 0) return;
     Jac_Orima_Formation(0, 0);
     Jac_DemoFade(1, 30, 0.5f);
     sTextDemoActive = true;
@@ -761,7 +831,10 @@ void Jac_FinishPartsFindDemo() {
     apply_gameplay_audio_pause();
 }
 void Jac_FinishTextDemo() {
-    if (!sTextDemoActive || sPartsFindDemoActive) return;
+    // Mismo guardado que en el arranque: si una cinemática empezó mientras el
+    // mensaje seguía activo, la restauración del volumen es suya, no nuestra.
+    // Restaurarlo aquí pisaría el volumen que la cinemática tiene guardado.
+    if (!sTextDemoActive || sPartsFindDemoActive || sCurrentDemo >= 0) return;
     Jac_DemoFade(0, 70, 1.0f);
     sTextDemoActive = false;
     sEventResumeFrames = 3;
@@ -812,6 +885,8 @@ void Jac_Piki_Number(u32 pikiNum) {
 // Traces one gameplay sound from the game's request to the sequencer, so a
 // sound that is not heard can be told apart at the point it goes missing:
 // never asked for, refused for want of an event, or sent and still silent.
+static u64 audio_now_ms();
+
 static void trace_event_action(int index, int action, const char* what,
                                u32 type, u16 command, int slot) {
     static const bool enabled = [] {
@@ -826,14 +901,38 @@ static void trace_event_action(int index, int action, const char* what,
         const char* value = getenv("PIKMIN_AUDIO_TRACE_ALL");
         return value != nullptr && value[0] == '1';
     }();
+    // The ship's ambience alone is four lines a frame at volume zero, which
+    // buries the handful of lines an investigation is actually about.
+    // PIKMIN_AUDIO_TRACE_TYPE takes a comma-separated list of JACEVENT types
+    // (6 = piki voices); unset means every type, as before.
+    static const u32 typeMask = [] {
+        const char* value = getenv("PIKMIN_AUDIO_TRACE_TYPE");
+        if (!value || !value[0]) return 0xFFFFFFFFu;
+        u32 mask = 0;
+        for (const char* cursor = value; *cursor;) {
+            if (*cursor < '0' || *cursor > '9') { ++cursor; continue; }
+            u32 parsed = 0;
+            while (*cursor >= '0' && *cursor <= '9') parsed = parsed * 10 + u32(*cursor++ - '0');
+            if (parsed < 32) mask |= 1u << parsed;
+        }
+        return mask ? mask : 0xFFFFFFFFu;
+    }();
+    // Type 0 is what the failure paths report when the event is not even
+    // active; a filter must never hide the case where a sound never got out.
+    if (type != 0 && type < 32 && !(typeMask & (1u << type))) return;
     static std::set<u32> seen;
     const u32 key = (type << 20) | ((action & 0x3FF) << 10)
                   | static_cast<u32>(what[0] & 0x3F);
     if (!traceAll && !seen.insert(key).second) return;
     const float volume = (index >= 0 && index < 16) ? sEvents[index].volume : -1.0f;
     const float pan = (index >= 0 && index < 16) ? sEvents[index].pan : 0.0f;
-    printf("[PC Audio] evento %d tipo %u accion %d -> %s (comando 0x%03X, ranura %d, "
+    // Ordering alone cannot say whether a dropped sound arrived 30 ms or 600 ms
+    // into the sound that displaced it, and that difference is the whole
+    // question when a voice group only allows one at a time. The stamp is the
+    // raw steady clock so it lines up with probes outside the audio code.
+    printf("[PC Audio] reloj=%llu  evento %d tipo %u accion %d -> %s (comando 0x%03X, ranura %d, "
            "volumen %.3f, paneo %+.2f, eventos libres %d)\n",
+           static_cast<unsigned long long>(audio_now_ms()),
            index, type, action, what, command, slot, volume, pan, sFreeEvents);
 }
 
@@ -915,8 +1014,18 @@ BOOL Jac_PlayEventAction(int index, int action) {
                 if (status.priority > event.priorities[i]) {
                     targetSlot = i;
                 } else {
-                    trace_event_action(index, action, "DESCARTADA (prioridad)",
-                                       event.type, command, -1);
+                    // Name the holder and its age: "dropped on priority" is the
+                    // rule working as designed, so what matters is whether the
+                    // request was late by 20 ms or by half a second.
+                    const u64 heldFor = event.startedMs[i]
+                                      ? audio_now_ms() - event.startedMs[i] : 0;
+                    char label[96];
+                    std::snprintf(label, sizeof label,
+                                  "DESCARTADA (prioridad; ranura %d la tiene la accion %d "
+                                  "desde hace %llu ms)",
+                                  i, event.actions[i],
+                                  static_cast<unsigned long long>(heldFor));
+                    trace_event_action(index, action, label, event.type, command, -1);
                     return FALSE;
                 }
             } else {
@@ -1053,3 +1162,18 @@ void Jac_PauseOrimaSe() {
     pc_audio_set_se_track_paused(10, true);
 }
 void Jac_UnPauseOrimaSe() { apply_gameplay_audio_pause(); }
+
+#endif // !PIKI_USE_JAUDIO
+
+// H4M video decoding is not implemented by this Linux port.
+extern "C" {
+void Jac_StreamMovieUpdate() {}
+void Jac_StreamMovieInit(const char*, u8*, int) {}
+int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut) {
+    if (pictureBuffer) *static_cast<void**>(pictureBuffer) = nullptr;
+    if (widthOut) *widthOut = 0;
+    if (heightOut) *heightOut = 0;
+    return -1;
+}
+void Jac_StreamMovieStop() {}
+}

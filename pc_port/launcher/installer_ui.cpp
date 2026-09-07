@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <unordered_map>
 
 namespace pikmin {
@@ -128,6 +129,8 @@ struct InstallerWindow::Impl {
     const SDL_Rect installBrowse { 580, 218, 135, 44 };
     const SDL_Rect installButton { 265, 300, 230, 54 };
 
+    std::uint32_t lastRenderTicks = 0;
+
     void render()
     {
         if (!renderer) return;
@@ -135,7 +138,7 @@ struct InstallerWindow::Impl {
         fillRect(renderer, { 0, 0, 760, 82 }, { 24, 42, 75, 255 });
         fillRect(renderer, { 0, 78, 760, 4 }, { 116, 185, 92, 255 });
 
-        const std::string title = "Pikmin PC Port Installer";
+        const std::string title = "Open Nectar Installer";
         drawText(renderer, (760 - textWidth(title, 3)) / 2, 29, title, 3, { 235, 244, 238, 255 });
 
         drawText(renderer, 45, 101, "Ubicacion de la ROM", 2, { 174, 203, 221, 255 });
@@ -184,11 +187,32 @@ struct InstallerWindow::Impl {
                  disabled ? SDL_Color { 139, 148, 158, 255 } : SDL_Color { 8, 24, 12, 255 });
     }
 
+    // Durante la instalación esto se llama una vez por archivo: más de tres mil
+    // veces. Redibujar en cada llamada saturaba el hilo y dejaba la ventana sin
+    // atender eventos, de modo que el escritorio la marcaba como "no responde"
+    // y la instalación parecía colgada. Los eventos se sondean siempre, porque
+    // es barato y es lo que mantiene la ventana viva; el redibujado, que es lo
+    // caro, se limita a 30 por segundo.
+    static constexpr std::uint32_t kRedrawIntervalMs = 33;
+
+    // Redibuja solo si ha pasado el intervalo. Devuelve false si lo ha omitido,
+    // para que quien llame sepa que queda un refresco pendiente.
+    bool renderThrottled()
+    {
+        const std::uint32_t now = SDL_GetTicks();
+        if (lastRenderTicks != 0 && now - lastRenderTicks < kRedrawIntervalMs) {
+            return false;
+        }
+        lastRenderTicks = now;
+        render();
+        return true;
+    }
+
     void pump()
     {
         SDL_Event event;
         while (SDL_PollEvent(&event)) { }
-        render();
+        renderThrottled();
     }
 };
 
@@ -210,14 +234,16 @@ bool InstallerWindow::open(std::string& error)
         error = SDL_GetError();
         return false;
     }
-    mImpl->window = SDL_CreateWindow("Pikmin PC Port Installer", SDL_WINDOWPOS_CENTERED,
+    mImpl->window = SDL_CreateWindow("Open Nectar Installer", SDL_WINDOWPOS_CENTERED,
                                      SDL_WINDOWPOS_CENTERED, 760, 430, SDL_WINDOW_SHOWN);
     if (!mImpl->window) {
         error = SDL_GetError();
         return false;
     }
-    mImpl->renderer = SDL_CreateRenderer(mImpl->window, -1,
-                                         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    // Sin PRESENTVSYNC: aquí no hay animación que sincronizar, y con vsync cada
+    // presentación bloqueaba hasta el siguiente refresco de la pantalla, lo que
+    // sumaba cerca de un minuto de espera pura a lo largo de la instalación.
+    mImpl->renderer = SDL_CreateRenderer(mImpl->window, -1, SDL_RENDERER_ACCELERATED);
     if (!mImpl->renderer) mImpl->renderer = SDL_CreateRenderer(mImpl->window, -1, SDL_RENDERER_SOFTWARE);
     if (!mImpl->renderer) {
         error = SDL_GetError();
@@ -232,9 +258,23 @@ bool InstallerWindow::choosePaths(const std::function<std::string()>& chooseRom,
                                   std::string& rom, std::string& installDirectory)
 {
     SDL_Event event;
-    while (SDL_WaitEvent(&event)) {
+    bool pendingRedraw = false;
+    for (;;) {
+        // Espera con tiempo límite en vez de indefinida: si el ratón se detiene
+        // justo después de un refresco omitido, el vencimiento lo dibuja y el
+        // resaltado no se queda desfasado.
+        if (!SDL_WaitEventTimeout(&event, static_cast<int>(Impl::kRedrawIntervalMs))) {
+            if (pendingRedraw && mImpl->renderThrottled()) pendingRedraw = false;
+            continue;
+        }
         if (event.type == SDL_QUIT) return false;
-        if (event.type == SDL_MOUSEMOTION) mImpl->render();
+        if (event.type == SDL_MOUSEMOTION) {
+            // Antes se redibujaba en cada evento de movimiento. Son cientos por
+            // segundo, y cada redibujado dibuja el texto punto a punto, así que
+            // la ventana se quedaba sin atender eventos y parecía congelada.
+            pendingRedraw = !mImpl->renderThrottled();
+            continue;
+        }
         if (event.type != SDL_MOUSEBUTTONUP || event.button.button != SDL_BUTTON_LEFT) continue;
         const int x = event.button.x;
         const int y = event.button.y;
@@ -256,6 +296,7 @@ bool InstallerWindow::choosePaths(const std::function<std::string()>& chooseRom,
                 return true;
             }
         }
+        mImpl->lastRenderTicks = SDL_GetTicks();
         mImpl->render();
     }
     return false;
@@ -273,7 +314,7 @@ void InstallerWindow::showError(const std::string& message)
     mImpl->installing = false;
     mImpl->status = "La instalacion no se completo";
     mImpl->render();
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Pikmin PC Port Installer", message.c_str(), mImpl->window);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Nectar Installer", message.c_str(), mImpl->window);
 }
 
 void InstallerWindow::showComplete(const std::string& installDirectory, bool willLaunch)

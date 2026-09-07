@@ -6,6 +6,7 @@
 #include "Dolphin/OS/OSMessage.h"
 #include "Dolphin/ar.h"
 #include <stddef.h>
+#include <string.h>
 
 #define DMABUFFER_SIZE (0x10000)
 static u8 dmabuffer[DMABUFFER_SIZE] ATTRIBUTE_ALIGN(32);
@@ -30,6 +31,15 @@ static void ARAMFinish(u32 msg)
  */
 static void ARAM_TO_ARAM_DMA(u32 src, u32 dst, u32 totalSize)
 {
+#ifdef PIKI_PC_PORT
+	u8* storage       = static_cast<u8*>(ARGetStorageAddress());
+	const u32 aramSize = ARGetSize();
+	if (storage == NULL || src > aramSize || dst > aramSize || totalSize > aramSize - src
+	    || totalSize > aramSize - dst) {
+		return;
+	}
+	memmove(storage + dst, storage + src, totalSize);
+#else
 	ARQRequest request;
 	OSMessageQueue msgQueue;
 	OSMessage msg;
@@ -48,6 +58,7 @@ static void ARAM_TO_ARAM_DMA(u32 src, u32 dst, u32 totalSize)
 		src += burstSize;
 		dst += burstSize;
 	}
+#endif
 }
 
 /**
@@ -55,6 +66,12 @@ static void ARAM_TO_ARAM_DMA(u32 src, u32 dst, u32 totalSize)
  */
 static void DRAM_TO_DRAM_DMA(u32 src, u32 dst, u32 totalSize)
 {
+#ifdef PIKI_PC_PORT
+	if (src != 0 && dst != 0 && totalSize != 0) {
+		memmove(reinterpret_cast<void*>(static_cast<uintptr_t>(dst)),
+		        reinterpret_cast<const void*>(static_cast<uintptr_t>(src)), totalSize);
+	}
+#else
 	ARQRequest request;
 	OSMessageQueue msgQueue;
 	OSMessage msg;
@@ -77,6 +94,7 @@ static void DRAM_TO_DRAM_DMA(u32 src, u32 dst, u32 totalSize)
 		src += burstSize;
 		dst += burstSize;
 	}
+#endif
 }
 
 /**
@@ -150,13 +168,13 @@ BOOL Jac_SelfAllocHeap(jaheap_* parent, jaheap_* heap, u32 size, u32 startAddr)
 	parent->isRootHeap   = 0;
 	parent->memoryType   = heap->memoryType;
 	parent->childCount   = 0;
-	parent->firstChild   = NULL;
+	parent->firstChild   = nullptr;
 	parent->parent       = heap;
 
 	jaheap_* temp = heap->firstChild;
 	if (temp == NULL) {
 		heap->firstChild    = parent;
-		parent->nextSibling = NULL;
+		parent->nextSibling = nullptr;
 		heap->usedSize      = parent->startAddress - heap->startAddress + parent->size;
 	} else {
 		jaheap_* temp2 = heap->firstChild;

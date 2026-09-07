@@ -3,7 +3,7 @@
 #define PC_GFX_H
 
 #include "Dolphin/gx.h"
-#include <GL/gl.h>
+#include "pc_opengl.h"
 
 #ifdef __cplusplus
 extern "C" {

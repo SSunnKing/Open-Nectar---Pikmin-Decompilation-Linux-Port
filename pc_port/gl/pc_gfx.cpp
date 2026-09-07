@@ -15,8 +15,7 @@
 #include "../timing/pc_render_phase.h"
 #include "../timing/pc_tick_profiler.h"
 
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "pc_opengl.h"
 
 // ── GL Function Pointers (Loaded via SDL_GL_GetProcAddress) ──
 typedef void (APIENTRYP PFNGLGENBUFFERSPROC) (GLsizei n, GLuint *buffers);
@@ -2429,6 +2428,39 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
         default: break;
     }
 
+    if (bytesPerTile == 0) {
+        // El búfer se inicializa a blanco opaco, así que un formato que no se
+        // decodifique acaba en pantalla como un cuadrado blanco sólido y sin
+        // que nada lo señale. Se avisa una vez por formato para que deje de ser
+        // invisible durante la depuración.
+        static u32 reportedFormats = 0;
+        const u32 formatBit = format < 32 ? (1u << format) : 0x80000000u;
+        const bool firstTime = (reportedFormats & formatBit) == 0;
+        reportedFormats |= formatBit;
+
+        // Los formatos Z son un caso conocido y distinto: el juego los usa para
+        // texturas que se rellenan copiando el framebuffer (mapMgr crea el
+        // «internalLightmap» de 320x240 con TEX_FMT_Z8), y en el port GXCopyTex
+        // es un stub vacío, así que esos píxeles nunca llegan a escribirse.
+        // Decodificarlos leería memoria sin inicializar. El blanco es además el
+        // valor neutro para cómo se combinan, así que se conserva.
+        const bool isDepthFormat = format == GX_TF_Z8 || format == GX_TF_Z16
+                                || format == GX_TF_Z24X8;
+        if (firstTime) {
+            printf("[PC GX Warning] Formato de textura no decodificado 0x%X (%dx%d): %s\n",
+                   static_cast<unsigned>(format), width, height,
+                   isDepthFormat
+                       ? "formato Z, su origen (GXCopyTex) es un stub; se deja neutro"
+                       : "se dibujará transparente en vez de blanco");
+            fflush(stdout);
+        }
+        if (!isDepthFormat) {
+            // Transparente estropea mucho menos la escena que un cuadrado
+            // blanco opaco encima de ella.
+            std::fill(rgba.begin(), rgba.end(), static_cast<u8>(0));
+        }
+    }
+
     if (bytesPerTile) {
         size_t tileOffset = 0;
         for (int tileY = 0; tileY < height; tileY += tileHeight) {
@@ -2641,6 +2673,16 @@ void pc_gfx_load_tex_obj(GXTexObj* obj, GXTexMapID id) {
         sActiveGLTextures[id] = it->second;
         sHasActiveTextures[id] = true;
     } else {
+        // Hasta ahora esto era mudo, y una textura que nunca llegó a subirse
+        // se manifestaba solo como un artefacto en pantalla.
+        static u32 reported = 0;
+        if (reported < 8) {
+            ++reported;
+            printf("[PC GX Warning] Se pidió la textura %p para el mapa %d, "
+                   "pero nunca se subió; se dibujará transparente.\n",
+                   static_cast<void*>(obj), static_cast<int>(id));
+            fflush(stdout);
+        }
         sActiveGLTextures[id] = 0;
         sHasActiveTextures[id] = false;
     }
@@ -2651,10 +2693,24 @@ void pc_gfx_load_tex_obj(GXTexObj* obj, GXTexMapID id) {
 // redundant GXSetVtxDesc calls (DGXGraphics::setupVtxDesc). That cache assumes
 // nothing else touches the descriptor. Recording the history lets a misparsed
 // vertex say which calls actually reached us before it.
+//
+// Off unless asked for. setupVtxDesc programs every attribute for every mesh
+// (see the comment on it in dgxGraphics.cpp), so this runs about fifteen times
+// per mesh in every frame of a normal session, purely to keep a history that
+// only the wild-vertex report ever reads.
+bool pc_gfx_gx_diagnostics_enabled(void) {
+    static const bool enabled = [] {
+        const char* value = getenv("PIKMIN_WILD_VERTS");
+        return value != nullptr && value[0] == '1';
+    }();
+    return enabled;
+}
+
 struct VtxDescEvent { uint32_t serial; int attr; int type; bool cleared; };
 static VtxDescEvent sVtxDescLog[16] = {};
 static uint32_t sVtxDescSerial = 0;
-static void log_vtx_desc(int attr, int type, bool cleared) {
+static inline void log_vtx_desc(int attr, int type, bool cleared) {
+    if (!pc_gfx_gx_diagnostics_enabled()) return;
     sVtxDescLog[sVtxDescSerial % 16] = { sVtxDescSerial, attr, type, cleared };
     ++sVtxDescSerial;
 }
@@ -4221,13 +4277,11 @@ static void handle_xf_regs(u32 addrBase, u32 numWords, const u32* words) {
 }
 
 void pc_gfx_call_display_list(const void* list, u32 nbytes) {
-    // Read once, and on its own switch rather than the tick profiler's: tying
-    // it to PIKMIN_TICK_STATS would put the cost back exactly when measuring,
-    // which is the one time it must not be there.
-    static const bool profilingWildVerts = [] {
-        const char* value = getenv("PIKMIN_WILD_VERTS");
-        return value != nullptr && value[0] == '1';
-    }();
+    // On its own switch rather than the tick profiler's: tying it to
+    // PIKMIN_TICK_STATS would put the cost back exactly when measuring, which
+    // is the one time it must not be there. Shares the switch with the vertex
+    // descriptor history, which exists only to be printed by this report.
+    const bool profilingWildVerts = pc_gfx_gx_diagnostics_enabled();
     static bool reportedUnsupportedCommand = false;
     static bool reportedMalformedVertex = false;
     static bool reportedInvalidMatrix = false;
@@ -4395,7 +4449,10 @@ void pc_gfx_call_display_list(const void* list, u32 nbytes) {
                     const VertexArrayState& array = sVtxArrays[attr];
                     if (!array.base || array.stride == 0) continue;
                     element = array.base + size_t(index) * array.stride;
-                    if (attr == GX_VA_POS) {
+                    // Only the wild-vertex report below reads these, and this
+                    // is the innermost loop in the whole renderer: three stores
+                    // per vertex, hundreds of thousands of vertices a frame.
+                    if (profilingWildVerts && attr == GX_VA_POS) {
                         sLastPosIndex  = index;
                         sLastPosBase   = array.base;
                         sLastPosStride = array.stride;

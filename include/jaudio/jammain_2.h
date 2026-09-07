@@ -221,10 +221,8 @@ struct seqp_ {
 	u8* seqData;                       // _000
 	u32 programCounter;                // _004
 	u32 callStackDepth;                // _008
-	u32 callStack[2];                  // _00C, Exact length unknown, but it is an array.
-	u8 _10[0x02c - 0x014];             // _008
-	u16 loopCounters[2];               // _02C, Exact length unknown, but it is an array.
-	u8 _30[0x03c - 0x030];             // _030
+	u32 callStack[8];                  // _00C
+	u16 loopCounters[8];               // _02C
 	u8 trackState;                     // _03C
 	u8 dataSourceMode;                 // _03D
 	u8 fileHandle;                     // _03E

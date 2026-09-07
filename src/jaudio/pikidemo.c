@@ -1,3 +1,6 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/pikidemo.h"
 #include "GlobalGameOptions.h"
 #include "MoviePlayer.h"
@@ -11,6 +14,9 @@
 #include "jaudio/pikiinter.h"
 #include "jaudio/verysimple.h"
 #include "jaudio/waveread.h"
+#ifdef PIKI_PC_PORT
+#include "Dolphin/os.h"
+#endif
 #include <stddef.h>
 
 void __Prepare_BGM(u32);
@@ -581,7 +587,12 @@ void Jac_StartDemo(u32 cinID)
 	}
 	default:
 	{
-		while (now_loading < 3) { }
+		while (now_loading < 3) {
+#ifdef PIKI_PC_PORT
+			PikiJAudioTick();
+			OSYieldThread();
+#endif
+		}
 		break;
 	}
 	}
@@ -592,8 +603,12 @@ void Jac_StartDemo(u32 cinID)
 		now_loading = 1;
 		__Prepare_BGM(DEMOID_ShipUpgradePractice);
 		if (now_loading) {
-			while (now_loading < 3)
-				;
+			while (now_loading < 3) {
+#ifdef PIKI_PC_PORT
+				PikiJAudioTick();
+				OSYieldThread();
+#endif
+			}
 		}
 	}
 
@@ -601,8 +616,12 @@ void Jac_StartDemo(u32 cinID)
 		now_loading = 1;
 		__Prepare_BGM(DEMOID_ShipUpgradeLast);
 		if (now_loading) {
-			while (now_loading < 3)
-				;
+			while (now_loading < 3) {
+#ifdef PIKI_PC_PORT
+				PikiJAudioTick();
+				OSYieldThread();
+#endif
+			}
 		}
 	}
 

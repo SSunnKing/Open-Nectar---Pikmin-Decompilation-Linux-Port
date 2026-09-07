@@ -12,8 +12,12 @@ typedef struct cmdqueue_ CmdQueue;
 
 struct cmdqueue_ {
 	Jac_MessageQueue msgQueue; // _00
-	OSMessage message;         // _20
-	u8 _24[0x60 - 0x24];       // _24
+	/*
+	 * This was previously modelled as one OSMessage plus console-sized byte
+	 * padding.  OSMessage is a pointer on the host, so a 16-entry queue would
+	 * overwrite `track` and `next`.
+	 */
+	OSMessage messages[16];     // _20-_5F on GameCube
 	seqp_* track;              // _60
 	u8 mPortId;                // _64
 	CmdQueue* next;            // _68;

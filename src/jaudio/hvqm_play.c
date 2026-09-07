@@ -1,4 +1,5 @@
 #include "jaudio/hvqm_play.h"
+#include <stdint.h>
 #include "Dolphin/os.h"
 #include "hvqm4.h"
 #include "jaudio/dspbuf.h"
@@ -108,7 +109,7 @@ static void __ReLoad()
 		dvd_active += 1;
 
 		int num_bufs = 3;
-		DVDT_LoadtoDRAM(dvdcount, filename, (u32)dvd_buf[dvdcount % num_bufs], dvdcount << 0x13, dvdload_size, NULL, __LoadFin);
+		DVDT_LoadtoDRAM(dvdcount, filename, (uintptr_t)dvd_buf[dvdcount % num_bufs], dvdcount << 0x13, dvdload_size, NULL, __LoadFin);
 		OSRestoreInterrupts(inter);
 	}
 }
@@ -234,7 +235,7 @@ void Jac_HVQM_Init(immut char* movieFilePath, u8* data, u32 bufferSize)
 	dvdfile_size   = DVDT_CheckFile(movieFilePath);
 	dvdfile_size -= 0x80000;
 	volatile u32 status;
-	DVDT_LoadtoDRAM(dvdcount, movieFilePath, (u32)dvd_buf[dvdcount % 3], 0, 0x80000, (u32*)&status, 0);
+	DVDT_LoadtoDRAM(dvdcount, movieFilePath, (uintptr_t)dvd_buf[dvdcount % 3], 0, 0x80000, (u32*)&status, 0);
 	while (status == 0) { }
 
 	dvd_ctrl[0].mFileOffset = 0;

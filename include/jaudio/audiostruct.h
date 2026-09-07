@@ -116,9 +116,21 @@ struct jcs_ {
 typedef union MixConfig {
 	u16 whole;
 	struct {
+#ifdef PIKI_PC_PORT
+		/*
+		 * The packed value is authored in GameCube byte/bitfield order:
+		 * [bus id][lower0:lower1].  On little-endian hosts the low byte
+		 * comes first and GCC allocates bitfields from the low bit, so both
+		 * the bytes and nibble declarations must be reversed.
+		 */
+		u8 lower1 : 4;
+		u8 lower0 : 4;
+		u8 upper;
+#else
 		u8 upper;
 		u8 lower0 : 4;
 		u8 lower1 : 4;
+#endif
 	} parts;
 } MixConfig;
 
@@ -146,18 +158,7 @@ struct jc_ {
 	s32 noteId;                         // _30
 	s32 lastNotePlayed;                 // _34
 	struct Osc_* mOscillators[4];       // _38
-	struct Oscbuf_ mOscBuffers[2];      // _48
-	f32 _78;                            // _78
-	char _7C[8];                        // _7C
-	f32 _84;                            // _84
-	char _88[4];                        // _88
-	f32 _8C;                            // _8C
-	f32 _90;                            // _90
-	f32 _94;                            // _94
-	u16 _98;                            // _98
-	u16 _9A;                            // _9A
-	void* _9C;                          // _9C
-	char _A0[8];                        // _A0
+	struct Oscbuf_ mOscBuffers[4];      // _48
 	f32 basePitch;                      // _A8
 	f32 baseVolume;                     // _AC
 	f32 currentPitch;                   // _B0

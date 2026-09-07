@@ -126,11 +126,17 @@ void Osc_Setup_SimpleEnv(seqp_* track, u8 id, u32 val)
 	{
 		track->oscillators[0]                 = ENVELOPE_DEF;
 		track->oscillators[0].attackVecOffset = (s16*)Jam_OfsToAddr(track, val);
+#ifdef PIKI_PC_PORT
+		track->oscillators[0].attackVecBigEndian = TRUE;
+#endif
 		break;
 	}
 	case 1:
 	{
 		track->oscillators[0].releaseVecOffset = (s16*)Jam_OfsToAddr(track, val);
+#ifdef PIKI_PC_PORT
+		track->oscillators[0].releaseVecBigEndian = TRUE;
+#endif
 		break;
 	}
 	}
@@ -145,6 +151,10 @@ void Osc_Setup_ADSR(seqp_* track, s16* addr)
 
 	track->oscillators[0].attackVecOffset  = track->adsTable;
 	track->oscillators[0].releaseVecOffset = track->relTable;
+#ifdef PIKI_PC_PORT
+	track->oscillators[0].attackVecBigEndian  = FALSE;
+	track->oscillators[0].releaseVecBigEndian = FALSE;
+#endif
 
 	for (int i = 0; i < 12; i++) {
 		track->adsTable[i] = ADS_TABLE[i];
@@ -187,14 +197,22 @@ void Osc_Setup_Full(seqp_* track, u8 flag, u32 offs1, u32 offs2)
 	if (b) {
 		if (offs1 == 0) {
 			track->oscillators[idx].attackVecOffset = NULL;
+		} else {
+			track->oscillators[idx].attackVecOffset = (s16*)Jam_OfsToAddr(track, offs1);
 		}
-		track->oscillators[idx].attackVecOffset = (s16*)Jam_OfsToAddr(track, offs1);
+#ifdef PIKI_PC_PORT
+		track->oscillators[idx].attackVecBigEndian = offs1 != 0;
+#endif
 	}
 
 	if (c) {
 		if (offs2 == 0) {
 			track->oscillators[idx].releaseVecOffset = REL_TABLE;
+		} else {
+			track->oscillators[idx].releaseVecOffset = (s16*)Jam_OfsToAddr(track, offs2);
 		}
-		track->oscillators[idx].releaseVecOffset = (s16*)Jam_OfsToAddr(track, offs2);
+#ifdef PIKI_PC_PORT
+		track->oscillators[idx].releaseVecBigEndian = offs2 != 0;
+#endif
 	}
 }

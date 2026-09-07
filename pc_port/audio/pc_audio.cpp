@@ -42,6 +42,12 @@ static PCMVoice sStreamVoice;
 static std::vector<s16> sDMAQueue;
 static size_t sDMAReadCursor = 0;
 static u8 sStreamVolume = 255;
+// Fundido de salida del stream. Jac_DemoFade solo funde la SECUENCIA
+// (pc_audio_fade_sequence); el stream no tenia ningun fundido, asi que
+// Jac_FinishDemo lo cortaba en seco al acabar una cinematica. La ganancia baja
+// por muestra en el mezclador y la voz se apaga al llegar a cero.
+static float sStreamFadeGain = 1.0f;
+static float sStreamFadeStep = 0.0f;
 static u8 sDMAVolume = 255;
 
 struct SampleVoice {
@@ -316,12 +322,23 @@ static void audio_callback(void*, Uint8* output, int byteCount) {
         float fxSendRight = 0.0f;
         float dolbySend = 0.0f;
         if (sStreamVoice.active && sStreamVoice.cursor + 1 < sStreamVoice.samples.size()) {
-            const float gain = sStreamVolume / 255.0f * sBusVolumes[PC_AUDIO_BUS_STREAM];
+            const float gain = sStreamVolume / 255.0f * sStreamFadeGain
+                             * sBusVolumes[PC_AUDIO_BUS_STREAM];
             const float streamLeft = sStreamVoice.samples[sStreamVoice.cursor++] * gain;
             const float streamRight = sStreamVoice.samples[sStreamVoice.cursor++] * gain;
             if (statsOn) note_bus_peak(PC_AUDIO_BUS_STREAM, streamLeft);
             mixedLeft += static_cast<int>(streamLeft);
             mixedRight += static_cast<int>(streamRight);
+            if (sStreamFadeStep > 0.0f) {
+                sStreamFadeGain -= sStreamFadeStep;
+                if (sStreamFadeGain <= 0.0f) {
+                    sStreamFadeGain = 0.0f;
+                    sStreamFadeStep = 0.0f;
+                    sStreamVoice.active = false;
+                    sStreamVoice.samples.clear();
+                    sStreamVoice.cursor = 0;
+                }
+            }
             if (sStreamVoice.cursor >= sStreamVoice.samples.size()) sStreamVoice.active = false;
         }
         if (sDMAActive && sDMAReadCursor + 1 < sDMAQueue.size()) {
@@ -346,9 +363,15 @@ static void audio_callback(void*, Uint8* output, int byteCount) {
                 voice.cursor = static_cast<double>(voice.loopSample);
                 sampleIndex = voice.loopSample;
             }
-            const size_t nextIndex = sampleIndex + 1 < playbackEnd
+            // El punto de bucle esta acotado contra el tamano de la muestra, asi
+            // que puede valer exactamente ese tamano: usarlo como vecino de
+            // interpolacion lee un elemento pasado el final del vector. Es una
+            // muestra de basura por vuelta de bucle, justo en las voces
+            // ambientales que no paran nunca.
+            size_t nextIndex = sampleIndex + 1 < playbackEnd
                 ? sampleIndex + 1
                 : (voice.looping ? voice.loopSample : sampleIndex);
+            if (nextIndex >= voice.samples->size()) nextIndex = sampleIndex;
             const double fraction = voice.cursor - static_cast<double>(sampleIndex);
             const double rawSample = (*voice.samples)[sampleIndex]
                 + fraction * ((*voice.samples)[nextIndex] - (*voice.samples)[sampleIndex]);
@@ -500,6 +523,7 @@ bool pc_audio_init(void) {
 }
 
 void pc_audio_shutdown(void) {
+
     if (sAudioDevice != 0) {
         SDL_LockAudioDevice(sAudioDevice);
         sStreamVoice = {};
@@ -598,6 +622,8 @@ bool pc_audio_play_stx(const char* path) {
     sStreamVoice.samples = std::move(converted);
     sStreamVoice.cursor = 0;
     sStreamVoice.active = true;
+    sStreamFadeGain = 1.0f;
+    sStreamFadeStep = 0.0f;
     SDL_UnlockAudioDevice(sAudioDevice);
     printf("[PC Port] Playing STX stream: %s (%u Hz, %zu frames)\n",
            path, static_cast<unsigned>(sampleRate), outputFrames);
@@ -610,8 +636,35 @@ void pc_audio_stop_stream(void) {
         sStreamVoice.active = false;
         sStreamVoice.samples.clear();
         sStreamVoice.cursor = 0;
+        sStreamFadeGain = 1.0f;
+        sStreamFadeStep = 0.0f;
         SDL_UnlockAudioDevice(sAudioDevice);
     }
+}
+
+// `fadeFrames` esta en fotogramas de juego de 60 Hz, la misma unidad que usan
+// Jac_DemoFade y pc_audio_fade_sequence_track. Cero corta ya, para que quien
+// necesite parada inmediata siga teniendola.
+void pc_audio_fade_stream(u32 fadeFrames) {
+    if (!sAudioDevice) return;
+    if (fadeFrames == 0) {
+        pc_audio_stop_stream();
+        return;
+    }
+    SDL_LockAudioDevice(sAudioDevice);
+    if (sStreamVoice.active) {
+        const double samples = double(fadeFrames) * double(sAudioSpec.freq) / 60.0;
+        sStreamFadeStep = samples > 0.0 ? float(1.0 / samples) : 1.0f;
+        SDL_UnlockAudioDevice(sAudioDevice);
+        return;
+    }
+    // Sin stream sonando no hay nada que fundir: conservar la limpieza que
+    // hacia la parada dura, para no dejar el buffer colgado.
+    sStreamVoice.samples.clear();
+    sStreamVoice.cursor = 0;
+    sStreamFadeGain = 1.0f;
+    sStreamFadeStep = 0.0f;
+    SDL_UnlockAudioDevice(sAudioDevice);
 }
 
 bool pc_audio_load_wave_bank(const char* path) {
@@ -687,6 +740,7 @@ void pc_audio_stop_sequence(void) {
 }
 
 void pc_audio_stop_sequence_track(u8 sequenceTrack) {
+    printf("[DEBUG] pc_audio_stop_sequence_track(%u) called\n", sequenceTrack);
     if (sequenceTrack > 1) return;
     auto& voices = sequenceTrack == 0 ? sJamVoices : sBossJamVoices;
     for (auto& track : voices) {
@@ -1621,6 +1675,7 @@ u32 pc_audio_get_dma_bytes_left(void) {
 }
 
 void pc_audio_tick(void) {
+
     advance_bgm_mix();
     if (sJamPlayer.result() == PCJamResult::Ok) {
         const u64 now = SDL_GetPerformanceCounter();
@@ -1842,13 +1897,27 @@ void pc_audio_tick(void) {
                         static std::set<u32> seen;
                         const u32 key = (static_cast<u32>(event.bank) << 16)
                                       | (static_cast<u32>(event.program) << 8) | event.key;
+                        // "Voice assigned" is not the same as "audible": a voice
+                        // can be handed a valid sample and still mix to nothing
+                        // if its step walks it off the end or its gains are
+                        // zero. Print what the voice was actually given.
+                        char detail[160] = "";
+                        if (handle >= 0) {
+                            const SampleVoice& v = sSampleVoices[handle & 0xFF];
+                            std::snprintf(detail, sizeof detail,
+                                          "  [paso %.5f base %.5f pistaTono %.3f  "
+                                          "izq %.3f der %.3f  pcm %zu fin %zu]",
+                                          v.step, v.baseStep, v.trackPitch, v.left, v.right,
+                                          v.samples ? v.samples->size() : 0u, v.endSample);
+                        }
                         if (traceAll || seen.insert(key).second)
                             printf("[PC Audio]   nota de evento: banco %u programa %u tecla %u "
-                                   "vol %.3f pista %u voz %u -> %s%s\n",
-                                   event.bank, event.program, event.key, event.volume,
-                                   event.track, event.voice,
+                                   "vel %u vol %.3f pista %u voz %u -> %s%s%s\n",
+                                   event.bank, event.program, event.key, event.velocity,
+                                   event.volume, event.track, event.voice,
                                    handle >= 0 ? "voz asignada" : "SIN VOZ",
-                                   displaced >= 0 ? " (desplaza una voz viva)" : "");
+                                   displaced >= 0 ? " (desplaza una voz viva)" : "",
+                                   detail);
                     }
                     if (handle >= 0) tag_event_voice(handle, event.source);
                     if (handle >= 0) tag_jam_voice(handle, 2, event.source);

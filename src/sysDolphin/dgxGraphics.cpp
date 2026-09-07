@@ -1525,6 +1525,23 @@ void DGXGraphics::setBlendMode(u8 blendFactor, u8 zMode, u8 blendMode)
 	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
 	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_A0, GX_CA_ZERO);
 
+	// PC port fix: modes 2 and 3 read the particle's environment colour, and
+	// the only thing that supplies it is setPrimEnv(prim, env), which writes
+	// GX_TEVREG0 and GX_TEVREG1 -- that is, the registers GX_CC_C0 and
+	// GX_CC_C1 read. Nothing in the particle path ever writes GX_TEVREG2, so
+	// GX_CC_C2 here picked up whatever the last unrelated draw had left in it.
+	// In practice that is the opaque white P2DPicture stores for the 2D UI
+	// (P2DPicture.cpp), which turned every dust and soil particle into a solid
+	// white quad -- visible when plucking a Pikmin, on landing, and anywhere
+	// else sd_rakk1/sd_rakk2 play.
+	//
+	// The authored data confirms which register was meant. sd_rakk1 (mode 2,
+	// out = C?*(1-TEXC) + C0*TEXC) carries prim (111,106,78) and env
+	// (63,50,15): interpolating between the two gives a dirt cloud shading
+	// from dark to light brown. sd_rakk2 (mode 3, out = C? + TEXC*C0) carries
+	// prim (87,87,63) and env (15,15,0): a near-black base with soil-coloured
+	// specks. Both read as intended with the env colour and as white with an
+	// unwritten register.
 	switch (blendMode) {
 	case 0:
 	{
@@ -1538,12 +1555,12 @@ void DGXGraphics::setBlendMode(u8 blendFactor, u8 zMode, u8 blendMode)
 	}
 	case 2:
 	{
-		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_C2, GX_CC_C0, GX_CC_TEXC, GX_CC_ZERO);
+		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_C1, GX_CC_C0, GX_CC_TEXC, GX_CC_ZERO);
 		break;
 	}
 	case 3:
 	{
-		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_TEXC, GX_CC_C0, GX_CC_C2);
+		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_TEXC, GX_CC_C0, GX_CC_C1);
 		break;
 	}
 	case 4:

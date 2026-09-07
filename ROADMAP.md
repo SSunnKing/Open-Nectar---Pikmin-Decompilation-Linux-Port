@@ -1,6 +1,6 @@
 # Pikmin PC Port — Hoja de ruta
 
-Última actualización: 2026-09-01
+Última actualización: 2026-09-04
 
 > ## Configuración de referencia validada (2026-09-01)
 >
@@ -51,6 +51,18 @@
 > **No perseguir 60 FPS en gameplay.** El objetivo fijado por el usuario es el
 > comportamiento original del juego: 30 Hz de lógica en gameplay. Eso deja
 > TIME-002 fuera del camino crítico.
+
+> **Si el juego va lento, empieza por `RENDIMIENTO.md`** y por
+> `tools/check-rendimiento.sh`, que comprueba las causas conocidas en un
+> segundo e imprime el comando que corrige cada una.
+
+> **Alerta de rendimiento (2026-09-04):** la build había perdido rendimiento
+> sin cambios en el renderizador. La causa fue de compilación, no de código:
+> al separar las fuentes decompiladas en `pikmin_legacy`, `-O3`,
+> `-march=native` e IPO quedaron aplicadas sólo a `pikmin_pc`, y `build/`
+> estaba además configurado como `Debug` (`-O0`). Corregido en
+> PERF-NATIVE-007. Antes de medir nada, confirmar el tipo de build y que
+> `build/CMakeFiles/pikmin_legacy.dir/flags.make` contiene `-O3`.
 
 > **Alerta TIME-002:** la activación más reciente de 60 FPS falló in-game con
 > imagen en blanco y negro y corrupción gráfica, y fue revertida por el usuario.
@@ -198,6 +210,35 @@ manualmente el brillo de modelos concretos.
 - [~] **FX-001 — Corregir cuadrados blancos en partículas.**
   - Verificar primero TEV alpha, TREF y textura activa.
   - Después revisar blend y alpha compare.
+  - **Causa encontrada 2026-09-04 (pendiente de validar in-game).** No era ni
+    la textura, ni el alpha, ni el blend: los tres se comprobaron y son
+    correctos. `DGXGraphics::setBlendMode` leía **`GX_CC_C2`** en los modos de
+    mezcla 2 y 3, es decir el registro TEV 2. El color de entorno de la
+    partícula lo aporta `setPrimEnv(prim, env)`, que escribe `GX_TEVREG0` y
+    `GX_TEVREG1` — los que leen `GX_CC_C0` y `GX_CC_C1`. **Nadie escribe nunca
+    `GX_TEVREG2` en el camino de partículas**, así que ese término tomaba lo
+    que hubiera dejado el dibujo anterior: el blanco opaco que `P2DPicture`
+    guarda ahí para la interfaz 2D. De ahí el cuadrado blanco.
+  - Corregido `GX_CC_C2` → `GX_CC_C1` en los modos 2 y 3.
+  - Comprobaciones que descartaron el resto, y que no hace falta repetir:
+    `hokori4.bti` es I8 y el port lo decodifica con alfa = intensidad (correcto
+    en GX); `pc_gfx_set_blend_mode` ignora el *logic op* cuando el modo es
+    `GX_BM_BLEND`, como debe; `uTevReg0/1/2` se suben desde
+    `sTevRegisters[GX_TEVREG0/1/2]`, sin desfase.
+  - Los datos de los `.pcr` confirman qué registro se pretendía. Leídos con el
+    lector offline `tools/leer_pcr.py`: `sd_rakk1` (modo 2) lleva prim
+    (111,106,78) y env (63,50,15) — interpolar entre ambos da una nube de
+    tierra de marrón oscuro a claro; `sd_rakk2` (modo 3) lleva prim (87,87,63)
+    y env (15,15,0) — base casi negra con motas de tierra. Con un registro sin
+    escribir, ambos salen blancos. Además `blendFactor = 0x54`
+    (SRCALPHA/INVSRCALPHA) y `zMode = 0x0B` (LEQUAL, sin escritura de Z), que
+    es exactamente lo que corresponde a una partícula.
+  - Afecta a todo lo que use `sd_rakk1`/`sd_rakk2`: desenterrar un Pikmin,
+    aterrizajes de Olimar y enemigos, y `Mizu`.
+  - Si tras validar siguiera mal, la hipótesis alternativa es la simétrica:
+    que sea `setPrimEnv` quien deba escribir `GX_TEVREG2` en vez de
+    `GX_TEVREG1`. Snapshot previo:
+    `snapshots/20260904-003310-antes-fix-particulas-blancas.tar.zst`.
 
 - [ ] **FX-002 — Revisar la luz/halo que sigue a Olimar.**
   - Determinar si es una partícula, flare, billboard o material aditivo.
@@ -835,6 +876,27 @@ salen**, con el otro medio `renderall` aún sin optimizar como margen de reserva
   - Separados `-O3`, ISA local e IPO: Release/RelWithDebInfo usan optimización
     alta, `PIKMIN_NATIVE_OPTIMIZE` sólo controla `-march=native` e
     `PIKMIN_ENABLE_IPO` usa la detección portable de CMake para GCC/Clang.
+  - Los scripts de empaquetado portable ya no apagan `PIKMIN_ENABLE_IPO`: el
+    LTO no afecta al juego de instrucciones y su ausencia sólo restaba
+    rendimiento donde más falta hace.
+
+- [x] **PERF-NATIVE-007 — Recuperar la optimización perdida en la separación
+  de objetivos.** HECHO 2026-09-04.
+  - Al extraer las fuentes decompiladas a `pikmin_legacy`, `-O3`,
+    `-march=native` e IPO se quedaron sólo en `pikmin_pc`. El grueso del
+    trabajo por frame vive en `pikmin_legacy`, así que el juego perdió ISA
+    local y LTO sin ningún síntoma visible salvo el tiempo de frame.
+  - Las tres opciones se aplican ahora a ambos objetivos
+    (`PIKMIN_OPTIMIZED_TARGETS`).
+  - Un `CMAKE_BUILD_TYPE` vacío ya no cae en `-O0`: por defecto
+    `RelWithDebInfo`, y configurar `Debug` avisa de que el rendimiento medido
+    no será representativo.
+  - Retiradas del camino caliente las sondas de vértices salvajes que habían
+    quedado sin condicionar; comparten ya el interruptor `PIKMIN_WILD_VERTS=1`.
+  - **Regla que deja este fallo:** cualquier reorganización de objetivos de
+    CMake debe comprobarse leyendo `flags.make` de cada objetivo, no el
+    `CMakeLists.txt`. Un objetivo nuevo nace sin las opciones del anterior y
+    nada lo señala.
 
 ---
 
@@ -2128,3 +2190,47 @@ Añadir las entradas nuevas arriba de las antiguas.
 - Problemas pendientes relacionados: el lado CPU sigue sin tocar
   (`pc_gfx_end` sube ~100-200 uniforms y emite un `glDrawArrays` por primitiva
   GX); PERF-NATIVE-004 continúa abierto; 002 cerrado el 2026-09-01.
+
+### 2026-09-04 — PERF-NATIVE-007 — Regresión de rendimiento: la mitad del juego se compilaba sin optimizar
+
+- Síntoma: el juego había perdido rendimiento respecto a la build validada del
+  2026-09-02, sin que ningún cambio del renderizador lo explicara.
+- Causa raíz, en `CMakeLists.txt`. El 2026-09-03, al preparar el port a
+  Windows, las fuentes decompiladas se separaron del ejecutable a una
+  biblioteca propia (`add_library(pikmin_legacy ...)`). Las tres opciones de
+  optimización —`-O3` explícito, `-march=native` e IPO/LTO— se quedaron
+  atadas al objetivo `pikmin_pc`, que a partir de ese momento sólo contenía
+  `pc_port/`. Es decir: **todo el juego** (`renderall()`, el recorrido de
+  escena, matrices, colisiones, IA, `dgxGraphics`) perdió el ISA de la máquina
+  y el LTO, y la frontera de biblioteca impidió además que el traductor GX
+  siguiera alineándose dentro del código de juego. El reparto de fuentes entre
+  los dos objetivos es tal que la parte que perdió las opciones es justamente
+  donde vive el grueso del trabajo por frame.
+- Segunda causa, acumulativa: `build/` estaba configurado como `Debug`
+  (`CMAKE_CXX_FLAGS_DEBUG = -g`, sin ninguna `-O`), o sea `-O0` para todo,
+  desde la sesión de depuración de audio del 2026-09-03. El binario de
+  `build/bin/pikmin` pesaba 29 MB frente a los 6 MB de la build Release.
+- Arreglo: las tres opciones se aplican ahora a `pikmin_pc` **y** a
+  `pikmin_legacy` mediante la lista `PIKMIN_OPTIMIZED_TARGETS`. Verificado en
+  `build/CMakeFiles/pikmin_legacy.dir/flags.make`: `-O3 -march=native
+  -flto=auto` presentes.
+- Prevención: un tipo de build vacío ya no significa `-O0`; se fija
+  `RelWithDebInfo` por defecto y configurar `Debug` emite un aviso explícito de
+  que el rendimiento no será representativo. Ésta es la clase de fallo que no
+  se ve en pantalla: no hay defecto visual, sólo tiempo de frame.
+- Sondas de depuración retiradas del camino caliente. Quedaban del trabajo de
+  vértices salvajes del 2026-09-01, sin condicionar: tres escrituras por
+  vértice para `sLastPos*` (el bucle más interno del renderizador) y el
+  historial de descriptor de vértices, que desde el arreglo de `setupVtxDesc`
+  se escribe unas quince veces por malla. Ambas comparten ahora el interruptor
+  `PIKMIN_WILD_VERTS=1` con el informe que es lo único que las lee.
+- Paquetes portables: `PIKMIN_ENABLE_IPO` pasa a `ON` en
+  `packaging/linux/package-standalone.sh` y en
+  `packaging/arch-linux/build-portable.sh`. El LTO no cambia el juego de
+  instrucciones —eso lo controla `PIKMIN_NATIVE_OPTIMIZE`, que sigue en `OFF`
+  y lo comprueba `verify-portable.sh`—, así que apagarlo sólo restaba
+  rendimiento en los equipos modestos que son la razón de ser del paquete.
+- Prueba realizada: build limpia RelWithDebInfo y CTest 15/15. Falta la
+  medición in-game del usuario.
+- Snapshot previo al cambio:
+  `snapshots/20260904-001606-antes-rescate-rendimiento.tar.zst`.

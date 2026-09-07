@@ -1,3 +1,6 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/piki_scene.h"
 
 #include "jaudio/aramcall.h"
@@ -13,6 +16,10 @@
 #include "jaudio/waveread.h"
 
 #include "GlobalGameOptions.h"
+
+#ifdef PIKI_PC_PORT
+#include "Dolphin/os.h"
+#endif
 
 static u32 current_bgm;
 static u32 current_ready; // type
@@ -161,6 +168,10 @@ void Jac_SceneSetup(u32 sceneID, u32 stage)
 			if (sceneID == SCENE_BootUp) {
 				break;
 			}
+#ifdef PIKI_PC_PORT
+			PikiJAudioTick();
+			OSYieldThread();
+#endif
 		}
 	}
 
@@ -264,12 +275,22 @@ void Jac_SceneSetup(u32 sceneID, u32 stage)
 				WaveScene_Set(bgm2, 0);
 				current_ready = bgm2;
 				if (!closeScene) {
+#if defined(PIKI_PC_PORT)
+                    // Host DVD tasks finish inline. __Loaded checks this ID
+                    // before starting the music, so publish it before dispatch.
+                    current_bgm = bgm2;
+#endif
 					DVDT_CheckPass(bgm2 + 0x10000, 0, __Loaded);
 				} else {
 					dvd = TRUE;
 				}
 			} else {
-				while (now_loading) { }
+				while (now_loading) {
+#ifdef PIKI_PC_PORT
+					PikiJAudioTick();
+					OSYieldThread();
+#endif
+				}
 				Collect_AramMotherHeap();
 				Jac_PlayBgm(0, bgm2);
 			}
@@ -368,13 +389,21 @@ void Jac_SceneExit(u32 nextSceneID, u32 stage)
 	{
 		if (now_loading) {
 			do {
+#ifdef PIKI_PC_PORT
+				PikiJAudioTick();
+				OSYieldThread();
+#endif
 			} while (now_loading != 0);
 		}
 
 		WaveScene_Set(newBgm, 0);
 		Jac_ReadyBgm(newBgm);
+		/*
+		 * Mark the request before dispatching it. The console callback was
+		 * asynchronous, while the host DVD boundary may complete inline.
+		 */
+		now_loading = 1;
 		DVDT_CheckPass(newBgm, 0, __Loaded);
-		now_loading   = 1;
 		current_ready = newBgm;
 		break;
 	}
@@ -464,6 +493,10 @@ void Jac_PrepareDemoSound(u32 id)
 		stop_ready = 0;
 		Jac_StopDemoSound(id);
 		do {
+#ifdef PIKI_PC_PORT
+			PikiJAudioTick();
+			OSYieldThread();
+#endif
 		} while (stop_ready == 0);
 	}
 	DVDT_ExtendPath(buffer, filelist[id]);
@@ -482,6 +515,10 @@ void Jac_StartDemoSound(u32 id)
 		stop_ready = 0;
 		Jac_StopDemoSound(id);
 		do {
+#ifdef PIKI_PC_PORT
+			PikiJAudioTick();
+			OSYieldThread();
+#endif
 		} while (stop_ready == 0);
 	}
 	current_prepare = 0xffffffff;
@@ -490,6 +527,10 @@ void Jac_StartDemoSound(u32 id)
 		Jac_PrepareDemoSound(id);
 	}
 	do {
+#ifdef PIKI_PC_PORT
+		PikiJAudioTick();
+		OSYieldThread();
+#endif
 	} while (StreamSyncPlayAudio(1.0f, 0, stream_level, stream_level) != 1);
 }
 

@@ -1,3 +1,6 @@
+#if PIKI_USE_JAUDIO
+#include "port/jaudio_host.h"
+#endif
 #include "pc_window.h"
 #include <cstdio>
 #include <cstring>
@@ -339,7 +342,11 @@ bool pc_window_init(const char* title, int width, int height) {
 #endif
 
 void pc_window_poll_events(PADStatus* pad) {
+#if PIKI_USE_JAUDIO
+    PikiJAudioTick();
+#else
     pc_audio_tick();
+#endif
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -677,6 +684,9 @@ void pc_window_set_swap_interval(int interval) {
 }
 
 void pc_window_shutdown(void) {
+#if PIKI_USE_JAUDIO
+    StopAudioThread();
+#endif
     pc_audio_shutdown();
     if (sController) {
         SDL_GameControllerClose(sController);
@@ -726,6 +736,12 @@ void pc_window_set_display_mode(int mode) {
     if (display >= 0 && SDL_GetCurrentDisplayMode(display, &dm) == 0 && dm.refresh_rate > 0) {
         sTargetRefreshRate = dm.refresh_rate;
     }
+}
+
+int pc_window_get_display_index(void) {
+    if (!sWindow) return 0;
+    const int display = SDL_GetWindowDisplayIndex(sWindow);
+    return display >= 0 ? display : 0;
 }
 
 int pc_window_get_display_mode(void) {

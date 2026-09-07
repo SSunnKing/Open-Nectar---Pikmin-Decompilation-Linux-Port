@@ -2851,11 +2851,16 @@ NewPikiGameSection::NewPikiGameSection()
 #endif
 
 	// Gameplay runs at 30 fps on the original hardware. The PC port can drive
-	// it at 60 once the render side fits in 16.6 ms (PERF-NATIVE-002); the
-	// setting is off by default because the game's fixed-step logic was tuned
-	// at 30 and doubling the rate is a behaviour change, not just a smoother
-	// picture. Toggle it in the F1 menu; it persists in pikmin_settings.conf.
-	gsys->setFrameClamp(pc_settings_get_fps_mode() == 1 ? 1 : 2);
+	// it at 60 (fpsMode=1) or 120 (fpsMode=2) with higher simulation rates.
+	// Default 30 fps; toggle in F1 menu and persisted in pikmin_settings.conf.
+	int fpsModeValue = pc_settings_get_fps_mode();
+	int frameClampValue = 2;  // Default to 30 fps (clamp=2)
+	if (fpsModeValue == 1) {
+		frameClampValue = 1;  // 60 fps
+	} else if (fpsModeValue == 2) {
+		frameClampValue = 0;  // 120 Hz ticks; 0 is a port-only value, the game never sets it
+	}
+	gsys->setFrameClamp(frameClampValue);
 
 #if defined(WIN32) || defined(DEVELOP)
 	_nPrint = FALSE;

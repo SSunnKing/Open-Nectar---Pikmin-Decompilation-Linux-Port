@@ -476,7 +476,17 @@ bool MemoryCard::hasCardFinished()
  */
 void MemoryCard::waitPolling()
 {
+#if defined(PIKI_PC_PORT)
+	// Espera ocupada sin nada dentro: en la consola la reprogramación por
+	// interrupción bastaba, pero aquí el trabajo lo hace un hilo nativo y girar
+	// sin ceder deja el núcleo saturado durante todo el guardado. Cedemos la
+	// CPU igual que `CardUtilIdleWhileBusy()`.
+	while (!hasCardFinished()) {
+		OSYieldThread();
+	}
+#else
 	while (!hasCardFinished()) { }
+#endif
 }
 
 /**

@@ -1,6 +1,16 @@
-# 60 FPS: intentos fallidos y próxima arquitectura
+# 60 FPS por INTERPOLACIÓN: intentos fallidos
 
-Última actualización: 2026-09-01
+Última actualización: 2026-09-07
+
+> **Aviso (2026-09-07).** Este documento trata de una ruta concreta: fabricar
+> frames intermedios interpolando entre ticks lógicos. Esa ruta falló tres
+> veces y sigue desaconsejada.
+>
+> **No confundir con los FPS altos que sí funcionan.** Los 60 (y los 120) se
+> consiguen subiendo la tasa de ticks lógicos vía `fpsMode` -> `setFrameClamp`,
+> lo cual es correcto porque el juego integra por `getFrameTime()`. No hay
+> interpolación activa en ninguna parte: `pc_render_begin_presentation()` no se
+> llama desde el juego. Detalle en `AI_HANDOFF.md`, primera sección.
 
 ## Estado verificado
 

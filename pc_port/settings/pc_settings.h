@@ -32,8 +32,18 @@ void pc_settings_apply_video(void);
 // True while the confirmation/revert dialog is pending after a video change.
 bool pc_settings_has_pending_video(void);
 
-// Returns the current FPS mode (0=30 FPS, 1=60 FPS experimental).
+// Returns the current FPS mode (0=30 FPS, 1=60 FPS, 2=120 FPS experimental).
 int pc_settings_get_fps_mode(void);
+
+// Returns 1 while the "chain Pikmin actions" mod is enabled, 0 otherwise.
+//
+// This is a deliberate change of behaviour, not a bug fix: the original game
+// sends a Pikmin back to the squad once it finishes a job, and that was
+// verified against the retail game. With the mod on, a Pikmin that would head
+// back instead looks for more work nearby -- so one thrown at a Pellet Posy
+// breaks it and then carries the pellet to the Onion. Off by default, so the
+// stock port stays faithful.
+int pc_settings_get_chain_actions(void);
 
 #ifdef __cplusplus
 }

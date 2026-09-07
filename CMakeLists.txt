@@ -16,6 +16,23 @@ project(PikminPC VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
+# ─── Build type ───
+# An unset build type means no -O flag at all, which is -O0: the game then runs
+# several times slower with nothing on screen to say why. This is a game, so a
+# build that is merely usable is the wrong default; RelWithDebInfo keeps the
+# symbols a crash report needs while still optimising.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING
+        "Build type: Debug, Release, RelWithDebInfo or MinSizeRel" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE was empty; defaulting to RelWithDebInfo.")
+endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(WARNING
+        "Building Debug: no optimisation. Expect a fraction of the normal frame "
+        "rate. For play or for any performance measurement, configure with "
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo.")
+endif()
+
 # ─── Compiler Flags ───
 # Force-include our PC types header BEFORE anything else.
 # This overrides MetroWerks and MSVC macros, fixes type sizes, etc.
@@ -64,6 +81,10 @@ set(NATIVE_COMPILE_OPTIONS
     -Werror=switch
 )
 
+# Off by default: the native mixer is the configuration known to work. Turn on
+# with -DPIKMIN_NATIVE_JAUDIO=ON to drive audio from the original engine.
+option(PIKMIN_NATIVE_JAUDIO "Drive audio with the original src/jaudio engine" OFF)
+
 # ─── Version define for USA Rev 1 ───
 add_compile_definitions(
     PIKI_PC_PORT=1
@@ -73,7 +94,11 @@ add_compile_definitions(
     # OpenGL.  Selecting the old Win32/OpenGL code path here mixes two
     # incompatible texture/rendering backends and leaves GXTexObj uninitialised.
     PIKI_USE_DGX=1
-    PIKI_USE_JAUDIO=0
+    # Selects which engine drives audio. 0 keeps the native PC mixer in
+    # pc_port/audio; 1 compiles the original engine in src/jaudio and renders
+    # its DSPchannel_ voice parameter blocks through pc_dsp_host. The two
+    # cannot coexist -- see the guards in dolphin_stubs/audio_stubs.cpp.
+    PIKI_USE_JAUDIO=$<BOOL:${PIKMIN_NATIVE_JAUDIO}>
     # Some SDL2 builds (including current Arch configurations) remap main to
     # SDL_main unless the application explicitly owns its entry point.
     SDL_MAIN_HANDLED=1
@@ -104,7 +129,9 @@ if (NOT SDL2_FOUND)
     pkg_check_modules(SDL2 REQUIRED sdl2)
 endif()
 
-find_package(OpenGL REQUIRED)
+if (NOT WIN32)
+    find_package(OpenGL REQUIRED)
+endif()
 
 set(PC_PORT_SOURCES
     pc_port/pc_main.cpp
@@ -124,6 +151,8 @@ set(PC_PORT_SOURCES
     pc_port/audio/pc_instrument_bank.cpp
     pc_port/audio/pc_wave_bank.cpp
     pc_port/audio/pc_sequence_archive.cpp
+    pc_port/audio/pc_aram.cpp
+    pc_port/audio/pc_dsp_host.cpp
     pc_port/settings/pc_settings.cpp
     src/jaudio/pikiseq.c
     pc_port/dolphin_stubs/os_stubs.cpp
@@ -133,6 +162,7 @@ set(PC_PORT_SOURCES
     pc_port/dolphin_stubs/vi_stubs.cpp
     pc_port/dolphin_stubs/card_stubs.cpp
     pc_port/dolphin_stubs/audio_stubs.cpp
+    pc_port/dolphin_stubs/jaudio_hw_stubs.cpp
     pc_port/dolphin_stubs/misc_stubs.cpp
 )
 
@@ -154,8 +184,68 @@ set(SYSDOLPHIN_SOURCES
     src/sysDolphin/texture.cpp
 )
 
-# ─── JAudio library (GameCube audio system) ───
-file(GLOB JAUDIO_SOURCES "src/jaudio/*.c")
+# JAudio uses NextOS's host boundary, never the GameCube DSP boot/mailboxes.
+set(JAUDIO_TARGET_SOURCES "")
+if(PIKMIN_NATIVE_JAUDIO)
+    set(JAUDIO_TARGET_SOURCES
+        src/jaudio/aramcall.c
+        src/jaudio/audiomesg.c
+        src/jaudio/bankdrv.c
+        src/jaudio/bankloader.c
+        src/jaudio/bankread.c
+        src/jaudio/centcalc.c
+        src/jaudio/cmdqueue.c
+        src/jaudio/cmdstack.c
+        src/jaudio/connect.c
+        src/jaudio/driverinterface.c
+        src/jaudio/dspdriver.c
+        src/jaudio/dspinterface.c
+        src/jaudio/dummyprobe.c
+        src/jaudio/dummyrom.c
+        src/jaudio/dvdthread.c
+        src/jaudio/fat.c
+        src/jaudio/file_seq.c
+        src/jaudio/filter3d.c
+        src/jaudio/fxinterface.c
+        src/jaudio/heapctrl.c
+        src/jaudio/interface.c
+        src/jaudio/interleave.c
+        src/jaudio/ja_calc.c
+        src/jaudio/jammain_2.c
+        src/jaudio/jamosc.c
+        src/jaudio/memory.c
+        src/jaudio/midplay.c
+        src/jaudio/noteon.c
+        src/jaudio/oneshot.c
+        src/jaudio/piki_bgm.c
+        src/jaudio/piki_player.c
+        src/jaudio/piki_scene.c
+        src/jaudio/pikidemo.c
+        src/jaudio/pikiinter.c
+        src/jaudio/pikiseq.c
+        src/jaudio/playercall.c
+        src/jaudio/random.c
+        src/jaudio/rate.c
+        src/jaudio/sample.c
+        src/jaudio/seqsetup.c
+        src/jaudio/stackchecker.c
+        src/jaudio/streamctrl.c
+        src/jaudio/syncstream.c
+        src/jaudio/tables.c
+        src/jaudio/verysimple.c
+        src/jaudio/virload.c
+        src/jaudio/waveread.c
+    )
+    set_source_files_properties(${JAUDIO_TARGET_SOURCES} PROPERTIES LANGUAGE CXX)
+    list(REMOVE_ITEM PC_PORT_SOURCES src/jaudio/pikiseq.c
+        pc_port/audio/pc_dsp_host.cpp pc_port/dolphin_stubs/jaudio_hw_stubs.cpp)
+    list(APPEND PC_PORT_SOURCES pc_port/audio/jaudio_integration_test.cpp)
+    list(APPEND JAUDIO_TARGET_SOURCES pc_port/audio/jaudio_host.cpp
+        pc_port/audio/jaudio_bank_host.cpp pc_port/audio/jaudio_sink.cpp)
+    message(STATUS "Audio: JAudio + NextOS software DSP (SDL2)")
+else()
+    message(STATUS "Audio: legacy native PC mixer (pc_port/audio)")
+endif()
 
 # ─── Game plugin modules (the actual game code) ───
 file(GLOB PLUGPIKI_KANDO_SOURCES   "src/plugPikiKando/*.cpp")
@@ -214,6 +304,10 @@ add_library(pikmin_legacy STATIC
     ${PLUGPIKI_COLIN_SOURCES}
     ${PLUGPIKI_OGAWA_SOURCES}
     ${PLUGPIKI_YAMASHITA_SOURCES}
+    # Empty unless PIKMIN_NATIVE_JAUDIO is on. The engine belongs here rather
+    # than in pikmin_pc because it is decompiled code and needs the permissive
+    # legacy flags, not the strict ones the port's own sources build with.
+    ${JAUDIO_TARGET_SOURCES}
 )
 target_compile_options(pikmin_legacy PRIVATE ${LEGACY_COMPILE_OPTIONS})
 
@@ -227,15 +321,30 @@ target_link_libraries(pikmin_pc PRIVATE pikmin_legacy)
 # GX display lists, game logic and the software audio mixer execute on the host
 # CPU. Keep optimization level, machine-specific ISA and link-time optimization
 # independent so release archives can remain portable.
-target_compile_options(pikmin_pc PRIVATE
-    $<$<AND:$<CONFIG:Release>,$<COMPILE_LANG_AND_ID:C,GNU,Clang>>:-O3>
-    $<$<AND:$<CONFIG:Release>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-O3>
-    $<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANG_AND_ID:C,GNU,Clang>>:-O3>
-    $<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-O3>)
+#
+# Both targets must receive all three. The bulk of the per-frame CPU work is in
+# pikmin_legacy, not in pikmin_pc: renderall(), the scene traversal, the matrix
+# and collision maths and every GX call the translator consumes are decompiled
+# sources. When these options were attached to pikmin_pc alone -- which they
+# were from the moment the legacy sources were split out into their own library
+# -- the game code silently lost -march=native and LTO, and the library
+# boundary also stopped the translator from inlining into it. That is a
+# performance regression with no visible symptom other than the frame time.
+set(PIKMIN_OPTIMIZED_TARGETS pikmin_pc pikmin_legacy)
+
+foreach(target IN LISTS PIKMIN_OPTIMIZED_TARGETS)
+    target_compile_options(${target} PRIVATE
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANG_AND_ID:C,GNU,Clang>>:-O3>
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-O3>
+        $<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANG_AND_ID:C,GNU,Clang>>:-O3>
+        $<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-O3>)
+endforeach()
 
 option(PIKMIN_NATIVE_OPTIMIZE "Use this build machine's CPU instruction set" ON)
 if(PIKMIN_NATIVE_OPTIMIZE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(pikmin_pc PRIVATE -march=native)
+    foreach(target IN LISTS PIKMIN_OPTIMIZED_TARGETS)
+        target_compile_options(${target} PRIVATE -march=native)
+    endforeach()
 endif()
 
 option(PIKMIN_ENABLE_IPO "Enable portable interprocedural/link-time optimization" ON)
@@ -243,21 +352,30 @@ if(PIKMIN_ENABLE_IPO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT PIKMIN_IPO_SUPPORTED OUTPUT PIKMIN_IPO_ERROR)
     if(PIKMIN_IPO_SUPPORTED)
-        set_property(TARGET pikmin_pc PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        foreach(target IN LISTS PIKMIN_OPTIMIZED_TARGETS)
+            set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        endforeach()
     else()
         message(WARNING "IPO/LTO unavailable: ${PIKMIN_IPO_ERROR}")
     endif()
 endif()
 
 # Link against math, SDL2, and OpenGL libraries
-target_link_libraries(pikmin_pc PRIVATE m ${SDL2_LIBRARIES} OpenGL::GL)
+if (WIN32)
+    # MinGW ya trae las funciones matemáticas en su runtime: no existe libm
+    # suelta. OpenGL lo expone opengl32, y SDL2 necesita SDL2main para su
+    # punto de entrada aunque el juego declare SDL_MAIN_HANDLED.
+    target_link_libraries(pikmin_pc PRIVATE ${SDL2_LIBRARIES} opengl32)
+else()
+    target_link_libraries(pikmin_pc PRIVATE m ${SDL2_LIBRARIES} OpenGL::GL)
+endif()
 # Export symbol names so the diagnostic backtrace in pc_gfx.cpp prints function
 # names rather than bare addresses. Costs nothing at runtime.
 target_link_options(pikmin_pc PRIVATE -rdynamic)
 
 # Set output name
 set_target_properties(pikmin_pc PROPERTIES
-    OUTPUT_NAME "pikmin"
+    OUTPUT_NAME "nectar"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_custom_command(TARGET pikmin_pc POST_BUILD
@@ -269,25 +387,44 @@ add_custom_command(TARGET pikmin_pc POST_BUILD
 # data directory and then starts the game from there. Keeping the extractor in
 # a small library also lets CI test the legal install path without game assets.
 add_library(pikmin_disc_image STATIC
-    pc_port/launcher/gamecube_image.cpp)
+    pc_port/launcher/gamecube_image.cpp
+    pc_port/launcher/sha256.cpp)
 target_include_directories(pikmin_disc_image PUBLIC
     ${CMAKE_SOURCE_DIR}/pc_port/launcher)
 target_compile_options(pikmin_disc_image PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
+# La capa de plataforma aísla lo único del launcher que depende del sistema:
+# rutas del ejecutable, diálogos y arranque del juego.
+if (WIN32)
+    set(LAUNCHER_PLATFORM_SOURCE pc_port/launcher/launcher_platform_win32.cpp)
+else()
+    set(LAUNCHER_PLATFORM_SOURCE pc_port/launcher/launcher_platform_posix.cpp)
+endif()
+
 add_executable(pikmin_launcher
     pc_port/launcher/launcher_main.cpp
-    pc_port/launcher/installer_ui.cpp)
+    pc_port/launcher/installer_ui.cpp
+    ${LAUNCHER_PLATFORM_SOURCE})
 target_include_directories(pikmin_launcher PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_libraries(pikmin_launcher PRIVATE pikmin_disc_image ${SDL2_LIBRARIES})
+if (WIN32)
+    # Diálogo de archivo clásico, selector de carpeta del shell y COM.
+    target_link_libraries(pikmin_launcher PRIVATE comdlg32 ole32 shell32 uuid)
+endif()
 target_compile_options(pikmin_launcher PRIVATE ${NATIVE_COMPILE_OPTIONS})
 set_target_properties(pikmin_launcher PROPERTIES
-    OUTPUT_NAME "pikmin-launcher"
+    OUTPUT_NAME "nectar-launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 add_executable(gamecube_image_test
     pc_port/launcher/gamecube_image_test.cpp)
 target_link_libraries(gamecube_image_test PRIVATE pikmin_disc_image)
 target_compile_options(gamecube_image_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+
+add_executable(sha256_test
+    pc_port/launcher/sha256_test.cpp)
+target_link_libraries(sha256_test PRIVATE pikmin_disc_image)
+target_compile_options(sha256_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
 add_executable(installer_ui_test
     pc_port/launcher/installer_ui_test.cpp
@@ -300,6 +437,7 @@ target_compile_options(installer_ui_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 
 enable_testing()
 add_test(NAME gamecube_image_test COMMAND gamecube_image_test)
+add_test(NAME sha256_test COMMAND sha256_test)
 add_test(NAME installer_ui_test COMMAND installer_ui_test)
 
 add_executable(pc_generator_cache_validation_test
@@ -318,6 +456,19 @@ add_executable(pc_envelope_test pc_port/audio/pc_envelope_test.cpp pc_port/audio
 target_link_libraries(pc_envelope_test PRIVATE m)
 target_compile_options(pc_envelope_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_envelope_test COMMAND pc_envelope_test)
+
+# Host-backed ARAM test (not linked into main game)
+add_executable(pc_aram_test pc_port/audio/pc_aram_test.cpp pc_port/audio/pc_aram.cpp)
+target_compile_options(pc_aram_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_aram_test COMMAND pc_aram_test)
+
+# Host software DSP test (not linked into main game)
+add_executable(pc_dsp_host_test
+    pc_port/audio/pc_dsp_host_test.cpp
+    pc_port/audio/pc_dsp_host.cpp
+    pc_port/audio/pc_aram.cpp)
+target_compile_options(pc_dsp_host_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_dsp_host_test COMMAND pc_dsp_host_test)
 
 add_executable(pc_jam_test
     pc_port/audio/pc_jam_test.cpp
@@ -411,3 +562,9 @@ message(STATUS "║   Audio:    SDL mixer/STX; JAudio WIP   ║")
 message(STATUS "║   Input:    Native SDL keyboard/gamepad ║")
 message(STATUS "╚══════════════════════════════════════════╝")
 message(STATUS "")
+
+if(BUILD_TESTING AND PIKMIN_NATIVE_JAUDIO)
+    add_test(NAME pc_jaudio_integration_test COMMAND pikmin_pc --audio-self-test)
+    set_tests_properties(pc_jaudio_integration_test PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+endif()
