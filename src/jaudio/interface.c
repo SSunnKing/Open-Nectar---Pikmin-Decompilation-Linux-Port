@@ -7,6 +7,10 @@
 #include "jaudio/pikiinter.h"
 #include "jaudio/verysimple.h"
 
+#ifdef PIKI_PC_PORT
+#include "port/jaudio_host.h"
+#endif
+
 static int process_stack[4];
 
 static BOOL vol_chg   = 0;
@@ -29,8 +33,14 @@ void Jac_OutputMode(int mode)
  */
 void Jac_SetBGMVolume(u8 vol)
 {
+	if (vol > 10) {
+		vol = 10;
+	}
 	game_bgm_vol = vol;
 	vol_chg      = TRUE;
+#ifdef PIKI_PC_PORT
+	PikiJAudioSetGameVolumeState(game_bgm_vol, game_se_vol);
+#endif
 }
 
 /**
@@ -38,8 +48,14 @@ void Jac_SetBGMVolume(u8 vol)
  */
 void Jac_SetSEVolume(u8 vol)
 {
+	if (vol > 10) {
+		vol = 10;
+	}
 	game_se_vol = vol;
 	vol_chg     = TRUE;
+#ifdef PIKI_PC_PORT
+	PikiJAudioSetGameVolumeState(game_bgm_vol, game_se_vol);
+#endif
 }
 
 /**

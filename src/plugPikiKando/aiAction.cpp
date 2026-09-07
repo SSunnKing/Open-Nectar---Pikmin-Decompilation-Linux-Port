@@ -9,6 +9,97 @@
 #include "bugprint.h"
 #include "sysNew.h"
 
+#if defined(PIKI_PC_PORT)
+#include "PlayerState.h"
+#include "settings/pc_settings.h"
+#endif
+
+#if defined(PIKI_PC_PORT)
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
+namespace {
+// Step 1 of PLAN_MAQUINA_ESTADOS_PIKI.md: three separate call sites hand a
+// pending emotion to PIKISTATE_Emotion, and they are reached under different
+// circumstances. Which one fires, and when, decides whether a missing
+// celebration sound is a routing problem or a timing one. The stamp is the raw
+// steady clock, the same one the audio trace prints, so the two logs line up.
+void pc_trace_emotion_transit(const char* site, int emotion, int mode, int actionState)
+{
+	static const bool enabled = [] {
+		const char* value = getenv("PIKMIN_PIKI_EMOTION_STATS");
+		return value != nullptr && value[0] == '1';
+	}();
+	if (!enabled) {
+		return;
+	}
+
+	const unsigned long long now = static_cast<unsigned long long>(
+	    std::chrono::duration_cast<std::chrono::milliseconds>(
+	        std::chrono::steady_clock::now().time_since_epoch())
+	        .count());
+	std::printf("[PC Piki] reloj=%llu  emocion %d -> PIKISTATE_Emotion por %s (modo %d, actionState %d)\n", now, emotion,
+	            site, mode, actionState);
+}
+
+
+// Bug del encadenado de acciones: al terminar una accion, TopAction::exec elige
+// entre volver a la formacion y buscar mas trabajo, y la eleccion depende de
+// mActionState (0 -> siempre a la formacion; 1 -> por distancia; 2 -> a trabajo
+// libre). Esta sonda imprime la decision completa en el momento de tomarla, que
+// es el dato que falta para saber si un Pikmin lanzado a una flor de pildoras
+// sale por la rama equivocada o si es graspSituation el que no ve la pildora.
+// El mod de encadenado solo debe actuar tras un *trabajo*. Varias acciones
+// terminan con "vuelve con Olimar" porque eso ES su resultado correcto, no un
+// trabajo del que pasar al siguiente:
+//
+//  - Exit / Enter: salir y entrar de la cebolla. Al salir, unirse al pelotón es
+//    justo lo que el jugador espera; encadenar ahí dejaba a los Pikmin plantados
+//    en la cebolla sin seguirte.
+//  - Formation / Crowd: son la propia conducta de "estar con Olimar". Sacarlos
+//    de ahí haría que abandonasen el pelotón solos.
+//  - Rope: dejar una cuerda a medias no lleva a ningún sitio bueno.
+bool pc_chain_actions_allows(int actionIdx)
+{
+	switch (actionIdx) {
+	case PikiAction::Exit:
+	case PikiAction::Enter:
+	case PikiAction::Formation:
+	case PikiAction::Crowd:
+	case PikiAction::Rope:
+		return false;
+	default:
+		return true;
+	}
+}
+
+bool pc_trace_action_enabled()
+{
+	static const bool enabled = [] {
+		const char* value = getenv("PIKMIN_PIKI_ACTION_STATS");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+void pc_trace_action_done(int actionIdx, int result, int mode, int actionState, bool joinParty, f32 naviDist, f32 joinRange)
+{
+	const unsigned long long now = static_cast<unsigned long long>(
+	    std::chrono::duration_cast<std::chrono::milliseconds>(
+	        std::chrono::steady_clock::now().time_since_epoch())
+	        .count());
+	std::printf("[PC Piki] reloj=%llu  accion %d %s  modo %d  actionState %d -> %s (dist %.1f / rango %.1f)\n", now,
+	            actionIdx, result == ACTOUT_Success ? "OK" : "FALLO", mode, actionState,
+	            joinParty ? "FORMACION" : "buscar trabajo", naviDist, joinRange);
+}
+} // namespace
+
+#define PC_TRACE_EMOTION(site, piki, emote) pc_trace_emotion_transit((site), (emote), (piki)->mMode, (piki)->mActionState)
+#else
+#define PC_TRACE_EMOTION(site, piki, emote) ((void)0)
+#endif
+
 /**
  * @todo: Documentation
  * @note UNUSED Size: 00009C
@@ -355,6 +446,9 @@ int TopAction::exec()
 
 		mChildActions[mCurrActionIdx].mAction->cleanup();
 
+#if defined(PIKI_PC_PORT)
+		const int pcFinishedActionIdx = mCurrActionIdx;
+#endif
 		mTarget        = nullptr;
 		mCurrActionIdx = PikiAction::NOACTION;
 		_2C            = 1.0f;
@@ -380,6 +474,38 @@ int TopAction::exec()
 			}
 			}
 
+#if defined(PIKI_PC_PORT)
+			// MOD opcional: encadenar acciones (F1 -> Advanced Settings).
+			//
+			// El juego original manda al Pikmin de vuelta al pelotón en cuanto
+			// termina un trabajo; está verificado contra el juego de verdad y
+			// por eso el ajuste viene apagado. Encendido, en vez de volver cae
+			// por la rama que ya existe justo debajo: modo libre + ActFree, que
+			// llama a graspSituation y le busca trabajo cerca. Así, un Pikmin
+			// lanzado a una flor de píldoras la rompe y acto seguido se lleva la
+			// píldora a la cebolla.
+			//
+			// Tres excepciones, que no son gusto sino corrección:
+			//  - Con algo en las manos (una bomba) graspSituation devuelve
+			//    "nada que hacer", así que el Pikmin se quedaría plantado con la
+			//    bomba en brazos. La ruta original de PutbombMode sigue intacta.
+			//  - Un Pikmin seta necesita la transición KinokoChange para volver
+			//    a la normalidad, y solo ocurre en la rama de vuelta al pelotón.
+			//  - Al final del día tienen que regresar.
+			//
+			// Y solo tras acciones de trabajo: ver pc_chain_actions_allows().
+			if (doJoinParty && pc_settings_get_chain_actions() && pc_chain_actions_allows(pcFinishedActionIdx)
+			    && !mPiki->isHolding() && !mPiki->isKinoko() && !(playerState && playerState->inDayEnd())) {
+				doJoinParty = false;
+			}
+
+			if (pc_trace_action_enabled()) {
+				pc_trace_action_done(pcFinishedActionIdx, res, mPiki->mMode, mPiki->mActionState, doJoinParty,
+				                     mPiki->mNavi ? qdist2(mPiki->mNavi, mPiki) : -1.0f,
+				                     C_PIKI_PARM(mPiki, mPostWorkJoinPartyRange));
+			}
+#endif
+
 			if (doJoinParty) {
 				if (mPiki->mMode == PikiMode::PutbombMode) {
 					PRINT("******** BOMB * FORMATION !\n");
@@ -392,6 +518,7 @@ int TopAction::exec()
 
 				} else if (emote != PikiEmotion::None) {
 					mPiki->mEmotion = emote;
+					PC_TRACE_EMOTION("doJoinParty", mPiki, emote);
 					mPiki->mFSM->transit(mPiki, PIKISTATE_Emotion);
 				}
 
@@ -416,14 +543,24 @@ int TopAction::exec()
 
 				} else if (emote != PikiEmotion::None) {
 					mPiki->mEmotion = emote;
+					PC_TRACE_EMOTION("modo libre", mPiki, emote);
 					mPiki->mFSM->transit(mPiki, PIKISTATE_Emotion);
 				}
 			}
 		} else {
 			int emote = mPiki->mEmotion;
+#if defined(PIKI_PC_PORT)
+			// Ya estaba en modo libre: aqui no se decide nada, se pide trabajo
+			// nuevo directamente. Distinguir esta linea de la anterior dice si
+			// el Pikmin llego siquiera a mirar el mundo en busca de la pildora.
+			if (pc_trace_action_enabled()) {
+				pc_trace_action_done(pcFinishedActionIdx, res, mPiki->mMode, mPiki->mActionState, false, -1.0f, -1.0f);
+			}
+#endif
 			mPiki->actOnSituaton();
 			if (emote != PikiEmotion::None) {
 				mPiki->mEmotion = emote;
+				PC_TRACE_EMOTION("actOnSituaton", mPiki, emote);
 				mPiki->mFSM->transit(mPiki, PIKISTATE_Emotion);
 			}
 		}

@@ -11,6 +11,11 @@
 #include "jaudio/rate.h"
 #include <stddef.h>
 
+#ifdef PIKI_PC_PORT
+#include "port/jaudio_host.h"
+
+#endif
+
 // fabricated, size 0x14.
 struct UNK_STRUCT {
 	DVDFileInfo* fileinfo; // _00
@@ -44,6 +49,9 @@ s16 table4[16] = {
  */
 void Stop_DirectPCM(dspch_* dspch)
 {
+#ifdef PIKI_PC_PORT
+	PikiJAudioClearDirectPCM(dspch->buffer_idx);
+#endif
 	DSP_PlayStop(dspch->buffer_idx);
 	DSP_FlushChannel(dspch->buffer_idx);
 }
@@ -55,11 +63,20 @@ void Play_DirectPCM(dspch_* dspch, s16* baseAddr, u16 loopStart, u32 length)
 {
 	DSPchannel_* buff = GetDspHandle(dspch->buffer_idx); // r3
 
+#ifdef PIKI_PC_PORT
+	buff->baseAddress       = 0;
+#else
 	buff->baseAddress       = (u32)baseAddr;
+#endif
 	buff->isLooping         = FALSE;
 	buff->samplesSourceType = 0x21; // todo: find out what this is
 	buff->remainingLength   = length;
+#ifdef PIKI_PC_PORT
+	buff->loopAddress       = 0;
+	PikiJAudioSetDirectPCM(dspch->buffer_idx, baseAddr, loopStart);
+#else
 	buff->loopAddress       = (u32)baseAddr;
+#endif
 	buff->loopStartPosition = loopStart << 16;
 
 	DSP_SetMixerInitDelayMax(dspch->buffer_idx, 0);
@@ -110,7 +127,23 @@ u32 Get_DirectPCM_Remain(DSPchannel_* channel)
  */
 static BOOL __DVDReadAsyncRetry()
 {
+#ifdef PIKI_PC_PORT
+	/*
+	 * Keep the original one-request retry descriptor, but execute it
+	 * synchronously on the host. This preserves the native callback flow
+	 * without letting a callback outlive the StreamCtrl that owns it.
+	 */
+
+	const s32 result
+	    = DVDReadPrio(copy->fileinfo, copy->addr, copy->length, copy->offset, 1);
+
+	if (copy->callback != NULL) {
+		copy->callback(result, copy->fileinfo);
+	}
+	return result >= 0;
+#else
 	return DVDReadAsyncPrio(copy->fileinfo, copy->addr, copy->length, copy->offset, copy->callback, 1);
+#endif
 }
 
 /**
@@ -118,6 +151,7 @@ static BOOL __DVDReadAsyncRetry()
  */
 static BOOL DVDReadAsyncPrio2(DVDFileInfo* info, void* addr, s32 length, s32 offs, DVDCallback callback, s32 prio)
 {
+	(void)prio;
 	copy->fileinfo = info;
 	copy->addr     = addr;
 	copy->length   = length;
@@ -149,6 +183,20 @@ static void __LoadFin(s32 size, DVDFileInfo* fileinfo)
 
 	BufControl_* buff = &ctrl->buffCtrl[idx];
 
+#ifdef PIKI_PC_PORT
+	/*
+	 * A failed synchronous host read leaves the marker intact. Roll the
+	 * reservation back and let the normal stream pump retry later instead
+	 * of recursively invoking the callback until the stack overflows.
+	 */
+	if (size < 0) {
+		buff->state = 0;
+		ctrl->bytesRead -= ctrl->lastLoadSize;
+		ctrl->remainingBytes += ctrl->lastLoadSize;
+		return;
+	}
+#endif
+
 	if (ctrl->isFromFile == 1) {
 		u8* data = (u8*)buff->mLength;
 		DCInvalidateRange(data, 0x20);
@@ -156,8 +204,10 @@ static void __LoadFin(s32 size, DVDFileInfo* fileinfo)
 		// what in tarnation
 		if (data[0] == 0xff && data[1] == 0xad && data[2] == 0xbe && data[3] == 0xef && data[4] == 0xde && data[5] == 0xad
 		    && data[6] == 0xbe && data[7] == 0xef) {
+#ifndef PIKI_PC_PORT
 			__DVDReadAsyncRetry();
 			return;
+#endif
 		}
 	}
 
@@ -268,7 +318,7 @@ static void LoadADPCM(StreamCtrl_* ctrl, int r28)
 /**
  * @TODO: Documentation
  */
-static void BufContInit(BufControl_* ctrl, u8 a, u8 b, u8 c, u8 d, u32 e, u32 f, u32 g)
+static void BufContInit(BufControl_* ctrl, u8 a, u8 b, u8 c, u8 d, u32 e, u32 f, uintptr_t g)
 {
 	ctrl->state         = a;
 	ctrl->maxBufCount   = b;
@@ -329,6 +379,27 @@ BOOL StreamAudio_Start(u32 ctrlID, int soundId, immut char* name, BOOL r6, BOOL 
 		}
 
 		DVDReadPrio(&ctrl->fileinfo, &ctrl->data[0].header, 0x20, 0, 1);
+#ifdef PIKI_PC_PORT
+	
+		u8* rawHeader         = reinterpret_cast<u8*>(&ctrl->data[0].header);
+		ctrl->data[0].header.fileSize
+		    = (static_cast<u32>(rawHeader[0]) << 24) | (static_cast<u32>(rawHeader[1]) << 16)
+		    | (static_cast<u32>(rawHeader[2]) << 8) | rawHeader[3];
+		ctrl->data[0].header.sampleCount
+		    = (static_cast<u32>(rawHeader[4]) << 24) | (static_cast<u32>(rawHeader[5]) << 16)
+		    | (static_cast<u32>(rawHeader[6]) << 8) | rawHeader[7];
+		ctrl->data[0].header.sampleRate = (static_cast<u16>(rawHeader[8]) << 8) | rawHeader[9];
+		ctrl->data[0].header.audioFormat = (static_cast<u16>(rawHeader[10]) << 8) | rawHeader[11];
+		ctrl->data[0].header._0C          = (static_cast<u16>(rawHeader[12]) << 8) | rawHeader[13];
+		ctrl->data[0].header.frameRate    = (static_cast<u16>(rawHeader[14]) << 8) | rawHeader[15];
+		for (u32 word = 0; word < ARRAY_SIZE(ctrl->data[0].header._10); ++word) {
+			const u32 offset = 0x10 + word * 4;
+			ctrl->data[0].header._10[word]
+			    = (static_cast<u32>(rawHeader[offset]) << 24)
+			    | (static_cast<u32>(rawHeader[offset + 1]) << 16)
+			    | (static_cast<u32>(rawHeader[offset + 2]) << 8) | rawHeader[offset + 3];
+		}
+#endif
 		ctrl->header    = ctrl->data[0].header;
 		ctrl->bytesRead = 0x20;
 	} else {
@@ -346,7 +417,7 @@ BOOL StreamAudio_Start(u32 ctrlID, int soundId, immut char* name, BOOL r6, BOOL 
 
 	for (i = 0; i < 6; i++) {
 		ctrl->buffCtrl[i].state   = 0;
-		ctrl->buffCtrl[i].mLength = (u32)&ctrl->data[i]; // TODO: should be a pointer?
+		ctrl->buffCtrl[i].mLength = reinterpret_cast<uintptr_t>(&ctrl->data[i]);
 	}
 
 	for (i = 0; i < 2; i++) {
@@ -387,7 +458,7 @@ BOOL StreamAudio_Start(u32 ctrlID, int soundId, immut char* name, BOOL r6, BOOL 
 	LoadADPCM(ctrl, 1);
 
 	for (u32 i = 0; i < 2; i++) {
-		DeAllocDSPchannel(ctrl->dspch[i], (u32)(&ctrl->dspch[i]));
+		DeAllocDSPchannel(ctrl->dspch[i], reinterpret_cast<uintptr_t>(&ctrl->dspch[i]));
 
 		ctrl->dspch[i] = 0;
 	}
@@ -424,7 +495,8 @@ static s32 StreamAudio_Callback(void* data)
 
 	if (!ctrl->dspch[0]) {
 		for (channelIdx = 0; channelIdx < 2; channelIdx++) {
-			ctrl->dspch[channelIdx] = AllocDSPchannel(0, (u32)&ctrl->dspch[channelIdx]);
+			ctrl->dspch[channelIdx]
+			    = AllocDSPchannel(0, reinterpret_cast<uintptr_t>(&ctrl->dspch[channelIdx]));
 #if defined(VERSION_GPIP01)
 			if (ctrl->dspch[channelIdx])
 #endif
@@ -447,7 +519,8 @@ static s32 StreamAudio_Callback(void* data)
 
 			for (channelIdx = 0; channelIdx < 2; channelIdx++) {
 				Stop_DirectPCM(ctrl->dspch[channelIdx]);
-				DeAllocDSPchannel(ctrl->dspch[channelIdx], (u32)&ctrl->dspch[channelIdx]);
+				DeAllocDSPchannel(ctrl->dspch[channelIdx],
+				                 reinterpret_cast<uintptr_t>(&ctrl->dspch[channelIdx]));
 				ctrl->dspch[channelIdx] = NULL;
 			}
 
@@ -694,8 +767,8 @@ void RegisterStreamCallback(StreamCallback callback)
  */
 static u32 __DecodePCM(StreamCtrl_* ctrl)
 {
+#if defined(VERSION_GPIP01)
 	u32 activeBufIdx;
-	u32 currentBufIdx;
 	s32 usedSize;
 	s16* rightSamples;
 	u32 sampleCount;
@@ -704,21 +777,33 @@ static u32 __DecodePCM(StreamCtrl_* ctrl)
 	u8* sourceBytes;
 	size_t i;
 
-	activeBufIdx  = ctrl->buffCtrlMain.activeBufIdx;
-	currentBufIdx = ctrl->buffCtrlMain2.currentBufIdx;
-
-	leftSamples  = ctrl->leftChanBufs[currentBufIdx];
-	rightSamples = ctrl->rightChanBufs[currentBufIdx];
+	activeBufIdx = ctrl->buffCtrlMain.activeBufIdx;
+	leftSamples  = ctrl->leftChanBufs[ctrl->buffCtrlMain2.currentBufIdx];
 	sourceBytes  = ctrl->data[activeBufIdx].data;
-
-	usedSize    = ctrl->buffCtrl[activeBufIdx].usedSize;
-	sampleCount = ((s32)ctrl->buffCtrl[activeBufIdx].pos - usedSize) / 4;
+	usedSize     = ctrl->buffCtrl[activeBufIdx].usedSize;
+	sampleCount  = ((s32)ctrl->buffCtrl[activeBufIdx].pos - usedSize) / 4;
 	sourceBytes += usedSize;
+	rightSamples  = ctrl->rightChanBufs[ctrl->buffCtrlMain2.currentBufIdx];
 	sourceSamples = (s16*)sourceBytes;
+#else
+	u32 usedSize;
+	s16* sourceSamples;
+	s16* rightSamples;
+	u32 sampleCount;
+	s16* leftSamples;
+	size_t i;
 
+	usedSize    = ctrl->buffCtrl[ctrl->buffCtrlMain.activeBufIdx].usedSize;
+	sampleCount = (ctrl->buffCtrl[ctrl->buffCtrlMain.activeBufIdx].pos - usedSize) / 4;
+
+	leftSamples   = ctrl->leftChanBufs[ctrl->buffCtrlMain2.currentBufIdx];
+	rightSamples  = ctrl->rightChanBufs[ctrl->buffCtrlMain2.currentBufIdx];
+	sourceSamples = (s16*)&ctrl->data[ctrl->buffCtrlMain.activeBufIdx].data[usedSize];
+#endif
 	for (i = 0; i < sampleCount; i++) {
-		*leftSamples++  = *sourceSamples++;
-		*rightSamples++ = *sourceSamples++;
+		*leftSamples++  = sourceSamples[0];
+		*rightSamples++ = sourceSamples[1];
+		sourceSamples += 2;
 	}
 	ctrl->samplesDecoded += sampleCount;
 	return sampleCount;

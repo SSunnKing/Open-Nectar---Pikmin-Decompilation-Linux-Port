@@ -14,6 +14,36 @@
 #include "timers.h"
 #include <math.h>
 
+#if defined(PIKI_PC_PORT)
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
+namespace {
+// A sound whose context cannot get an event handle never reaches
+// Jac_PlayEventAction, so the audio trace never mentions it: it goes missing
+// with no line at all, which looks exactly like the game never asking for it.
+// This is the one place that can tell those two apart.
+void pc_trace_lost_sound(int eventType, int soundID)
+{
+	static const bool enabled = [] {
+		const char* value = getenv("PIKMIN_AUDIO_STATS");
+		return value != nullptr && value[0] == '1';
+	}();
+	if (!enabled) {
+		return;
+	}
+
+	const unsigned long long now = static_cast<unsigned long long>(
+	    std::chrono::duration_cast<std::chrono::milliseconds>(
+	        std::chrono::steady_clock::now().time_since_epoch())
+	        .count());
+	std::printf("[PC Audio] reloj=%llu  tipo %d sonido %d -> PERDIDO (sin handle de evento)\n", now, eventType, soundID);
+}
+} // namespace
+#endif
+
 /// Global sound effect system manager object.
 SeSystem* seSystem;
 
@@ -482,6 +512,11 @@ void SeContext::createEvent(int eventType)
 void SeContext::playSound(int soundID)
 {
 	int jacID = seSystem->getJacID(soundID);
+#if defined(PIKI_PC_PORT)
+	// Sin fila en la tabla no hay accion de jaudio que tocar: no gastar una de
+	// las dieciseis ranuras de evento en algo que no puede sonar.
+	if (jacID < 0) return;
+#endif
 	if (mEventHandle == -1) {
 		gsys->mTimer->start("createEvent", true);
 		createEvent(mEventType);
@@ -494,6 +529,11 @@ void SeContext::playSound(int soundID)
 		mClock = seSystem->mClock;
 		gsys->mTimer->stop("JAC");
 	}
+#if defined(PIKI_PC_PORT)
+	else {
+		pc_trace_lost_sound(mEventType, jacID);
+	}
+#endif
 }
 
 /**
@@ -963,11 +1003,56 @@ void SeSystem::calcCameraPos(immut Vector3f& objectPos, Vector3f& normalisedCamD
 	normalisedCamDir = tmpDir;
 }
 
+#if defined(PIKI_PC_PORT)
+/**
+ * @brief Localiza la fila de `soundTable` de un id de sonido.
+ *
+ * Los accesores indexaban la tabla directamente por el id (`soundTable[soundID]`),
+ * y eso da por hecho que la tabla esta alineada con el enum `SE_*`. No lo esta:
+ * 91 de sus 289 filas caen en una posicion distinta a su valor, y varios ids
+ * quedan **mas alla del final del array** — `SE_PIKI_PULLED` vale 327 sobre una
+ * tabla de 289 filas. La comprobacion de rango existente no lo detecta porque
+ * compara contra `mMaxSoundID` (el tamano del enum), no contra el numero real
+ * de filas.
+ *
+ * O sea que no era "un sonido que falta", era una lectura fuera de rango:
+ * comportamiento indefinido devolviendo basura como id de jaudio. Por eso
+ * desenterrar un Pikmin no sonaba nunca.
+ *
+ * El indice se construye una sola vez recorriendo la propia tabla, asi que no
+ * hay que reordenar ni completar datos de la decompilacion. Un id que no este
+ * en la tabla devuelve `nullptr`, y quien llama decide: silencio, en vez de
+ * basura.
+ */
+static const SoundTableInfo* pc_sound_row(int soundID)
+{
+	static const std::vector<const SoundTableInfo*> index = [] {
+		const size_t rows = sizeof(soundTable) / sizeof(soundTable[0]);
+		int highest = -1;
+		for (size_t i = 0; i < rows; i++) {
+			if (soundTable[i].mSeID > highest) highest = soundTable[i].mSeID;
+		}
+		std::vector<const SoundTableInfo*> built(highest > 0 ? highest + 1 : 1, nullptr);
+		for (size_t i = 0; i < rows; i++) {
+			const int id = soundTable[i].mSeID;
+			if (id >= 0 && !built[id]) built[id] = &soundTable[i];
+		}
+		return built;
+	}();
+	if (soundID < 0 || static_cast<size_t>(soundID) >= index.size()) return nullptr;
+	return index[soundID];
+}
+#endif
+
 /**
  * @todo: Documentation
  */
 int SeSystem::getJacID(int soundID)
 {
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	return row ? row->mJacID : -1;
+#else
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
 	if (soundID < 0 || soundID >= mMaxSoundID)
 #else
@@ -978,6 +1063,7 @@ int SeSystem::getJacID(int soundID)
 		ERROR("go to HELL!\n"); // rude.
 	}
 	return soundTable[soundID].mJacID;
+#endif
 }
 
 /**
@@ -990,7 +1076,12 @@ immut char* SeSystem::getSoundName(int soundID)
 		PRINT("soundID = %d\n", soundID);
 		ERROR("go to HELL!\n"); // rude.
 	}
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	return row ? row->mSeName : "(unknown)";
+#else
 	return soundTable[soundID].mSeName;
+#endif
 }
 
 /**
@@ -1003,7 +1094,12 @@ int SeSystem::getEventType(int soundID)
 		PRINT("soundID = %d\n", soundID);
 		ERROR("go to HELL!\n"); // rude.
 	}
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	return row ? row->mEventType : JACEVENT_NULL;
+#else
 	return soundTable[soundID].mEventType;
+#endif
 }
 
 /**
@@ -1016,7 +1112,12 @@ bool SeSystem::isLoopType(int soundID)
 		PRINT("soundID = %d\n", soundID);
 		ERROR("go to HELL!\n"); // rude.
 	}
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	return row && row->mLoopType == TRUE;
+#else
 	return soundTable[soundID].mLoopType == TRUE;
+#endif
 }
 
 /**
@@ -1053,7 +1154,12 @@ void SeSystem::stopSysSe(int soundID)
  */
 void SeSystem::playPlayerSe(int soundID)
 {
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	if (row) Jac_PlayOrimaSe(row->mJacID);
+#else
 	Jac_PlayOrimaSe(soundTable[soundID].mJacID);
+#endif
 }
 
 /**
@@ -1061,5 +1167,10 @@ void SeSystem::playPlayerSe(int soundID)
  */
 void SeSystem::stopPlayerSe(int soundID)
 {
+#if defined(PIKI_PC_PORT)
+	const SoundTableInfo* row = pc_sound_row(soundID);
+	if (row) Jac_StopOrimaSe(row->mJacID);
+#else
 	Jac_StopOrimaSe(soundTable[soundID].mJacID);
+#endif
 }

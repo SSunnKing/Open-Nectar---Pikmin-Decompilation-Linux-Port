@@ -10,6 +10,10 @@
  */
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#if PIKI_USE_JAUDIO
+int pc_jaudio_integration_test();
+#endif
 
 // Game headers
 #include "system.h"
@@ -23,6 +27,8 @@
  * the main loop. Since all Dolphin SDK calls are stubbed, this will
  * "run" but produce no visible output yet.
  */
+#include <SDL.h>
+
 #include "pc_window.h"
 #include "settings/pc_settings.h"
 
@@ -31,6 +37,17 @@ int main(int argc, char* argv[])
     // Disable stdout buffering so we see logs immediately before any crash
     setvbuf(stdout, NULL, _IONBF, 0);
 
+    // SDL_MAIN_HANDLED is defined for this build, which means the application
+    // owns main() and SDL2main is not linked. The other half of that contract
+    // is telling SDL so before the first SDL_Init. It is close to a no-op on
+    // Linux, which is why its absence went unnoticed there, but Windows needs
+    // it to set up the instance handle and command line.
+    SDL_SetMainReady();
+
+#if PIKI_USE_JAUDIO
+    if (argc == 2 && std::strcmp(argv[1], "--audio-self-test") == 0)
+        return pc_jaudio_integration_test();
+#endif
     (void)argc;
     (void)argv;
 
@@ -43,7 +60,7 @@ int main(int argc, char* argv[])
     // Initialize SDL2 Window and OpenGL Context FIRST
     printf("[PC Port] Initializing SDL2 Window and OpenGL...\n");
     fflush(stdout);
-    if (!pc_window_init("Pikmin PC Port", 1280, 720)) {
+    if (!pc_window_init("Open Nectar", 1280, 720)) {
         printf("[PC Port Fatal Error] Could not initialize window/OpenGL!\n");
         fflush(stdout);
         return 1;

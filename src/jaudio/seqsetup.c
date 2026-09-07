@@ -10,6 +10,7 @@
 
 #include "Dolphin/OS/OSInterrupt.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #include <stddef.h>
 
@@ -154,12 +155,12 @@ seqp_* Jaq_HandleToSeq(u32 handle)
 /**
  * @TODO: Documentation
  */
-static void Init_Track(seqp_* track, u32 dataAddress, seqp_* parent)
+static void Init_Track(seqp_* track, uintptr_t dataAddress, seqp_* parent)
 {
 	int i;
 
 	if (!parent) {
-		track->seqData          = (u8*)dataAddress;
+		track->seqData          = reinterpret_cast<u8*>(dataAddress);
 		track->programCounter   = 0;
 		track->tempo            = 120;
 		track->timeBase         = 48;
@@ -389,7 +390,7 @@ s32 Jaq_SetSeqData_Limit(seqp_* track, u8* sequenceData, u32 sequenceSize, u32 s
 	}
 	track->trackId = root;
 	track->flags   = 3;
-	Init_Track(track, (u32)trackData, NULL);
+	Init_Track(track, reinterpret_cast<uintptr_t>(trackData), NULL);
 	Jam_InitExtBuffer(&ROOT_OUTER[root]);
 	Jam_AssignExtBuffer(track, &ROOT_OUTER[root]);
 	Init_1shot(&track->parentController, oneShotMode);

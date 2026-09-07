@@ -3,6 +3,9 @@
 #include "jaudio/bx.h"
 #include "jaudio/connect.h"
 #include <stddef.h>
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_bank_host.h"
+#endif
 
 #define BANKP_SIZE (0x100)
 static Bank_* bankp[BANKP_SIZE];
@@ -10,6 +13,7 @@ static Bank_* bankp[BANKP_SIZE];
 /**
  * @TODO: Documentation
  */
+#if !defined(PIKI_PC_PORT)
 static void PTconvert(void** pointer, u32 base_address)
 {
 	if (*pointer >= (void*)base_address || *pointer == NULL) {
@@ -102,6 +106,16 @@ Bank_* Bank_Test(u8* ibnk_address)
 
 	return startBank;
 }
+#else
+Bank_* Bank_Test(u8*)
+{
+	/*
+	 * PTconvert writes an 8-byte native pointer over a 4-byte disk field.
+	 * Host registration must come through JAudioHost_LoadBX instead.
+	 */
+	return NULL;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -120,7 +134,13 @@ static BOOL __Bank_Regist_Inner(u8* ibnk, u32 bankIndex, u32 connectTableId)
  */
 BOOL Bank_Regist(void* ibnk, u32 bankIndex)
 {
+#if defined(PIKI_PC_PORT)
+	(void)ibnk;
+	(void)bankIndex;
+	return FALSE;
+#else
 	return __Bank_Regist_Inner((u8*)ibnk, bankIndex, ((Ibnk_*)ibnk)->_08);
+#endif
 }
 
 /**
@@ -129,8 +149,27 @@ BOOL Bank_Regist(void* ibnk, u32 bankIndex)
  */
 BOOL Bank_Regist_Direct(void* ibnk, u32 bankIndex, u32 connectTableId)
 {
+#if defined(PIKI_PC_PORT)
+	(void)ibnk;
+	(void)bankIndex;
+	(void)connectTableId;
+	return FALSE;
+#else
 	return __Bank_Regist_Inner((u8*)ibnk, bankIndex, connectTableId);
+#endif
 }
+
+#if defined(PIKI_PC_PORT)
+BOOL Bank_Regist_Host(Ibnk_* ibnk, u32 bankIndex)
+{
+	if (ibnk == NULL || bankIndex >= BANKP_SIZE || ibnk->magic != 'IBNK' || ibnk->bank.mMagic != 'BANK') {
+		return FALSE;
+	}
+	Jac_BnkConnectTableSet(ibnk->_08, bankIndex);
+	bankp[bankIndex] = &ibnk->bank;
+	return TRUE;
+}
+#endif
 
 /**
  * @TODO: Documentation

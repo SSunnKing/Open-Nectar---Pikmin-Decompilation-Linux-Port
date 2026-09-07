@@ -3,6 +3,7 @@
 
 #include "jaudio/dspinterface.h"
 #include "types.h"
+#include <stdint.h>
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -42,7 +43,11 @@ struct BufControl_ {
 	u8 activeBufIdx;  // _03
 	u32 usedSize;     // _04
 	u32 pos;          // _08
+#ifdef PIKI_PC_PORT
+	uintptr_t mLength; // Host: pointer for leaf buffers, count for controllers.
+#else
 	u32 mLength;      // _0C
+#endif
 };
 
 enum AudioFormat {

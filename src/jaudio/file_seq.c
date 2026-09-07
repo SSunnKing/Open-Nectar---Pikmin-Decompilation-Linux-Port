@@ -1,8 +1,15 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/file_seq.h"
 
 #include "jaudio/jammain_2.h"
 #include "jaudio/seqsetup.h"
 #include "jaudio/virload.h"
+
+#ifdef PIKI_PC_PORT
+#include "Dolphin/os.h"
+#endif
 
 #include <stddef.h>
 #include <string.h>
@@ -160,7 +167,18 @@ BOOL Jaf_StopSeq(u32 index)
 		return FALSE;
 	}
 	BOOL result = Jaq_StopSeq(rootseqhandle[index]);
-	while (Jaq_HandleToSeq(rootseqhandle[index])) { }
+	while (Jaq_HandleToSeq(rootseqhandle[index])) {
+#ifdef PIKI_PC_PORT
+		/*
+		 * The console's periodic scheduler interrupt let the audio thread
+		 * consume the stop request here.  The host scheduler is cooperative,
+		 * so explicitly hand it the same opportunity instead of monopolising
+		 * the scheduler lock forever.
+		 */
+		PikiJAudioTick();
+		OSYieldThread();
+#endif
+	}
 	rootseqhandle[index] = -1;
 	return result;
 }
@@ -206,6 +224,16 @@ static void Jaf_LoadFinish(u32 asyncContext)
  */
 u32 __LoadSeqA(u32 callbackArg, u32 seqIndex, u8* seqBuffer, void (*finishCallback)(u32))
 {
+#ifdef PIKI_PC_PORT
+	/*
+	 * The console callback cookie is a 32-bit pointer into `as`.  Host DVD
+	 * reads are synchronous, so preserve the observable result without ever
+	 * manufacturing that truncated cookie.
+	 */
+	(void)callbackArg;
+	(void)finishCallback;
+	return Jaf_LoadSeq(seqIndex, seqBuffer);
+#else
 	u32* REF_callbackArg = &callbackArg;
 	u32* REF_seqIndex    = &seqIndex;
 	u8** REF_seqBuffer   = &seqBuffer;
@@ -245,6 +273,7 @@ u32 __LoadSeqA(u32 callbackArg, u32 seqIndex, u8* seqBuffer, void (*finishCallba
 
 	seq_loadbuffer[seqIndex] = (u8*)1;
 	return JV_LoadFile_Async2(seqArchiveHandle, seqBuffer, 0, seqSize, finishCallback, (u32)&as[slotIndex]);
+#endif
 }
 
 /**

@@ -1,4 +1,9 @@
 #include "gamecube_image.h"
+#include "sha256.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -11,6 +16,65 @@ namespace fs = std::filesystem;
 namespace pikmin {
 namespace launcher {
 namespace {
+
+/**
+ * @brief Turns a raw FST name into a path component.
+ *
+ * Names in a GameCube FST are raw bytes with no declared encoding. This disc
+ * carries a few left over in Shift-JIS -- "コピー ~ practice" and friends. On
+ * Linux those bytes become the filename unchanged, which is why extraction has
+ * always worked there. On Windows fs::path converts a narrow string through the
+ * active code page and throws filesystem_error on an illegal sequence, aborting
+ * the install a few percent in.
+ *
+ * Decode explicitly instead: UTF-8 first, then Shift-JIS, and finally a
+ * byte-preserving widening that cannot fail. The last step keeps a file with an
+ * unrecognisable name rather than losing the extraction.
+ */
+fs::path discNameToPath(const std::string& name)
+{
+#if defined(_WIN32)
+	if (name.empty()) return fs::path();
+
+	const auto tryCodePage = [&name](unsigned codePage, bool strict) -> std::wstring {
+		const DWORD flags = strict ? MB_ERR_INVALID_CHARS : 0;
+		const int needed = MultiByteToWideChar(codePage, flags, name.data(),
+		                                       static_cast<int>(name.size()), nullptr, 0);
+		if (needed <= 0) return std::wstring();
+		std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+		const int written = MultiByteToWideChar(codePage, flags, name.data(),
+		                                        static_cast<int>(name.size()), wide.data(), needed);
+		if (written <= 0) return std::wstring();
+		wide.resize(static_cast<std::size_t>(written));
+		return wide;
+	};
+
+	std::wstring wide = tryCodePage(CP_UTF8, true);
+	if (wide.empty()) wide = tryCodePage(932, true);   // Shift-JIS
+	if (wide.empty()) {
+		// Never fails: each byte becomes one character.
+		wide.reserve(name.size());
+		for (unsigned char byte : name) wide.push_back(static_cast<wchar_t>(byte));
+	}
+	return fs::path(wide);
+#else
+	return fs::path(name);
+#endif
+}
+
+/// Path text for messages. Windows' narrow conversion throws on characters the
+/// active code page cannot express, so go through UTF-8, which always can.
+std::string pathText(const fs::path& path)
+{
+#if defined(_WIN32)
+	// u8string() returns std::string under C++17 and std::u8string under C++20;
+	// the copy below works either way.
+	const auto utf8 = path.u8string();
+	return std::string(utf8.begin(), utf8.end());
+#else
+	return path.string();
+#endif
+}
 
 constexpr std::uint64_t kFstOffsetField = 0x424;
 constexpr std::uint64_t kFstSizeField   = 0x428;
@@ -134,8 +198,80 @@ bool isSupportedPikminDisc(const DiscIdentity& identity, std::string& error)
     return true;
 }
 
+namespace {
+
+// Volcado de referencia de Pikmin USA Rev. 1 (GPIE01, revisión 1), disco
+// completo de 1.459.978.240 bytes. Una imagen íntegra de ese juego produce
+// siempre este hash; cualquier diferencia significa que la copia está dañada,
+// recortada o modificada.
+constexpr const char* kPikminUsaRev1Sha256 =
+    "db013398ec77299e307ef61ec33e82b07e4b21cb676b18a0be712fe55e9775f2";
+
+} // namespace
+
+bool hashImage(const fs::path& image, std::string& hexDigest, std::string& error,
+               const std::function<void(std::uint32_t)>& progress)
+{
+    std::ifstream input(image, std::ios::binary | std::ios::ate);
+    if (!input) {
+        error = "No se pudo abrir la imagen seleccionada.";
+        return false;
+    }
+    const std::uint64_t imageSize = static_cast<std::uint64_t>(input.tellg());
+    input.seekg(0, std::ios::beg);
+
+    Sha256 hash;
+    std::vector<char> buffer(kCopyBufferSize);
+    std::uint64_t done = 0;
+    std::uint32_t lastPercent = 101; // fuerza el primer aviso
+
+    while (done < imageSize) {
+        const std::size_t chunk = static_cast<std::size_t>(
+            std::min<std::uint64_t>(imageSize - done, buffer.size()));
+        input.read(buffer.data(), static_cast<std::streamsize>(chunk));
+        if (input.gcount() != static_cast<std::streamsize>(chunk)) {
+            error = "No se pudo leer la imagen completa: puede estar dañada o "
+                    "el medio de almacenamiento da errores de lectura.";
+            return false;
+        }
+        hash.update(buffer.data(), chunk);
+        done += chunk;
+
+        if (progress) {
+            const std::uint32_t percent = imageSize == 0
+                ? 100u : static_cast<std::uint32_t>(done * 100ULL / imageSize);
+            if (percent != lastPercent) {
+                progress(percent);
+                lastPercent = percent;
+            }
+        }
+    }
+
+    hexDigest = toHex(hash.finish());
+    return true;
+}
+
+bool verifyImageIntegrity(const fs::path& image, std::string& error,
+                          const std::function<void(std::uint32_t)>& progress)
+{
+    std::string digest;
+    if (!hashImage(image, digest, error, progress)) return false;
+    if (digest == kPikminUsaRev1Sha256) return true;
+
+    error = "La imagen no coincide con un volcado íntegro de Pikmin USA Rev. 1.\n"
+            "Esperado: " + std::string(kPikminUsaRev1Sha256) + "\n"
+            "Obtenido: " + digest + "\n\n"
+            "Lo más probable es que la copia se haya dañado al transferirla. "
+            "Vuelve a copiar el archivo desde el original y comprueba el hash "
+            "antes de instalar. Si estás seguro de que tu volcado es correcto y "
+            "solo difiere del de referencia, puedes omitir esta comprobación con "
+            "--skip-verify.";
+    return false;
+}
+
 bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
-                          std::string& error, ProgressCallback progress)
+                          std::string& error, ProgressCallback progress,
+                          bool verifyWrites)
 {
     std::ifstream input(image, std::ios::binary | std::ios::ate);
     if (!input) {
@@ -174,14 +310,14 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
             error = "La FST contiene un nombre de archivo inseguro o inválido.";
             return false;
         }
-        const fs::path outputPath = stack.back().path / name;
+        const fs::path outputPath = stack.back().path / discNameToPath(name);
         if (progress) progress(i, static_cast<std::uint32_t>(entries.size() - 1),
-                               outputPath.lexically_relative(destination).string());
+                               pathText(outputPath.lexically_relative(destination)));
 
         if (entries[i].directory) {
             fs::create_directories(outputPath, ec);
             if (ec) {
-                error = "No se pudo crear " + outputPath.string() + ": " + ec.message();
+                error = "No se pudo crear " + pathText(outputPath) + ": " + ec.message();
                 return false;
             }
             stack.push_back({ entries[i].sizeOrNext, outputPath });
@@ -197,12 +333,13 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
         fs::create_directories(outputPath.parent_path(), ec);
         std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
         if (!output) {
-            error = "No se pudo escribir " + outputPath.string() + ".";
+            error = "No se pudo escribir " + pathText(outputPath) + ".";
             return false;
         }
         input.clear();
         input.seekg(static_cast<std::streamoff>(fileOffset), std::ios::beg);
         std::uint64_t remaining = fileSize;
+        Sha256 sourceHash;
         while (remaining != 0) {
             const std::size_t chunk = static_cast<std::size_t>(
                 std::min<std::uint64_t>(remaining, buffer.size()));
@@ -211,12 +348,55 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
                 error = "Lectura incompleta al extraer " + name + ".";
                 return false;
             }
+            sourceHash.update(buffer.data(), chunk);
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
                 error = "Escritura incompleta al extraer " + name + ".";
                 return false;
             }
             remaining -= chunk;
+        }
+
+        // Cerrar de forma explícita: el destructor no informa de los errores de
+        // vaciado, y un disco lleno se manifiesta justo aquí.
+        output.close();
+        if (!output) {
+            error = "No se pudo terminar de escribir " + name
+                  + ": comprueba el espacio libre en el destino.";
+            return false;
+        }
+
+        // Releer lo escrito y comparar con lo que salió de la imagen. Detecta
+        // daños del medio de destino, que producen archivos del tamaño correcto
+        // con contenido incorrecto y hacen fallar al juego mucho más tarde.
+        if (verifyWrites) {
+            std::ifstream written(outputPath, std::ios::binary);
+            if (!written) {
+                error = "No se pudo releer " + name + " para verificarlo.";
+                return false;
+            }
+            Sha256 writtenHash;
+            std::uint64_t verified = 0;
+            while (verified < fileSize) {
+                const std::size_t chunk = static_cast<std::size_t>(
+                    std::min<std::uint64_t>(fileSize - verified, buffer.size()));
+                written.read(buffer.data(), static_cast<std::streamsize>(chunk));
+                if (written.gcount() != static_cast<std::streamsize>(chunk)) {
+                    error = "No se pudo releer " + name + " completo para verificarlo.";
+                    return false;
+                }
+                writtenHash.update(buffer.data(), chunk);
+                verified += chunk;
+            }
+            if (writtenHash.finish() != sourceHash.finish()) {
+                error = "El archivo " + name + " se escribió de forma incorrecta.\n\n"
+                        "Los datos del disco de destino no coinciden con los de la "
+                        "imagen. Suele indicar un problema del medio de "
+                        "almacenamiento (memoria USB defectuosa, disco con "
+                        "errores) o falta de espacio. Prueba a instalar en otra "
+                        "unidad.";
+                return false;
+            }
         }
     }
     return true;

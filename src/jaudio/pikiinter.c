@@ -1,3 +1,6 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/pikiinter.h"
 
 #include "jaudio/cmdqueue.h"
@@ -9,6 +12,9 @@
 #include "jaudio/piki_player.h"
 #include "jaudio/pikidemo.h"
 #include "jaudio/verysimple.h"
+#ifdef PIKI_PC_PORT
+#include "Dolphin/os.h"
+#endif
 #include <stddef.h>
 
 typedef struct SEvent_UnkC SEvent_UnkC;
@@ -196,6 +202,12 @@ void Jac_InitEventSystem(void)
 
 	do {
 		handle = Jam_GetTrackHandle(0x20000);
+#ifdef PIKI_PC_PORT
+		if (handle == NULL) {
+			PikiJAudioTick();
+			OSYieldThread();
+		}
+#endif
 	} while (handle == NULL);
 
 	for (i = 0; i < 16; i++) {

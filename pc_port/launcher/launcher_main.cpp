@@ -1,5 +1,6 @@
 #include "gamecube_image.h"
 #include "installer_ui.h"
+#include "launcher_platform.h"
 
 #include <cerrno>
 #include <algorithm>
@@ -10,13 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <fcntl.h>
 #include <iostream>
 #include <memory>
 #include <string>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -24,93 +21,29 @@ using pikmin::launcher::DiscIdentity;
 
 namespace {
 
-fs::path defaultDataRoot()
-{
-    if (const char* xdg = std::getenv("XDG_DATA_HOME")) return fs::path(xdg) / "pikmin-native";
-    if (const char* home = std::getenv("HOME")) return fs::path(home) / ".local/share/pikmin-native";
-    return fs::current_path() / "pikmin-native-data";
-}
+namespace platform = pikmin::launcher::platform;
 
-fs::path executablePath()
-{
-    if (const char* env = std::getenv("PIKMIN_EXECUTABLE_PATH")) {
-        return fs::path(env);
-    }
-    std::vector<char> path(4096);
-    const ssize_t count = readlink("/proc/self/exe", path.data(), path.size() - 1);
-    if (count <= 0) return {};
-    path[static_cast<std::size_t>(count)] = '\0';
-    return fs::path(path.data());
-}
+// Windows exige la extensión .exe; el resto de sistemas usan el nombre pelado.
+#ifdef _WIN32
+constexpr const char* kGameExecutable     = "nectar.exe";
+constexpr const char* kLauncherExecutable = "nectar-launcher.exe";
+#else
+constexpr const char* kGameExecutable     = "nectar";
+constexpr const char* kLauncherExecutable = "nectar-launcher";
+#endif
 
+
+// Reenvíos a la capa de plataforma. Las implementaciones concretas viven en
+// launcher_platform_posix.cpp y launcher_platform_win32.cpp.
+fs::path defaultDataRoot() { return platform::defaultDataRoot(); }
 fs::path executableDirectory()
 {
-    const fs::path path = executablePath();
+    const fs::path path = platform::executablePath();
     if (path.empty()) return fs::current_path();
     return path.parent_path();
 }
-
-bool commandExists(const char* command)
-{
-    const char* pathValue = std::getenv("PATH");
-    if (!pathValue) return false;
-    std::string paths(pathValue);
-    std::size_t start = 0;
-    while (start <= paths.size()) {
-        const std::size_t end = paths.find(':', start);
-        const fs::path candidate = fs::path(paths.substr(start, end - start)) / command;
-        if (access(candidate.c_str(), X_OK) == 0) return true;
-        if (end == std::string::npos) break;
-        start = end + 1;
-    }
-    return false;
-}
-
-std::string runDialog(const char* program, const std::vector<std::string>& args)
-{
-    int pipeFds[2];
-    if (pipe(pipeFds) != 0) return {};
-    const pid_t child = fork();
-    if (child == 0) {
-        dup2(pipeFds[1], STDOUT_FILENO);
-        // GTK/libadwaita diagnostics and unsupported cosmetic Zenity options
-        // belong to the dialog process. Do not mix them with the launcher's
-        // extraction progress or with the selected path read from stdout.
-        const int nullFd = open("/dev/null", O_WRONLY);
-        if (nullFd >= 0) {
-            dup2(nullFd, STDERR_FILENO);
-            close(nullFd);
-        }
-        close(pipeFds[0]); close(pipeFds[1]);
-        std::vector<char*> argv;
-        argv.push_back(const_cast<char*>(program));
-        for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
-        argv.push_back(nullptr);
-        execvp(program, argv.data());
-        _exit(127);
-    }
-    close(pipeFds[1]);
-    std::string result;
-    char buffer[1024];
-    ssize_t count;
-    while ((count = read(pipeFds[0], buffer, sizeof(buffer))) > 0) result.append(buffer, count);
-    close(pipeFds[0]);
-    int status = 0;
-    waitpid(child, &status, 0);
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return {};
-    return result;
-}
-
-bool hasGraphicalDialogs()
-{
-    return commandExists("zenity") || commandExists("kdialog");
-}
-
-bool stdinIsTerminal()
-{
-    return isatty(STDIN_FILENO) != 0;
-}
+bool hasGraphicalDialogs() { return platform::hasGraphicalDialogs(); }
+bool stdinIsTerminal() { return platform::stdinIsTerminal(); }
 
 std::string trim(const std::string& value)
 {
@@ -128,90 +61,10 @@ std::string promptLine(const std::string& prompt)
     return trim(line);
 }
 
-// When the launcher is started by double-clicking it in a file manager there
-// is no terminal to show errors on. Re-run itself inside a terminal emulator
-// so the text-mode installer and any error message become visible.
-bool respawnInTerminal()
-{
-    if (std::getenv("PIKMIN_LAUNCHER_TERMINAL")) return false;
-    const fs::path self = executablePath();
-    if (self.empty()) return false;
-    static const char* const terminals[] = {
-        "x-terminal-emulator", "gnome-terminal", "konsole",
-        "xfce4-terminal", "mate-terminal", "lxterminal", "xterm"
-    };
-    for (const char* terminal : terminals) {
-        if (!commandExists(terminal)) continue;
-        const pid_t child = fork();
-        if (child == 0) {
-            setenv("PIKMIN_LAUNCHER_TERMINAL", "1", 1);
-            execlp(terminal, terminal, "-e", self.c_str(),
-                   static_cast<char*>(nullptr));
-            _exit(127);
-        }
-        if (child > 0) {
-            int status = 0;
-            waitpid(child, &status, 0);
-            return true;
-        }
-    }
-    return false;
-}
+bool respawnInTerminal() { return platform::respawnInTerminal(); }
 
-void showMessage(const std::string& title, const std::string& message, bool error = false)
-{
-    if (commandExists("zenity")) {
-        runDialog("zenity", { error ? "--error" : "--info", "--title=" + title, "--text=" + message,
-                               "--width=480" });
-        return;
-    }
-    else if (commandExists("kdialog")) {
-        runDialog("kdialog", { error ? "--error" : "--msgbox", message, "--title", title });
-        return;
-    }
-    std::cerr << title << ": " << message << '\n';
-}
-
-fs::path askForInstallDirectory()
-{
-    if (commandExists("zenity")) {
-        std::string initial;
-        if (const char* home = std::getenv("HOME")) initial = fs::path(home).string() + "/";
-        const std::string selected = runDialog("zenity", {
-            "--file-selection", "--directory",
-            "--title=Pikmin Native - Selecciona la carpeta de instalación",
-            "--filename=" + initial
-        });
-        if (!selected.empty()) return selected;
-    } else if (commandExists("kdialog")) {
-        const std::string initial = std::getenv("HOME") ? std::getenv("HOME") : ".";
-        const std::string selected = runDialog("kdialog", {
-            "--getexistingdirectory", initial,
-            "--title", "Pikmin Native - Selecciona la carpeta de instalación"
-        });
-        if (!selected.empty()) return selected;
-    }
-    return {};
-}
-
-fs::path askForImage()
-{
-    if (commandExists("zenity")) {
-        const std::string selected = runDialog("zenity", {
-            "--file-selection", "--title=Pikmin Native - Selecciona tu disco",
-            "--file-filter=GameCube ISO/GCM | *.iso *.ISO *.gcm *.GCM",
-            "--file-filter=Todos los archivos | *"
-        });
-        if (!selected.empty()) return selected;
-    }
-    else if (commandExists("kdialog")) {
-        const std::string selected = runDialog("kdialog", {
-            "--getopenfilename", ".", "*.iso *.ISO *.gcm *.GCM|GameCube ISO/GCM"
-        });
-        if (!selected.empty()) return selected;
-    }
-    return {};
-}
+fs::path askForInstallDirectory() { return platform::askForInstallDirectory(); }
+fs::path askForImage() { return platform::askForImage(); }
 
 fs::path askForImageConsole()
 {
@@ -254,7 +107,7 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
     }
 
     const fs::path finalAssets = dataRoot / "assets";
-    const fs::path partialAssets = dataRoot / ("assets.partial." + std::to_string(getpid()));
+    const fs::path partialAssets = dataRoot / ("assets.partial." + std::to_string(platform::currentProcessId()));
     std::error_code ec;
     fs::create_directories(dataRoot, ec);
     if (ec) {
@@ -316,10 +169,49 @@ bool sameFile(const fs::path& lhs, const fs::path& rhs)
 bool installExecutables(const fs::path& sourceDirectory, const fs::path& installDirectory,
                         std::string& failure)
 {
-    const fs::path sourceGame = sourceDirectory / "pikmin";
-    const fs::path sourceLauncher = sourceDirectory / "pikmin-launcher";
-    const fs::path sourceGameReal = sourceDirectory / "pikmin.real";
-    const fs::path sourceLauncherReal = sourceDirectory / "pikmin-launcher.real";
+#ifdef _WIN32
+    // En Windows el paquete no lleva cargador ni envoltorios: junto a los .exe
+    // viajan las DLL (SDL2 y las del runtime), y basta con copiarlo todo.
+    std::error_code winEc;
+    fs::create_directories(installDirectory, winEc);
+    if (winEc) {
+        failure = "No se pudo crear la carpeta de instalación: " + winEc.message();
+        return false;
+    }
+    for (const char* name : { kGameExecutable, kLauncherExecutable }) {
+        const fs::path source = sourceDirectory / name;
+        if (!fs::is_regular_file(source)) {
+            failure = "El paquete está incompleto: falta " + std::string(name) + ".";
+            return false;
+        }
+        const fs::path destination = installDirectory / name;
+        if (sameFile(source, destination)) continue;
+        fs::copy_file(source, destination, fs::copy_options::overwrite_existing, winEc);
+        if (winEc) {
+            failure = "No se pudo instalar " + std::string(name) + ": " + winEc.message();
+            return false;
+        }
+    }
+    for (const auto& entry : fs::directory_iterator(sourceDirectory, winEc)) {
+        if (!entry.is_regular_file()) continue;
+        std::string extension = entry.path().extension().string();
+        for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (extension != ".dll") continue;
+        const fs::path destination = installDirectory / entry.path().filename();
+        if (sameFile(entry.path(), destination)) continue;
+        fs::copy_file(entry.path(), destination, fs::copy_options::overwrite_existing, winEc);
+        if (winEc) {
+            failure = "No se pudo copiar " + entry.path().filename().string() + ": " + winEc.message();
+            return false;
+        }
+    }
+    return true;
+#else
+    const fs::path sourceGame = sourceDirectory / kGameExecutable;
+    const fs::path sourceLauncher = sourceDirectory / kLauncherExecutable;
+    const fs::path sourceGameReal = sourceDirectory / (std::string(kGameExecutable) + ".real");
+    const fs::path sourceLauncherReal
+        = sourceDirectory / (std::string(kLauncherExecutable) + ".real");
     const fs::path sourceLib = sourceDirectory / "lib";
 
     const bool isStandalone = fs::is_regular_file(sourceGameReal)
@@ -327,7 +219,8 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             && fs::is_directory(sourceLib);
 
     if (!isStandalone && (!fs::is_regular_file(sourceGame) || !fs::is_regular_file(sourceLauncher))) {
-        failure = "El paquete está incompleto: pikmin y pikmin-launcher deben estar juntos.";
+        failure = "El paquete está incompleto: " + std::string(kGameExecutable) + " y "
+                + kLauncherExecutable + " deben estar juntos.";
         return false;
     }
 
@@ -402,14 +295,14 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             fs::perm_options::add, permEc);
             return !permEc;
         };
-        if (!makeWrapper("pikmin") || !makeWrapper("pikmin-launcher")) {
+        if (!makeWrapper(kGameExecutable) || !makeWrapper(kLauncherExecutable)) {
             failure = "No se pudieron crear los lanzadores.";
             return false;
         }
         return true;
     }
 
-    for (const char* name : { "pikmin", "pikmin-launcher" }) {
+    for (const char* name : { kGameExecutable, kLauncherExecutable }) {
         const fs::path source = sourceDirectory / name;
         const fs::path destination = installDirectory / name;
         if (!sameFile(source, destination)) {
@@ -428,17 +321,12 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
         }
     }
     return true;
+#endif
 }
 
 [[noreturn]] void launchGame(const fs::path& dataRoot, const fs::path& gameBinary)
 {
-    if (chdir(dataRoot.c_str()) != 0) {
-        std::cerr << "No se pudo entrar en " << dataRoot << ": " << std::strerror(errno) << '\n';
-        std::exit(1);
-    }
-    execl(gameBinary.c_str(), gameBinary.c_str(), static_cast<char*>(nullptr));
-    std::cerr << "No se pudo iniciar " << gameBinary << ": " << std::strerror(errno) << '\n';
-    std::exit(1);
+    platform::launchGame(dataRoot, gameBinary);
 }
 
 void usage(const char* argv0)
@@ -446,7 +334,8 @@ void usage(const char* argv0)
     std::cout << "Uso: " << argv0 << " [--rom ARCHIVO.iso] [--install-dir DIR] [--extract-only]\n"
               << "Sin argumentos abre el instalador gráfico (necesita zenity o kdialog);\n"
               << "desde una terminal sin ellos se usa el instalador en modo texto.\n"
-              << "La ROM debe proceder de una copia legítima de Pikmin USA Rev. 1.\n";
+              << "La ROM debe proceder de una copia legítima de Pikmin USA Rev. 1.\n"
+              << "--skip-verify omite la comprobación de integridad de la imagen.\n";
 }
 
 } // namespace
@@ -456,6 +345,7 @@ int main(int argc, char** argv)
     fs::path image;
     fs::path dataRoot;
     bool extractOnly = false;
+    bool skipVerify = false;
     bool directoryWasSpecified = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -465,16 +355,18 @@ int main(int argc, char** argv)
             directoryWasSpecified = true;
         }
         else if (arg == "--extract-only") extractOnly = true;
+        else if (arg == "--skip-verify") skipVerify = true;
         else if (arg == "--help" || arg == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
     }
 
     const fs::path sourceDirectory = executableDirectory();
-    const bool hasStandaloneFiles = fs::is_regular_file(sourceDirectory / "pikmin.real")
-                                 && fs::is_regular_file(sourceDirectory / "pikmin-launcher.real")
-                                 && fs::is_directory(sourceDirectory / "lib");
+    const bool hasStandaloneFiles
+        = fs::is_regular_file(sourceDirectory / (std::string(kGameExecutable) + ".real"))
+       && fs::is_regular_file(sourceDirectory / (std::string(kLauncherExecutable) + ".real"))
+       && fs::is_directory(sourceDirectory / "lib");
     const bool installedBesideLauncher = assetsReady(sourceDirectory)
-                                      && (fs::is_regular_file(sourceDirectory / "pikmin") || hasStandaloneFiles);
+                                      && (fs::is_regular_file(sourceDirectory / kGameExecutable) || hasStandaloneFiles);
     const bool graphicalInstall = !directoryWasSpecified && !installedBesideLauncher;
     std::unique_ptr<pikmin::launcher::InstallerWindow> installerWindow;
     const auto reportError = [&installerWindow](const std::string& error) {
@@ -534,6 +426,26 @@ int main(int argc, char** argv)
             reportError(error);
             return 1;
         }
+        // Comprobar la imagen antes de extraer: evita instalar durante minutos
+        // desde una copia dañada y que el fallo aparezca mucho después, ya en
+        // el juego, como un error incomprensible.
+        if (!skipVerify) {
+            if (installerWindow) installerWindow->updateProgress(0, "Verificando la imagen...");
+            else std::cout << "Verificando la integridad de la imagen..." << std::flush;
+            std::string verifyError;
+            const auto verifyProgress = [&installerWindow](std::uint32_t percent) {
+                if (installerWindow) {
+                    installerWindow->updateProgress(percent, "Verificando la imagen...");
+                }
+            };
+            if (!pikmin::launcher::verifyImageIntegrity(image, verifyError, verifyProgress)) {
+                if (!installerWindow) std::cout << '\n';
+                reportError(verifyError);
+                return 1;
+            }
+            if (!installerWindow) std::cout << " correcta.\n";
+        }
+
         std::string failure;
         const auto progress = [&installerWindow](std::uint32_t percent, const std::string& path) {
             if (installerWindow) installerWindow->updateProgress(percent, path);
@@ -557,7 +469,7 @@ int main(int argc, char** argv)
     }
     if (extractOnly) return 0;
 
-    const fs::path gameBinary = dataRoot / "pikmin";
+    const fs::path gameBinary = dataRoot / kGameExecutable;
     if (!fs::is_regular_file(gameBinary)) {
         std::cerr << "No se encontró el ejecutable del juego junto al launcher: " << gameBinary << '\n';
         return 1;

@@ -116,6 +116,15 @@ struct Osc_ {
 	s16* releaseVecOffset; // _0C
 	f32 width;             // _10
 	f32 vertex;            // _14
+#ifdef PIKI_PC_PORT
+	/*
+	 * Bank envelopes are converted to native s16 arrays by the host BX
+	 * loader. Sequence commands, however, point directly into the original
+	 * big-endian sequence image. Keep that provenance with each pointer.
+	 */
+	u8 attackVecBigEndian;
+	u8 releaseVecBigEndian;
+#endif
 };
 
 /**

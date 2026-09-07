@@ -17,7 +17,7 @@ Inst_* Bank_InstChange(Bank_* bank, u32 index);
 Voice_* Bank_VoiceChange(Bank_* bank, u32 index);
 Perc_* Bank_PercChange(Bank_* bank, u32 index);
 int Bank_GetInstKeymap(Inst_* inst, u8 key);
-int Bank_GetInstVmap(Inst_* inst, u8 key, u8 velocity);
+Vmap_* Bank_GetInstVmap(Inst_* inst, u8 key, u8 velocity);
 Vmap_* Bank_GetPercVmap(Perc_* perc, u8 keyIdx, u8 vel);
 int Bank_GetVoiceMap(Voice_* voice, u16 id);
 f32 Bank_SenseToOfs(Sense_* sensor, u8 inputValue);

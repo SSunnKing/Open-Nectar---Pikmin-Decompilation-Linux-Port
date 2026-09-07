@@ -40,6 +40,10 @@ ARCallback ARRegisterDMACallback(ARCallback callback);
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
 u32 ARInit(u32* stack_index_addr, u32 num_entries);
 u32 ARGetBaseAddress();
+#if defined(PIKI_PC_PORT)
+void* ARGetStorageAddress();
+u32 ARGetSize();
+#endif
 
 ////////////////////////////////////////////
 u16 __ARGetInterruptStatus();

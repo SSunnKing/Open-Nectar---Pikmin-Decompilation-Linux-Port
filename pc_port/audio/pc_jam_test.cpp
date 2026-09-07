@@ -308,6 +308,11 @@ int main(int argc, char** argv) {
                 ++orimaCommands;
                 size_t commandNotes = 0;
                 size_t commandResolved = 0;
+                // Igual que en el barrido de eventos: un programa >= 0xF0 se
+                // cuenta como "resuelto" pero pc_audio_play_note lo SILENCIA,
+                // asi que hay que separarlo para saber que se oye de verdad.
+                size_t commandOsc = 0;
+                size_t commandUnresolved = 0;
                 for (int tick = 0; tick < 1024 && player.result() == PCJamResult::Ok; ++tick) {
                     player.tick(events, 4096);
                     for (const PCJamEvent& event : events) {
@@ -315,16 +320,23 @@ int main(int argc, char** argv) {
                         ++orimaNotes;
                         ++commandNotes;
                         PCInstrumentSelection selection;
-                if (event.program >= 0xF0
-                    || instruments.select(event.bank, event.program, event.key,
-                                          event.velocity, selection)) {
+                        if (event.program >= 0xF0) ++commandOsc;
+                        if (event.program >= 0xF0
+                            || instruments.select(event.bank, event.program, event.key,
+                                                  event.velocity, selection)) {
                             ++orimaResolved;
                             ++commandResolved;
+                        } else {
+                            ++commandUnresolved;
                         }
                     }
                 }
-                std::printf("  player port=%u command=%u notes=%zu resolved=%zu\n",
-                            port, command, commandNotes, commandResolved);
+                const char* verdict = commandNotes == 0 ? "  <== MUDO (sin notas)"
+                    : commandNotes == commandOsc ? "  <== MUDO (solo osciladores)"
+                    : commandNotes == commandUnresolved ? "  <== MUDO (no resuelve)"
+                    : "";
+                std::printf("  player port=%u command=%2u notes=%zu resolved=%zu osc=%zu%s\n",
+                            port, command, commandNotes, commandResolved, commandOsc, verdict);
             }
         }
         std::printf("Olimar/Pikmin command coverage: commands=%zu notes=%zu resolved=%zu\n",
@@ -394,6 +406,13 @@ int main(int argc, char** argv) {
         u8 firstUnsupportedEventOpcode = 0;
         size_t eventResults[8] = {};
         size_t totalZeroActions = 0;
+        // Una accion es MUDA en juego si no produce notas, o si todas las que
+        // produce son inaudibles: programa >= 0xF0 (oscilador del DSP, que
+        // pc_audio_play_note silencia salvo con PIKMIN_OSC=1) o instrumento que
+        // no resuelve. El recuento "resolved" de arriba trata los osciladores
+        // como validos, asi que por si solo no dice que se oye.
+        struct SilentAction { u32 type; size_t action; u16 command; const char* reason; };
+        std::vector<SilentAction> silent;
         for (u32 type = 1; type <= 7; ++type) {
             size_t typeNotes = 0;
             size_t typeResolved = 0;
@@ -417,6 +436,8 @@ int main(int argc, char** argv) {
                 if (!player.writeChildPort(3, 0, static_cast<u16>(0x1000 | command))) continue;
                 ++eventCommands;
                 size_t actionNotes = 0;
+                size_t actionOsc = 0;
+                size_t actionUnresolved = 0;
                 for (int tick = 0; tick < 1024 && player.result() == PCJamResult::Ok; ++tick) {
                     // Sustained actions (carrying, digging) loop until the game
                     // stops them; leaving them running is the sweep's artefact,
@@ -429,12 +450,13 @@ int main(int argc, char** argv) {
                         ++typeNotes;
                         ++actionNotes;
                         PCInstrumentSelection selection;
+                        if (event.program >= 0xF0) ++actionOsc;
                         if (event.program >= 0xF0
                             || instruments.select(event.bank, event.program, event.key,
                                                   event.velocity, selection)) {
                             ++eventResolved;
                             ++typeResolved;
-                        } else if (!printedUnresolved) {
+                        } else if (++actionUnresolved, !printedUnresolved) {
                             std::printf("  first unresolved event type=%u action=%zu command=%03X bank=%u program=%u key=%u\n",
                                         type, action, command, event.bank,
                                         event.program, event.key);
@@ -443,6 +465,15 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (actionNotes == 0) ++zeroNoteActions;
+                if (actionNotes == 0) {
+                    silent.push_back({ type, action, command, "sin notas" });
+                } else if (actionNotes == actionOsc) {
+                    silent.push_back({ type, action, command, "solo osciladores" });
+                } else if (actionNotes == actionUnresolved) {
+                    silent.push_back({ type, action, command, "instrumento no resuelve" });
+                } else if (actionOsc + actionUnresolved > 0) {
+                    silent.push_back({ type, action, command, "parcial" });
+                }
                 if ((type == 6 && action == 28)
                     || (type == 4 && (action == 6 || action == 7)))
                     std::printf("  targeted event type=%u action=%zu command=%03X notes=%zu\n",
@@ -469,6 +500,12 @@ int main(int argc, char** argv) {
             std::printf("  event type=%u notes=%zu resolved=%zu zero-actions=%zu\n",
                         type, typeNotes, typeResolved, zeroNoteActions);
         }
+        std::printf("--- acciones de evento sin sonido audible ---\n");
+        for (const SilentAction& a : silent) {
+            std::printf("  tipo %u accion %-3zu comando %03X  %s\n",
+                        a.type, a.action, a.command, a.reason);
+        }
+        std::printf("--- total mudas o parciales: %zu de %zu ---\n", silent.size(), eventCommands);
         std::printf("positional event coverage: commands=%zu notes=%zu resolved=%zu failures=%zu firstOpcode=%02X\n",
                     eventCommands, eventNotes, eventResolved, eventFailures,
                     firstEventFailureOpcode);

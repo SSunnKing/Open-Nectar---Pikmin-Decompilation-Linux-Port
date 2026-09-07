@@ -4,6 +4,7 @@
 #include "jaudio/dvdthread.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define JV_DIR_NAME_LENGTH (16)
@@ -14,8 +15,80 @@ static char JV_ARC_NAME[JV_ARC_NAME_LENGTH][32];
 
 #define JV_ARC_LENGTH ()
 static Barc* JV_ARC[16]; // Pointers to BARC metadata (*.hed). In practice, just the first element points to pikiseq.hed.
+static u8* JV_ARC_WORK[16];
 
 static u32 JV_CURRENT_ARCS = 0; // TODO: type unknown, init unclear
+
+#ifdef PIKI_PC_PORT
+s32 DVDT_LoadtoDRAMHost(u32 owner, immut char* name, void* dst, u32 src, u32 length, u32* status,
+                        Jac_DVDCallback callback);
+
+static u16 JV_ReadBE16(const void* address)
+{
+	const u8* bytes = static_cast<const u8*>(address);
+	return (static_cast<u16>(bytes[0]) << 8) | bytes[1];
+}
+
+static u32 JV_ReadBE32(const void* address)
+{
+	const u8* bytes = static_cast<const u8*>(address);
+	return (static_cast<u32>(bytes[0]) << 24) | (static_cast<u32>(bytes[1]) << 16)
+	     | (static_cast<u32>(bytes[2]) << 8) | bytes[3];
+}
+#endif
+
+static u32 JV_SequenceCount(const Barc* archive)
+{
+#ifdef PIKI_PC_PORT
+	return JV_ReadBE32(reinterpret_cast<const u8*>(archive) + 0x0c);
+#else
+	return archive->meta.seqCount;
+#endif
+}
+
+static BarcEntry* JV_Entry(Barc* archive, u32 index)
+{
+	return reinterpret_cast<BarcEntry*>(reinterpret_cast<u8*>(archive) + 0x20 + index * 0x20);
+}
+
+static u16 JV_DummyIndex(const BarcEntry* entry)
+{
+#ifdef PIKI_PC_PORT
+	return JV_ReadBE16(reinterpret_cast<const u8*>(entry) + 0x0e);
+#else
+	return entry->isDummy;
+#endif
+}
+
+static u32 JV_EntryOffset(const BarcEntry* entry)
+{
+#ifdef PIKI_PC_PORT
+	return JV_ReadBE32(reinterpret_cast<const u8*>(entry) + 0x18);
+#else
+	return entry->offset;
+#endif
+}
+
+static u32 JV_EntrySize(const BarcEntry* entry)
+{
+#ifdef PIKI_PC_PORT
+	return JV_ReadBE32(reinterpret_cast<const u8*>(entry) + 0x1c);
+#else
+	return entry->size;
+#endif
+}
+
+static void JV_ArchivePath(char* path, size_t pathSize, u32 archiveIndex)
+{
+#ifdef PIKI_PC_PORT
+	const char* archiveName = reinterpret_cast<const char*>(JV_ARC[archiveIndex]) + 0x10;
+	snprintf(path, pathSize, "%s/%.*s", JV_DIR_NAME[archiveIndex], 16, archiveName);
+#else
+	strcpy(path, JV_DIR_NAME[archiveIndex]);
+	strcat(path, "/");
+	strcat(path, JV_ARC[archiveIndex]->meta.arcName);
+#endif
+}
 
 /**
  * @TODO: Documentation
@@ -33,6 +106,9 @@ BOOL JV_InitHeader_M(immut char* fileName, u8* barcData, u8* archiveWork)
 {
 	STACK_PAD_VAR(1);
 	immut char** REF_fileName = &fileName;
+	if (JV_CURRENT_ARCS >= ARRAY_SIZE(JV_ARC)) {
+		return FALSE;
+	}
 	if (!barcData) {
 		// if no barc data, read from disk
 		u32 fileSize = DVDT_CheckFile(fileName);
@@ -62,13 +138,32 @@ BOOL JV_InitHeader_M(immut char* fileName, u8* barcData, u8* archiveWork)
 	if (dirSeparatorIndex == 0) {
 		strcpy(JV_DIR_NAME[JV_CURRENT_ARCS], "/");
 	} else {
+#ifdef PIKI_PC_PORT
+		const size_t copyLength
+		    = dirSeparatorIndex < sizeof(JV_DIR_NAME[JV_CURRENT_ARCS]) - 1
+		        ? dirSeparatorIndex
+		        : sizeof(JV_DIR_NAME[JV_CURRENT_ARCS]) - 1;
+		memcpy(JV_DIR_NAME[JV_CURRENT_ARCS], fileName, copyLength);
+		JV_DIR_NAME[JV_CURRENT_ARCS][copyLength] = '\0';
+#else
 		strncpy(JV_DIR_NAME[JV_CURRENT_ARCS], fileName, dirSeparatorIndex);
+#endif
 	}
 
+#ifdef PIKI_PC_PORT
+	snprintf(JV_ARC_NAME[JV_CURRENT_ARCS], sizeof(JV_ARC_NAME[JV_CURRENT_ARCS]), "%s",
+	         &fileName[dirSeparatorIndex + 1]);
+#else
 	strcpy(JV_ARC_NAME[JV_CURRENT_ARCS], &fileName[dirSeparatorIndex + 1]);
+#endif
 
-	JV_ARC[JV_CURRENT_ARCS]           = (Barc*)barcData;
+	JV_ARC[JV_CURRENT_ARCS] = (Barc*)barcData;
+#ifdef PIKI_PC_PORT
+	/* Keep runtime state beside the immutable big-endian BARC image. */
+	JV_ARC_WORK[JV_CURRENT_ARCS] = archiveWork;
+#else
 	JV_ARC[JV_CURRENT_ARCS]->meta._04 = (u32)archiveWork;
+#endif
 
 	JV_CURRENT_ARCS++;
 	return TRUE;
@@ -141,17 +236,25 @@ BarcEntry* JV_GetRealHandle(u32 handle)
 	if (!archiveHeader) {
 		return NULL;
 	}
-	if (seqIdx >= archiveHeader->meta.seqCount) {
+	const u32 sequenceCount = JV_SequenceCount(archiveHeader);
+	if (seqIdx >= sequenceCount) {
 		return NULL;
 	}
 
-	BarcEntry* entry = (&archiveHeader[seqIdx].entry) + 1; // skip header i guess?
-	while (entry->isDummy != 0xFFFF) {
+	BarcEntry* entry = JV_Entry(archiveHeader, seqIdx);
+	for (u32 hops = 0; hops <= sequenceCount; ++hops) {
+		const u16 dummyIndex = JV_DummyIndex(entry);
+		if (dummyIndex == 0xffff) {
+			return entry;
+		}
+		if (dummyIndex >= sequenceCount) {
+			return NULL;
+		}
 		// skip through any dummy tracks until we hit a real one (isDummy == 0xFFFF for real tracks)
-		entry = (&archiveHeader[entry->isDummy].entry) + 1;
+		entry = JV_Entry(archiveHeader, dummyIndex);
 	}
 
-	return entry;
+	return NULL;
 }
 
 /**
@@ -164,7 +267,7 @@ u32 JV_CheckSize(u32 handle)
 	entry = JV_GetRealHandle(handle);
 	if (!entry)
 		return 0;
-	return entry->size;
+	return JV_EntrySize(entry);
 }
 
 /**
@@ -192,18 +295,26 @@ u32 JV_LoadFile(u32 handle, u8* dst, u32 offset, u32 length)
 	u32 archiveIndex = handle >> 16;
 	loadStatus      = 0;
 
-	sourceOffset = JV_GetRealHandle(handle)->offset;
+	BarcEntry* entry = JV_GetRealHandle(handle);
+	if (entry == NULL || archiveIndex >= JV_CURRENT_ARCS) {
+		return 0;
+	}
+	sourceOffset = JV_EntryOffset(entry);
 	sourceOffset += offset;
 	u32* REF_src = &sourceOffset;
 
-	strcpy(path, JV_DIR_NAME[archiveIndex]);
-	strcat(path, "/");
-	strcat(path, JV_ARC[archiveIndex]->meta.arcName);
+	JV_ArchivePath(path, sizeof(path), archiveIndex);
+#ifdef PIKI_PC_PORT
+	if (DVDT_LoadtoDRAMHost(0, path, dst, sourceOffset, length, const_cast<u32*>(&loadStatus), NULL) < 0) {
+		return 0;
+	}
+#else
 	DVDT_LoadtoDRAM(0, path, (u32)dst, sourceOffset, length, (u32*)&loadStatus, NULL);
 
 	while (loadStatus == 0) {
 		;
 	}
+#endif
 
 	STACK_PAD_VAR(2);
 	return loadStatus;
@@ -225,15 +336,23 @@ u32 JV_LoadFile_Async2(u32 handle, u8* dst, u32 offset, u32 length, void (*callb
 	STACK_PAD_VAR(3);
 
 	archiveIndex = handle >> 16;
-	sourceOffset = JV_GetRealHandle(handle)->offset;
+	BarcEntry* entry = JV_GetRealHandle(handle);
+	if (entry == NULL || archiveIndex >= JV_CURRENT_ARCS) {
+		return 0;
+	}
+	sourceOffset = JV_EntryOffset(entry);
 	sourceOffset += offset;
 	u32* REF_src = &sourceOffset;
 
-	strcpy(path, JV_DIR_NAME[archiveIndex]);
-	strcat(path, "/");
-	strcat(path, JV_ARC[archiveIndex]->meta.arcName);
+	JV_ArchivePath(path, sizeof(path), archiveIndex);
 
+#ifdef PIKI_PC_PORT
+	if (DVDT_LoadtoDRAMHost(owner, path, dst, sourceOffset, length, NULL, callback) < 0) {
+		return 0;
+	}
+#else
 	DVDT_LoadtoDRAM(owner, path, (u32)dst, sourceOffset, length, NULL, callback);
+#endif
 	return length;
 }
 

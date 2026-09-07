@@ -4,6 +4,9 @@
 #include "jaudio/bankread.h"
 #include "jaudio/dvdthread.h"
 #include "jaudio/waveread.h"
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_bank_host.h"
+#endif
 
 typedef struct BXHeader BXHeader;
 typedef struct AddrSize AddrSize;
@@ -43,12 +46,29 @@ void Bank_Setup(immut char* filename)
 	u32 pointerCount;
 
 	Bank_Init();
-
-	mem = (u8*)OSAlloc2(DVDT_CheckFile(filename));
-	DVDT_LoadFile(filename, mem);
-	header = (BXHeader*)mem;
-
 	Wavegroup_Init();
+
+	const s32 fileSize = DVDT_CheckFile(filename);
+	if (fileSize <= 0) {
+		return;
+	}
+	mem = (u8*)OSAlloc2(fileSize);
+	if (mem == NULL) {
+		return;
+	}
+	DVDT_LoadFile(filename, mem);
+
+#if defined(PIKI_PC_PORT)
+	/*
+	 * The disk image is big-endian and all of its pointers are 32-bit offsets.
+	 * Expanding it in place (the console PTconvert path below) corrupts the
+	 * adjacent fields on a 64-bit host, so build native runtime graphs instead.
+	 */
+	JAudioHost_LoadBX(mem, (u32)fileSize);
+	return;
+#endif
+
+	header = (BXHeader*)mem;
 
 	pointerCount = header->wsysPointerCount;
 	pairs        = (AddrSize*)(mem + header->wsysPointerOffset);

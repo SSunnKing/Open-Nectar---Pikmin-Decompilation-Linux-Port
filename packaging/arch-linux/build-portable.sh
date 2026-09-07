@@ -51,10 +51,12 @@ fi
 
 cmake -E make_directory "${build_dir}"
 printf '%s\n' '[1/4] Configurando CMake...'
+# IPO no compromete la portabilidad: no cambia el juego de instrucciones, que
+# es lo que controla NATIVE_OPTIMIZE. Apagarla sólo restaba rendimiento.
 if ! cmake -S "${repo_root}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DPIKMIN_NATIVE_OPTIMIZE=OFF \
-    -DPIKMIN_ENABLE_IPO=OFF \
+    -DPIKMIN_ENABLE_IPO=ON \
     -DCMAKE_INSTALL_PREFIX=/usr >"${configure_log}" 2>&1; then
     printf 'Falló la configuración. Últimas líneas de %s:\n' "${configure_log}" >&2
     tail -n 80 "${configure_log}" >&2
@@ -85,13 +87,13 @@ DESTDIR="${stage_dir}" cmake --install "${build_dir}" --strip
 
 cmake -E remove_directory "${output_dir}"
 cmake -E make_directory "${output_dir}"
-cmake -E copy "${stage_dir}/usr/bin/pikmin" "${output_dir}/pikmin"
-cmake -E copy "${stage_dir}/usr/bin/pikmin-launcher" "${output_dir}/pikmin-launcher"
+cmake -E copy "${stage_dir}/usr/bin/nectar" "${output_dir}/nectar"
+cmake -E copy "${stage_dir}/usr/bin/nectar-launcher" "${output_dir}/nectar-launcher"
 cmake -E copy "${script_dir}/PORTABLE_README.txt" "${output_dir}/LEEME.txt"
 
-chmod 755 "${output_dir}/pikmin" "${output_dir}/pikmin-launcher"
+chmod 755 "${output_dir}/nectar" "${output_dir}/nectar-launcher"
 
-"${output_dir}/pikmin-launcher" --help >/dev/null
+"${output_dir}/nectar-launcher" --help >/dev/null
 
 printf '\nPaquete portable creado correctamente:\n  %s\n' "${output_dir}"
-printf '%s\n' 'Copia esa carpeta completa al equipo Arch y ejecuta pikmin-launcher.'
+printf '%s\n' 'Copia esa carpeta completa al equipo Arch y ejecuta nectar-launcher.'

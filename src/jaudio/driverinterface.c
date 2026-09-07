@@ -783,7 +783,7 @@ static int CommonCallbackLogicalChannel(dspch_* ch, u32 eventType)
 
 		ch->logicalChan   = 0;
 		ch->prio          = 0;
-		ch->logicalChanCb = NULL;
+		ch->logicalChanCb = nullptr;
 		return DSPCHAN_CALLBACK_STOP;
 	}
 
@@ -917,7 +917,7 @@ BOOL StopLogicalChannel(jc_* jc)
 	jc->dspChannel->callbackTimer = 0;
 	DSP_PlayStop(jc->dspChannel->buffer_idx);
 	DSP_FlushChannel(jc->dspChannel->buffer_idx);
-	DeAllocDSPchannel(jc->dspChannel, (u32)jc);
+	DeAllocDSPchannel(jc->dspChannel, reinterpret_cast<uintptr_t>(jc));
 	jc->dspChannel = NULL;
 	return TRUE;
 }
@@ -1069,7 +1069,7 @@ void __Entry_WaitChannel(u8 a)
 	while (cur_waits != 0) {
 		jc = waitp[cur_top];
 		if (jc) {
-			ch = AllocDSPchannel(0, (u32)jc);
+			ch = AllocDSPchannel(0, reinterpret_cast<uintptr_t>(jc));
 			if (ch == NULL) {
 				break;
 			}

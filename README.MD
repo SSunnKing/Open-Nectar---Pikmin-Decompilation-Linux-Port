@@ -8,6 +8,11 @@ El proyecto está en desarrollo. Se puede compilar y recorrer buena parte del
 juego, pero todavía existen diferencias gráficas, de audio y rendimiento.
 Consulta [ROADMAP.md](ROADMAP.md) antes de informar o abordar un fallo.
 
+Si el juego va más lento de lo que debería, empieza por
+[RENDIMIENTO.md](RENDIMIENTO.md) y por `tools/check-rendimiento.sh`: las
+causas conocidas son de configuración de la build y no dan ningún síntoma
+visible.
+
 ## Requisitos legales y del juego
 
 Este repositorio y sus binarios **no contienen ROMs ni recursos de Nintendo**.

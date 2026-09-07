@@ -48,10 +48,17 @@ if ((clean)); then
 fi
 
 printf '%s\n' '[1/5] Configurando y compilando (x86-64 genérico)...'
+# NATIVE_OPTIMIZE apagado: -march=native produciría instrucciones que la
+# máquina de destino puede no tener, y es justo lo que verify-portable.sh
+# comprueba. IPO es otra cosa: la optimización entre unidades de traducción no
+# cambia el juego de instrucciones, sólo permite alinear a través de archivos.
+# Dejarla apagada sólo hacía el paquete más lento en los equipos modestos que
+# es su razón de existir.
 cmake -S "${repo_root}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DPIKMIN_NATIVE_OPTIMIZE=OFF \
-    -DPIKMIN_ENABLE_IPO=OFF \
+    -DPIKMIN_ENABLE_IPO=ON \
+    -DPIKMIN_NATIVE_JAUDIO=ON \
     -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build "${build_dir}" -j"$(nproc)"
 
@@ -67,8 +74,8 @@ rm -rf "${stage_dir}" "${output_dir}"
 DESTDIR="${stage_dir}" cmake --install "${build_dir}" --strip >/dev/null
 
 mkdir -p "${output_dir}/lib"
-cp "${stage_dir}/usr/bin/pikmin" "${output_dir}/pikmin.real"
-cp "${stage_dir}/usr/bin/pikmin-launcher" "${output_dir}/pikmin-launcher.real"
+cp "${stage_dir}/usr/bin/nectar" "${output_dir}/nectar.real"
+cp "${stage_dir}/usr/bin/nectar-launcher" "${output_dir}/nectar-launcher.real"
 cp "${script_dir}/LEEME.txt" "${output_dir}/LEEME.txt"
 
 printf '%s\n' '[4/5] Copiando librerías del sistema al paquete...'
@@ -81,7 +88,7 @@ collect_libs() {
 
 copied=0
 declare -a source_libs=()
-for binary in "${output_dir}/pikmin.real" "${output_dir}/pikmin-launcher.real"; do
+for binary in "${output_dir}/nectar.real" "${output_dir}/nectar-launcher.real"; do
     while IFS= read -r lib; do
         name="$(basename "$lib")"
         if [[ "$name" =~ $blocklist ]]; then
@@ -147,30 +154,30 @@ self=$0
 case "$self" in */*) ;; *) self=$(command -v -- "$self" 2>/dev/null || printf '%s' "$self");; esac
 if command -v readlink >/dev/null 2>&1; then self=$(readlink -f "$self"); fi
 here=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
-export PIKMIN_EXECUTABLE_PATH="$here/WRAPPER_REAL"
+export NECTAR_EXECUTABLE_PATH="$here/WRAPPER_REAL"
 exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/WRAPPER_REAL" "$@"
 WRAPPER_EOF
     sed -i "s|WRAPPER_REAL|${real}|g" "$wrapper"
     chmod 755 "$wrapper"
 }
-make_wrapper "${output_dir}/pikmin" "pikmin.real"
-make_wrapper "${output_dir}/pikmin-launcher" "pikmin-launcher.real"
+make_wrapper "${output_dir}/nectar" "nectar.real"
+make_wrapper "${output_dir}/nectar-launcher" "nectar-launcher.real"
 
 printf '%s\n' '[5/5] Verificando el paquete...'
 # La ISA debe seguir siendo x86-64 base. El techo de glibc no aplica:
 # el paquete lleva su propia glibc.
-PIKMIN_SKIP_LIBC_CHECK=1 "${script_dir}/verify-portable.sh" \
-    "${output_dir}/pikmin.real" "${output_dir}/pikmin-launcher.real"
+    PIKMIN_SKIP_LIBC_CHECK=1 "${script_dir}/verify-portable.sh" \
+    "${output_dir}/nectar.real" "${output_dir}/nectar-launcher.real"
 
 # Ninguna dependencia debe quedar sin resolver usando las librerías incluidas.
-if LD_LIBRARY_PATH="${output_dir}/lib" ldd "${output_dir}/pikmin.real" | grep -q 'not found'; then
+if LD_LIBRARY_PATH="${output_dir}/lib" ldd "${output_dir}/nectar.real" | grep -q 'not found'; then
     printf 'Faltan librerías en el paquete:\n' >&2
-    LD_LIBRARY_PATH="${output_dir}/lib" ldd "${output_dir}/pikmin.real" | grep 'not found' >&2
+    LD_LIBRARY_PATH="${output_dir}/lib" ldd "${output_dir}/nectar.real" | grep 'not found' >&2
     exit 1
 fi
 
 # El lanzador debe ejecutarse a través del wrapper.
-"${output_dir}/pikmin-launcher" --help >/dev/null
+"${output_dir}/nectar-launcher" --help >/dev/null
 
 printf '\nPaquete autocontenido creado en:\n  %s\n' "${output_dir}"
 printf '%s\n' 'Cópialo a cualquier Linux x86-64 y ejecuta ./pikmin-launcher.'

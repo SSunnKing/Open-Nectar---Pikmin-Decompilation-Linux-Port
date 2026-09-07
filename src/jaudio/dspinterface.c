@@ -10,6 +10,10 @@
 #include "limits.h"
 #include <stddef.h>
 
+#ifdef PIKI_PC_PORT
+#include "port/jaudio_host.h"
+#endif
+
 #define CH_BUF_LENGTH (64)
 #define FX_BUF_LENGTH (4)
 
@@ -177,6 +181,12 @@ void DSP_SetBusConnect(u8 idx, u8 mixer, u8 busConnect)
 		0x0000, 0x0D00, 0x0D60, 0x0DC0, 0x0E20, 0x0E80, 0x0EE0, 0x0CA0, 0x0F40, 0x0FA0, 0x0B00, 0x09A0,
 	};
 
+#ifdef PIKI_PC_PORT
+	if (idx >= CH_BUF_LENGTH || mixer >= ARRAY_SIZE(CH_BUF[0].mixChannels)
+	    || busConnect >= ARRAY_SIZE(connect_table)) {
+		return;
+	}
+#endif
 	DSPchannel_* buf         = &CH_BUF[idx];
 	DSPMixerChannel* mixChan = &buf->mixChannels[mixer];
 	mixChan->id              = connect_table[busConnect];
@@ -418,12 +428,37 @@ static u32 DSPRES_FILTER[] ATTRIBUTE_ALIGN(32) = {
 	0x00000000, 0x00000000, 0x1fffc001,
 };
 
+#ifdef PIKI_PC_PORT
+extern "C" const u32* PikiJAudioGetResampleTableWords(size_t* wordCount)
+{
+	if (wordCount != NULL) {
+		*wordCount = ARRAY_SIZE(DSPRES_FILTER);
+	}
+	return DSPRES_FILTER;
+}
+
+extern "C" const u32* PikiJAudioGetAfcTableWords(size_t* wordCount)
+{
+	if (wordCount != NULL) {
+		*wordCount = ARRAY_SIZE(DSPADPCM_FILTER);
+	}
+	return DSPADPCM_FILTER;
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
 void DSP_SetupBuffer()
 {
+#ifdef PIKI_PC_PORT
+	/*
+	 * The host renderer consumes CH_BUF and the coefficient tables directly;
+	 * the console DsetupTable ABI carries all five pointers in u32 values.
+	 */
+#else
 	DsetupTable((u32)CH_BUF_LENGTH, (u32)CH_BUF, (u32)DSPRES_FILTER, (u32)DSPADPCM_FILTER, (u32)FX_BUF);
+#endif
 }
 
 /**

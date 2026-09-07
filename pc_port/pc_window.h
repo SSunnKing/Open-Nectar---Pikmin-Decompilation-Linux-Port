@@ -84,6 +84,9 @@ SDL_GameController* pc_window_get_controller(void);
 void pc_window_set_display_mode(int mode);        // PC_WINDOW_FULLSCREEN_*
 int  pc_window_get_display_mode(void);
 void pc_window_set_window_size(int w, int h);     // windowed resolution
+// Index of the display the window currently sits on, for enumerating that
+// monitor's video modes. Returns 0 when there is no window yet.
+int  pc_window_get_display_index(void);
 void pc_window_set_refresh_rate(double hz);       // post-pacing target refresh
 double pc_window_get_refresh_rate(void);
 void pc_window_set_vsync_enabled(bool enabled);   // whether presentation pacing is active

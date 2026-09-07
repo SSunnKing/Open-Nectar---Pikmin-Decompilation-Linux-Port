@@ -1,3 +1,6 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/dvdthread.h"
 #include "Dolphin/ar.h"
 #include "Dolphin/os.h"
@@ -6,10 +9,11 @@
 #include <stddef.h>
 #include <string.h>
 
+
 static char audio_root_path[32] = "";
 
 static OSMessageQueue mq;
-static s32 msgbuf[0x80];
+static OSMessage msgbuf[0x80];
 static u8 CALLSTACK[0x8000];
 
 static u32 mq_init;
@@ -114,6 +118,17 @@ s32 DVDT_AddTaskHigh(TaskCallback, void*, size_t)
  */
 s32 DVDT_AddTask(TaskCallback callback, void* stack, size_t len)
 {
+#ifdef PIKI_PC_PORT
+	/*
+	 * Host DVD reads are already backed by Aurora's worker.  Running this
+	 * small JAudio task layer inline avoids both the fixed 32-bit call-stack
+	 * copies and a scheduler-lock deadlock during Jac_Start.
+	 */
+	if (callback != NULL) {
+		callback(stack);
+	}
+	return 1;
+#else
 	if (mq_init == FALSE) {
 		return 0;
 	}
@@ -126,6 +141,7 @@ s32 DVDT_AddTask(TaskCallback callback, void* stack, size_t len)
 	OSSendMessage(&mq, (OSMessage)cstack, OS_MESSAGE_BLOCK);
 
 	return 1;
+#endif
 }
 
 /**
@@ -194,6 +210,67 @@ static void __DoFinish(DVDCall* call, u32 status)
 	}
 }
 
+#ifdef PIKI_PC_PORT
+/*
+ * Pointer-width-safe host entry point used by JAudio loaders which own a real
+ * CPU destination.  The original DVDCall wire structure only has a u32 dst.
+ */
+s32 DVDT_LoadtoDRAMHost(u32 owner, immut char* name, void* dst, u32 src, u32 length, u32* status,
+                        Jac_DVDCallback callback)
+{
+	char path[64];
+	DVDFileInfo finfo;
+
+	if (status != NULL) {
+		*status = 0;
+	}
+	DVDT_ExtendPath(path, name);
+	if (dst == NULL || !Jac_DVDOpen(path, &finfo) || finfo.length == 0 || src > finfo.length) {
+		if (status != NULL) {
+			*status = static_cast<u32>(-1);
+		}
+		if (callback != NULL) {
+			callback(static_cast<u32>(-1));
+		}
+		return -1;
+	}
+
+	if (length == 0) {
+		length = finfo.length - src;
+	}
+	if (length > finfo.length - src) {
+		DVDClose(&finfo);
+		if (status != NULL) {
+			*status = static_cast<u32>(-1);
+		}
+		if (callback != NULL) {
+			callback(static_cast<u32>(-1));
+		}
+		return -1;
+	}
+
+	DCInvalidateRange(dst, length);
+	const s32 readStatus = DVDReadMutex(&finfo, dst, static_cast<s32>(length), static_cast<s32>(src), path);
+	DVDClose(&finfo);
+	if (readStatus < 0) {
+		if (status != NULL) {
+			*status = static_cast<u32>(-1);
+		}
+		if (callback != NULL) {
+			callback(static_cast<u32>(-1));
+		}
+		return -1;
+	}
+	if (status != NULL) {
+		*status = static_cast<u32>(readStatus);
+	}
+	if (callback != NULL) {
+		callback(owner);
+	}
+	return 0;
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -235,8 +312,9 @@ s32 DVDT_LoadtoDRAM_Main(void* dvdCall)
 #endif
 	}
 
-	DCInvalidateRange((void*)call->dst, call->length);
-	readStatus |= DVDReadMutex(&finfo, (void*)call->dst, call->length, call->src, call->fileName);
+	void* destination = reinterpret_cast<void*>(static_cast<uintptr_t>(call->dst));
+	DCInvalidateRange(destination, call->length);
+	readStatus |= DVDReadMutex(&finfo, destination, call->length, call->src, call->fileName);
 	DVDClose(&finfo);
 	__DoFinish(call, readStatus);
 	return 0;
@@ -380,6 +458,36 @@ s32 DVDT_LoadtoARAM_Main(void* dvdCall)
 	STACK_PAD_VAR(2);
 
 	DVDCall* call        = (DVDCall*)dvdCall;
+#ifdef PIKI_PC_PORT
+	DVDFileInfo finfo;
+	if (!Jac_DVDOpen(call->fileName, &finfo) || finfo.length == 0 || call->src > finfo.length) {
+		__DoError(call, 0);
+		return -1;
+	}
+
+	if (call->length == 0) {
+		call->length = finfo.length - call->src;
+	}
+	u8* aramStorage  = static_cast<u8*>(ARGetStorageAddress());
+	const u32 aramSize = ARGetSize();
+	if (call->length > finfo.length - call->src || aramStorage == NULL || call->dst > aramSize
+	    || call->length > aramSize - call->dst) {
+		DVDClose(&finfo);
+		__DoError(call, 1);
+		return -1;
+	}
+
+	const s32 readStatus
+	    = DVDReadMutex(&finfo, aramStorage + call->dst, static_cast<s32>(call->length),
+	                   static_cast<s32>(call->src), call->fileName);
+	DVDClose(&finfo);
+	if (readStatus < 0) {
+		__DoError(call, 1);
+		return -1;
+	}
+	__DoFinish(call, static_cast<u32>(readStatus));
+	return 0;
+#else
 	static int arq_index = 0;
 	static DVDFileInfo finfo;
 	static ARQRequest req[4];
@@ -411,7 +519,12 @@ s32 DVDT_LoadtoARAM_Main(void* dvdCall)
 		u8* buf     = ADVD_BUFFER[buffer_load];
 		buffer_load = (buffer_load + 1) % buffers;
 		while (buffer_full == buffers)
+#ifdef PIKI_PC_PORT
+			PikiJAudioTick();
+			OSYieldThread();
+#else
 			;
+#endif
 
 		if (call->length < buffersize) {
 			readSize = ALIGN_NEXT(call->length, 32);
@@ -437,13 +550,19 @@ s32 DVDT_LoadtoARAM_Main(void* dvdCall)
 	DVDClose(&finfo);
 
 	while (buffer_full != 0)
+#ifdef PIKI_PC_PORT
+		PikiJAudioTick();
+		OSYieldThread();
+#else
 		;
+#endif
 
 	OSGetTick();
 
 	__DoFinish(call, len);
 
 	return 0;
+#endif
 }
 
 /**
@@ -548,6 +667,13 @@ s32 DVDT_CheckFile(immut char* file)
  */
 s32 DVDT_LoadFile(immut char* file, u8* dst)
 {
+#ifdef PIKI_PC_PORT
+	u32 status = 0;
+	if (DVDT_LoadtoDRAMHost(0, file, dst, 0, 0, &status, NULL) < 0) {
+		return 0;
+	}
+	return static_cast<s32>(status);
+#else
 	vu32 status           = 0;
 	immut char** REF_file = &file;
 	STACK_PAD_VAR(2);
@@ -560,6 +686,7 @@ s32 DVDT_LoadFile(immut char* file, u8* dst)
 	}
 
 	return status;
+#endif
 }
 
 /**

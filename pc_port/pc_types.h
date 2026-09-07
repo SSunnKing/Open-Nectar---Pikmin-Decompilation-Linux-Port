@@ -164,4 +164,35 @@ static unsigned int __pc_rlwinm(unsigned int value, unsigned int shift, unsigned
 #define TRAP_UNIMPLEMENTED \
     do { fprintf(stderr, "Unimplemented function: %s at %s:%d\n", __func__, __FILE__, __LINE__); } while(0)
 
+/* ──────────────────────────────────────────────
+ *  Single-precision C math under std:: (MinGW)
+ *
+ *  The decompiled code calls std::sqrtf, std::fmodf and friends in 25 files.
+ *  Those names come from <math.h> and the C++ standard never required them in
+ *  namespace std; glibc's headers add them anyway, MinGW's do not. Rather than
+ *  edit decompiled sources, pull the global versions into std here. This
+ *  header is force-included into every translation unit, so it lands before
+ *  any use.
+ * ────────────────────────────────────────────── */
+#if defined(__cplusplus) && defined(_WIN32)
+#include <cmath>
+namespace std {
+using ::acosf;
+using ::asinf;
+using ::atan2f;
+using ::atanf;
+using ::ceilf;
+using ::cosf;
+using ::expf;
+using ::fabsf;
+using ::floorf;
+using ::fmodf;
+using ::logf;
+using ::powf;
+using ::sinf;
+using ::sqrtf;
+using ::tanf;
+} // namespace std
+#endif
+
 #endif /* _PC_TYPES_H */

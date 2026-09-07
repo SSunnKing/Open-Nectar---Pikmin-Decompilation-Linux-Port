@@ -1,5 +1,6 @@
 #include "jaudio/memory.h"
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * @TODO: Documentation
@@ -166,12 +167,23 @@ void Nas_HeapInit(ALHeap* heap, u8* basePtr, s32 heapSize)
 	REF_heap    = &heap;
 	heap->count = 0;
 	if (!basePtr) {
+		heap->base    = NULL;
 		heap->length  = 0;
 		heap->current = NULL;
 		heap->last    = NULL;
 	} else {
-		length        = heapSize - ((u32)basePtr & 0x1F);
-		heap->base    = (u8*)ALIGN_NEXT((u32)basePtr, 32);
+		const uintptr_t baseAddress    = reinterpret_cast<uintptr_t>(basePtr);
+		const uintptr_t alignedAddress = ALIGN_NEXT(baseAddress, static_cast<uintptr_t>(32));
+		const uintptr_t alignment      = alignedAddress - baseAddress;
+		if (heapSize <= 0 || alignment >= static_cast<uintptr_t>(heapSize)) {
+			heap->base    = NULL;
+			heap->length  = 0;
+			heap->current = NULL;
+			heap->last    = NULL;
+			return;
+		}
+		length        = heapSize - static_cast<int>(alignment);
+		heap->base    = reinterpret_cast<u8*>(alignedAddress);
 		heap->current = heap->base;
 		heap->length  = length;
 		heap->last    = NULL;

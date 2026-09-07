@@ -46,7 +46,7 @@ void Jal_AddCmdQueue(CmdQueue* cmdQueue, seqp_* track, u8 portId)
 	restoreInterrupts = OSDisableInterrupts();
 	cmdQueue->track   = track;
 	cmdQueue->mPortId = portId;
-	Jac_InitMessageQueue(&cmdQueue->msgQueue, &cmdQueue->message, 16);
+	Jac_InitMessageQueue(&cmdQueue->msgQueue, cmdQueue->messages, ARRAY_SIZE(cmdQueue->messages));
 	Add_Queue(cmdQueue);
 	OSRestoreInterrupts(restoreInterrupts);
 }
@@ -105,7 +105,7 @@ static s32 Jal_FrameWork(void* callbackArg)
 {
 	CmdQueue* curr;
 	OSMessage message;
-	s32 result;
+	s32 result = 0;
 
 	for (curr = queue_list; curr; curr = curr->next) {
 #if defined(VERSION_GPIJ01_01) || defined(VERSION_G98P01_PIKIDEMO) || defined(VERSION_DPIJ01_PIKIDEMO)
@@ -120,11 +120,7 @@ static s32 Jal_FrameWork(void* callbackArg)
 		}
 	}
 
-	// I think they accidentally wrote UB or something, idk man.  This is effectively what the function does,
-	// but explicitly doing so makes the compiler shuffle the value in and out of a more permanent register.
-#if defined(BUGFIX)
 	return result;
-#endif
 }
 
 /**

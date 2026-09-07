@@ -99,9 +99,15 @@ s32 NoteON(seqp_* track, s32 channel, s32 flag1, s32 flag2, s32 playFlag)
 		} else if (flag >= 4) {
 			flag -= 4;
 			s16* prev = track->oscillators[i].releaseVecOffset;
+#ifdef PIKI_PC_PORT
+			const u8 prevBigEndian = track->oscillators[i].releaseVecBigEndian;
+#endif
 			if (sound->mOscillators[flag]) {
 				track->oscillators[i]                  = *sound->mOscillators[flag];
 				track->oscillators[i].releaseVecOffset = prev;
+#ifdef PIKI_PC_PORT
+				track->oscillators[i].releaseVecBigEndian = prevBigEndian;
+#endif
 			}
 		}
 

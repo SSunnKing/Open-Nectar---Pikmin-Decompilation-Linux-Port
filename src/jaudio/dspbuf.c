@@ -1,4 +1,9 @@
 #include "jaudio/dspbuf.h"
+#if PIKI_PC_PORT
+#include "audio/pc_dsp_host.h"
+// dspinterface.c sizes CH_BUF; keep the two in step.
+#define DSP_CHANNEL_COUNT 64
+#endif
 #include "Dolphin/os.h"
 #include "jaudio/aictrl.h"
 #include "jaudio/audiothread.h"
@@ -126,6 +131,15 @@ void UpdateDSP()
 	DSP_InvalChannelAll();
 	DspPlayerCallback();
 	UpdateDSPchannelAll();
+#if PIKI_PC_PORT
+	// On the console the DSP filled this buffer asynchronously once the voice
+	// parameter blocks were updated. There is no DSP here, so the host renderer
+	// fills it now, in the engine's own planar layout.
+	if (dsp_buf[write_buffer] != NULL) {
+		pc_dsp_host_render_frame_planar(GetDspHandle(0), DSP_CHANNEL_COUNT,
+		                                dsp_buf[write_buffer], JAC_FRAMESAMPLES);
+	}
+#endif
 	DSPReleaseHalt();
 	PlayerCallback();
 	Probe_Finish(3);

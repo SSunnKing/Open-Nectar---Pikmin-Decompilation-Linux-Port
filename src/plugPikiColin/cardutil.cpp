@@ -716,7 +716,19 @@ void CardUtilFormat(s32 chan)
  */
 bool CardUtilIsCardBusy()
 {
+#if defined(PIKI_PC_PORT)
+	// `mChannel` lo publica el hilo de tarjeta y lo consultan bucles de espera
+	// activa del hilo principal. Leerlo como un `s32` normal es una carrera de
+	// datos: con LTO el compilador ve que el cuerpo de esos bucles no tiene
+	// efectos observables, saca la carga fuera y emite un salto a sí mismo.
+	// `MemoryCard::waitPolling()` se colgaba así al guardar la partida — la
+	// escritura terminaba en el hilo trabajador, pero el juego ya no salía del
+	// bucle. La carga atómica adquiere obliga a releer memoria cada vuelta y
+	// empareja con la liberación del mutex que hace la escritura.
+	return __atomic_load_n(&CardControl.mChannel, __ATOMIC_ACQUIRE) != -1;
+#else
 	return CardControl.mChannel != -1;
+#endif
 }
 
 /**

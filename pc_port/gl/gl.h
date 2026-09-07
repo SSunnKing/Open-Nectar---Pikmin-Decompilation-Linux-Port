@@ -5,7 +5,6 @@
 #ifndef _PC_PORT_GL_H
 #define _PC_PORT_GL_H
 
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "pc_opengl.h"
 
 #endif /* _PC_PORT_GL_H */

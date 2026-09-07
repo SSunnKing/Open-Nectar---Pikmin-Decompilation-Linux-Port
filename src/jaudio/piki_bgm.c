@@ -1,3 +1,6 @@
+#if defined(PIKI_PC_PORT)
+#include "port/jaudio_host.h"
+#endif
 #include "jaudio/piki_bgm.h"
 
 #include "Dolphin/os.h"
@@ -40,7 +43,7 @@ static int last_crossmode;
 static u32 call_counter;
 static int bgm_semaphore;
 
-static u8* buffer[2]       = { NULL, NULL };
+static u8* buffer[2]       = { nullptr, nullptr };
 static int buffer_mus[2]   = { -1, -1 };
 static int fadeouttime     = 30;
 static f32 game_bgm_volume = 1.0f;
@@ -236,7 +239,7 @@ void Jac_PlayBgm(u32 trackIndex, u32 bgmID)
 {
 	STACK_PAD_VAR(4);
 	u32* REF_b = &bgmID;
-	u32 seqState;
+	u8* seqState;
 	seqp_* track;
 	Jac_SetProcessStatus(8);
 	if (bgm[trackIndex].isActive) {
@@ -247,8 +250,8 @@ void Jac_PlayBgm(u32 trackIndex, u32 bgmID)
 	if (bgmID < 2) {
 		bgmID = BGM_Dummy2;
 	}
-	seqState = (u32)Jaf_CheckSeq(bgmID);
-	if (seqState == 0) {
+	seqState = Jaf_CheckSeq(bgmID);
+	if (seqState == NULL) {
 		int* bufferedSeqId = &buffer_mus[lastside];
 		if (*bufferedSeqId != -1) {
 			Jaf_ClearSeq(*bufferedSeqId);
@@ -257,9 +260,16 @@ void Jac_PlayBgm(u32 trackIndex, u32 bgmID)
 
 		buffer_mus[lastside] = bgmID;
 		lastside             = 1 - lastside;
-	} else if (seqState == 1) {
-		while (seqState == 1) {
-			seqState = (u32)Jaf_CheckSeq(bgmID);
+	} else if (seqState == reinterpret_cast<u8*>(1)) {
+		while (seqState == reinterpret_cast<u8*>(1)) {
+#ifdef PIKI_PC_PORT
+			/* The load completes on the jaudio DVD thread; under the
+			   cooperative scheduler this spin must hand it the baton or the
+			   whole process wedges (seen at the day-end save transition). */
+			PikiJAudioTick();
+			OSYieldThread();
+#endif
+			seqState = Jaf_CheckSeq(bgmID);
 		}
 	}
 

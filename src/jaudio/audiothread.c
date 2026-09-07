@@ -208,12 +208,12 @@ static void* audioproc(void*)
 
 		OSReceiveMessage(&audioproc_mq, &msg, OS_MESSAGE_BLOCK);
 		switch ((int)msg) {
-		case (int)AUDIOPROC_MESSAGE_UPDATE_DAC:
+		case AUDIOPROC_MESSAGE_UPDATE_DAC_ID:
 		{
 			Jac_UpdateDAC();
 			break;
 		}
-		case (int)AUDIOPROC_MESSAGE_DSP_SYNC:
+		case AUDIOPROC_MESSAGE_DSP_SYNC_ID:
 		{
 			if (intcount == 0) {
 				return;
@@ -231,12 +231,12 @@ static void* audioproc(void*)
 
 			break;
 		}
-		case (int)AUDIOPROC_MESSAGE_NEOS_SYNC:
+		case AUDIOPROC_MESSAGE_NEOS_SYNC_ID:
 		{
 			CpuFrameEnd();
 			break;
 		}
-		case (int)AUDIOPROC_MESSAGE_3:
+		case AUDIOPROC_MESSAGE_3_ID:
 		{
 			OSExitThread(NULL);
 			break;

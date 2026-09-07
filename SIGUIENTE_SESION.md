@@ -64,6 +64,42 @@ cmake --build build -j$(nproc)
 cd build && ctest        # 14/14 deben pasar
 ```
 
+## 2.bis Rendimiento recuperado (2026-09-04)
+
+> Guía completa y de consulta rápida: **`RENDIMIENTO.md`**, con
+> `tools/check-rendimiento.sh` como primer paso.
+
+
+Si el juego va más lento de lo que dicen las cifras de este documento, lo
+primero que hay que mirar no es el renderizador sino cómo se compiló:
+
+```sh
+grep -m1 CXX_FLAGS build/CMakeFiles/pikmin_legacy.dir/flags.make   # debe traer -O3
+grep '^CMAKE_BUILD_TYPE' build/CMakeCache.txt                       # no debe ser Debug
+```
+
+`pikmin_legacy` es todo el juego decompilado y ahí está el grueso del trabajo
+por frame. Cuando se separó del ejecutable para el port a Windows, se quedó sin
+`-O3`, sin `-march=native` y sin LTO, porque esas opciones estaban atadas a
+`pikmin_pc`. Arreglado en PERF-NATIVE-007: van a los dos objetivos. Además, un
+tipo de build vacío ya no equivale a `-O0`, y `Debug` avisa.
+
+Para reconfigurar:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build -j"$(nproc)"
+```
+
+**Siguiente candidato medible, no implementado.** `compute_batch_state_key()`
+recorre unos 600-900 bytes de estado por primitiva GX, es decir del orden de
+20 MB de hash por frame pesado. Cachear la clave tras un contador de época que
+incrementen los setters de estado la dejaría en una comparación, pero un setter
+olvidado da corrupción dependiente del contenido, que es exactamente el modo de
+fallo que costó cinco hipótesis en PERF-NATIVE-003. No hacerlo a ciegas: medir
+antes con `PIKMIN_TICK_STATS=1` sobre la build ya arreglada, y si compensa,
+implementarlo con un modo de verificación que recalcule y compare.
+
 ## 3. Lo que ya está medido (no repetir)
 
 Instrumentación propia, activada con `PIKMIN_TICK_STATS=1`. Vive en

@@ -1,5 +1,6 @@
 #include "jaudio/ja_calc.h"
 
+#include "jaudio/ja_calc.h"
 #include <math.h>
 
 #define SINTABLE_LENGTH (257)
@@ -10,7 +11,7 @@ static f32 SINTABLE[SINTABLE_LENGTH];
  */
 f32 sqrtf2(f32 x)
 {
-	return sqrtf(x);
+	return std::sqrtf(x);
 }
 
 /**
