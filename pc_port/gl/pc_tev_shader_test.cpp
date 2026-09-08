@@ -258,6 +258,47 @@ void test_uniform_names_are_a_subset_of_the_ubershader()
 	check(checked >= 6, "the sample configuration declares several uniforms");
 }
 
+
+// The projection is the GameCube one, not OpenGL's: C_MTXPerspective puts the
+// far plane at ndc 0 rather than +1, so only half the depth range is used.
+// Reconstructing view distance with the usual OpenGL formula is not slightly
+// wrong here, it is useless -- across a 1..15000 view it reports about two
+// units at the far plane, so nothing ever reaches the fog. That bug shipped
+// once already; this pins the correct form down.
+void test_fog()
+{
+	PcTevShaderKey key = modulate_key();
+
+	key.fog = 0;
+	const std::string plain = pc_tev_build_fragment_source(key);
+	check(!contains(plain, "uFogParams"), "no fog means no fog uniform");
+	check(!contains(plain, "fogAmount"), "no fog means no fog maths");
+
+	key.fog = 1;
+	const std::string fogged = pc_tev_build_fragment_source(key);
+	check(contains(fogged, "uniform vec4 uFogParams;"), "fog declares its parameters");
+	check(contains(fogged, "uniform vec4 uFogColour;"), "fog declares its colour");
+
+	// The denominator is the whole difference between the two conventions.
+	check(contains(fogged, "fogNear - fogNdc * (fogFar - fogNear)"),
+	      "fog linearises with the GameCube depth range");
+	check(!contains(fogged, "fogFar + fogNear - fogNdc"),
+	      "fog does not use the OpenGL depth range");
+
+	// Colour only. Fogging alpha would make a transparent surface solid as it
+	// receded, which is not what the hardware did.
+	check(contains(fogged, "prev.rgb = mix(prev.rgb, uFogColour.rgb, fogAmount);"),
+	      "fog affects colour and leaves alpha alone");
+
+	// Fog is a property of the draw, so two draws that differ only in it must
+	// not share a program.
+	PcTevShaderKey a = modulate_key();
+	PcTevShaderKey b = modulate_key();
+	b.fog = 1;
+	check(a != b, "fog is part of the shader key");
+	check(pc_tev_hash_key(a) != pc_tev_hash_key(b), "fog changes the key hash");
+}
+
 } // namespace
 
 int main()
@@ -274,6 +315,7 @@ int main()
 	test_stage_count_is_honoured();
 	test_distinct_configurations_differ();
 	test_output_registers_are_independent();
+	test_fog();
 
 	if (gFailures != 0) {
 		printf("pc_tev_shader_test: %d failure(s)\n", gFailures);

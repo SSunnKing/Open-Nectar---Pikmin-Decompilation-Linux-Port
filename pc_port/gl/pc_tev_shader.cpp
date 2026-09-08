@@ -412,14 +412,28 @@ std::string pc_tev_build_fragment_source(const PcTevShaderKey& key)
 		//
 		// uFogParams is (start, end, near, far). gl_FragCoord.z is the window
 		// depth, which is not linear, so it is turned back into a distance
-		// along the view axis before being measured against start and end;
-		// interpolating the window value instead would put the fog wall in the
-		// wrong place, bunched up close to the camera.
+		// along the view axis before being measured against start and end.
+		//
+		// The reconstruction is NOT the usual OpenGL one, because the
+		// projection is not an OpenGL projection. C_MTXPerspective builds the
+		// GameCube form,
+		//     m[2][2] = -n/(f-n)   m[2][3] = -fn/(f-n)   m[3][2] = -1
+		// which puts the near plane at ndc -1 and the far plane at ndc 0,
+		// where OpenGL would put it at +1. Only half the depth range is used.
+		// Inverting that matrix gives
+		//     distance = n*f / (n - ndc*(f - n))
+		// which checks out at both ends: ndc -1 yields n, ndc 0 yields f.
+		//
+		// Using the OpenGL formula here is not subtly wrong, it is useless:
+		// with a 1..15000 view it reports about two units at the far plane, so
+		// the whole world measures as touching the camera and no fragment ever
+		// reaches the fog. That is what this looked like before -- fog that was
+		// switched on, fed correct values, and invisible.
 		out += "\tfloat fogNdc = gl_FragCoord.z * 2.0 - 1.0;\n";
 		out += "\tfloat fogNear = uFogParams.z;\n";
 		out += "\tfloat fogFar = uFogParams.w;\n";
-		out += "\tfloat fogDenom = fogFar + fogNear - fogNdc * (fogFar - fogNear);\n";
-		out += "\tfloat fogZ = (abs(fogDenom) < 1e-6) ? fogFar : (2.0 * fogNear * fogFar) / fogDenom;\n";
+		out += "\tfloat fogDenom = fogNear - fogNdc * (fogFar - fogNear);\n";
+		out += "\tfloat fogZ = (abs(fogDenom) < 1e-6) ? fogFar : (fogNear * fogFar) / fogDenom;\n";
 		out += "\tfloat fogSpan = uFogParams.y - uFogParams.x;\n";
 		out += "\tfloat fogAmount = (abs(fogSpan) < 1e-6) ? 0.0 : clamp((fogZ - uFogParams.x) / fogSpan, 0.0, 1.0);\n";
 		out += "\tprev.rgb = mix(prev.rgb, uFogColour.rgb, fogAmount);\n";
