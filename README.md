@@ -27,8 +27,8 @@ Grab the package for your system from [Releases](../../releases).
 ### Linux
 
 ```sh
-tar -xzf nectar-portable-en.tar.gz
-cd nectar-portable
+tar -xzf nectar-linux.tar.gz
+cd nectar-linux
 ```
 
 Install only the OpenGL dependencies:

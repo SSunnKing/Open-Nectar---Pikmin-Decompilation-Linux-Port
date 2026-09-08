@@ -34,8 +34,8 @@ The ROM is not copied or modified during installation.
 Use the .tar.gz. A ZIP loses execute permissions and the package
 would fail before starting.
 
-  tar -xzf nectar-portable.tar.gz
-  cd nectar-portable
+  tar -xzf nectar-linux.tar.gz
+  cd nectar-linux
 
 With tar.gz no chmod is needed. If you received it in ZIP format,
 restore permissions with:

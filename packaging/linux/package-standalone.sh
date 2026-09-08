@@ -5,7 +5,7 @@
 # packaging/linux/out/pikmin-native-linux — sin Docker ni herramientas
 # externas:
 #
-#   pikmin-native-linux/
+#   nectar-linux/
 #     pikmin            <- script lanzador (sh)
 #     pikmin-launcher   <- script lanzador (sh)
 #     pikmin.real           binario real
@@ -24,7 +24,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 build_dir="${repo_root}/build-linux-standalone"
-output_dir="${script_dir}/out/pikmin-native-linux"
+output_dir="${script_dir}/out/nectar-linux"
 stage_dir="${build_dir}/stage"
 
 clean=0

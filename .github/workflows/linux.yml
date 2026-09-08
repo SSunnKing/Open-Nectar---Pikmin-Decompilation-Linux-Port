@@ -24,8 +24,8 @@ jobs:
       - name: Upload standalone package
         uses: actions/upload-artifact@v4
         with:
-          name: pikmin-native-linux
-          path: packaging/linux/out/pikmin-native-linux
+          name: nectar-linux
+          path: packaging/linux/out/nectar-linux
 
   smoke-clean-distro:
     # Reproduce lo que verá otro equipo: una distro limpia donde SOLO se
@@ -37,15 +37,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: pikmin-native-linux
+          name: nectar-linux
       - name: Install only the documented requirement (OpenGL driver)
         run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0
       - name: Standalone package runs on clean Debian 12
         run: |
-          cd pikmin-native-linux
-          chmod +x pikmin pikmin-launcher
-          ./pikmin-launcher --help
-          if LD_LIBRARY_PATH=lib ldd pikmin.real | grep 'not found'; then
+          cd nectar-linux
+          chmod +x nectar nectar-launcher
+          ./nectar-launcher --help
+          if LD_LIBRARY_PATH=lib ldd nectar.real | grep 'not found'; then
             echo 'Unresolved dependencies in the standalone package'
             exit 1
           fi
