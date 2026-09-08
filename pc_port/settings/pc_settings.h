@@ -54,6 +54,23 @@ int pc_settings_get_piki_limit(void);
 /// Minutes of play per in-game day. 10 is the original.
 int pc_settings_get_day_minutes(void);
 
+/* New-game prompt, shown by the file-select section when a run is created.
+   The choice belongs to the save file, so it is asked once, here, rather than
+   read from the port's configuration while playing. */
+#define PC_NEWGAME_PENDING    (-1)
+#define PC_NEWGAME_CANCELLED  (0)
+#define PC_NEWGAME_NORMAL     (1)
+#define PC_NEWGAME_PERMADEATH (2)
+
+/* Draws the permadeath mark over one file slot. Coordinates are in the
+   640x480 space the game's BLO screens use. */
+void pc_permadeath_draw_slot_badge(int vx, int vy, int vw);
+
+void pc_newgame_prompt_open(void);
+bool pc_newgame_prompt_active(void);
+void pc_newgame_prompt_draw(void);
+int  pc_newgame_prompt_result(void);
+
 /// Debug shortcuts F5 and F6, off by default.
 int pc_settings_get_debug_keys(void);
 

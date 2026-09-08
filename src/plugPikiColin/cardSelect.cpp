@@ -14,6 +14,10 @@
 #include "jaudio/piki_scene.h"
 #include "sysNew.h"
 #include "zen/ogFileChkSel.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_permadeath.h"
+#include "settings/pc_settings.h"
+#endif
 
 // Macros for packing and unpacking the section compression flag.
 // (this packing is a holdover from TitlesSection where there's also section transitions, not just OnePlayerSection).
@@ -80,9 +84,43 @@ struct CardSelectSetupSection : public Node {
 	}
 
 	/// Updates the screen each frame and alters the state.
+#if defined(PIKI_PC_PORT)
+	/// Commits the file the player picked. Split out of draw() so the new-game
+	/// prompt can run in between the pick and the commit.
+	void commitSelectedFile(CardQuickInfo& card, int fileSlot)
+	{
+		gameflow.mGamePrefs.mHasSaveGame        = true;
+		gameflow.mSaveGameCrc                   = card.mCrc;
+		gameflow.mGamePrefs.mMostRecentFileSlot = fileSlot;
+		gameflow.mGamePrefs.mMemCardSaveIndex   = card.mMemCardSaveIndex + 1;
+		gameflow.mWorldClock.mCurrentDay        = card.mCurrentDay;
+	}
+#endif
+
 	virtual void update() // _10 (weak)
 	{
 		mController->update();
+#if defined(PIKI_PC_PORT)
+		if (mAwaitingNewGameChoice) {
+			const int choice = pc_newgame_prompt_result();
+			if (choice == PC_NEWGAME_PENDING) {
+				return; // still deciding; nothing else may advance
+			}
+			mAwaitingNewGameChoice = false;
+			if (choice == PC_NEWGAME_CANCELLED) {
+				// Back to the file screen. It was closed to put the prompt up,
+				// so it is opened again rather than resumed -- nothing had been
+				// committed, so a fresh screen is the same screen.
+				memcardWindow = new zen::ogScrFileChkSelMgr();
+				memcardWindow->start(gameflow.mIsChallengeMode);
+				return;
+			}
+			pc_permadeath_set_pending(choice == PC_NEWGAME_PERMADEATH);
+			commitSelectedFile(mPendingCard, mPendingSlot);
+			mState = Exit;
+			gsys->setFade(0.0f);
+		}
+#endif
 		if (!memcardWindow && mState == Active) {
 			// fade out
 			mState = Exit;
@@ -116,6 +154,12 @@ struct CardSelectSetupSection : public Node {
 						if (gameflow.mPlayState.mSaveStatus == PlayState::Fresh) {
 							gameflow.mPlayState.Initialise();
 							gameflow.mPlayState.mSaveStatus = PlayState::ReadyToSave;
+#if defined(PIKI_PC_PORT)
+							// A fresh slot is a new run: adopt the rule the
+							// prompt just chose. Loading an existing file takes
+							// its rule from the file instead, in readCurrentGame.
+							pc_permadeath_begin_new_run();
+#endif
 						}
 
 						// next subsection will be map select
@@ -124,6 +168,12 @@ struct CardSelectSetupSection : public Node {
 					} else {
 						PRINT("NO SAVE GAMES!\n");
 						gameflow.mPlayState.Initialise();
+#if defined(PIKI_PC_PORT)
+						// A brand new file takes the rule chosen for it on the
+						// new-game prompt. Do it here rather than at the prompt
+						// so that backing out of the prompt leaves nothing set.
+						pc_permadeath_begin_new_run();
+#endif
 
 						// next subsection will be the new game intro cutscene
 						gameflow.mNextOnePlayerSectionID = ONEPLAYER_IntroGame;
@@ -178,6 +228,15 @@ struct CardSelectSetupSection : public Node {
 		Matrix4f mtx;
 		gfx.setOrthogonal(mtx.mMtx, AREA_FULL_SCREEN(gfx));
 
+#if defined(PIKI_PC_PORT)
+		// Before the early return: the file screen is closed while the prompt
+		// is up, so the prompt is all there is to draw.
+		if (mAwaitingNewGameChoice) {
+			pc_newgame_prompt_draw();
+			return;
+		}
+#endif
+
 		if (!memcardWindow) {
 			// nothing to draw
 			return;
@@ -206,6 +265,18 @@ struct CardSelectSetupSection : public Node {
 				gsys->setFade(0.0f);
 
 			} else {
+#if defined(PIKI_PC_PORT)
+				// An empty slot means a run is about to be created, and its
+				// rules belong to the file. Ask now, while nothing has been
+				// committed and backing out is still free.
+				if (card.mSaveStatus == PlayState::Fresh) {
+					mPendingCard           = card;
+					mPendingSlot           = returnCode - zen::ogScrFileChkSelMgr::FILECHKSEL_SlotOffset;
+					mAwaitingNewGameChoice = true;
+					pc_newgame_prompt_open();
+					return;
+				}
+#endif
 				// we selected a a save file (A, B, or C)
 				gameflow.mGamePrefs.mHasSaveGame        = true;
 				gameflow.mSaveGameCrc                   = card.mCrc;
@@ -234,6 +305,13 @@ struct CardSelectSetupSection : public Node {
 	u8 _28[0x30 - 0x28];     ///< _28, unused/unknown.
 	Controller* mController; ///< _30, active controller.
 	int mJacSetupCountdown;  ///< _34, frame countdown before setting up audio scene (CM only).
+#if defined(PIKI_PC_PORT)
+	// Port-only, and last: the offsets documented above are the original
+	// layout, and appending keeps them true.
+	bool mAwaitingNewGameChoice = false; ///< The new-game prompt is up.
+	CardQuickInfo mPendingCard;          ///< The slot it is deciding for.
+	int mPendingSlot = 0;                ///< That slot's file index (A/B/C).
+#endif
 };
 
 /**

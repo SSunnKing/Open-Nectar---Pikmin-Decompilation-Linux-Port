@@ -31,6 +31,7 @@ int pc_jaudio_integration_test();
 
 #include "pc_window.h"
 #include "settings/pc_settings.h"
+#include "settings/pc_settings_p2d.h"
 
 int main(int argc, char* argv[])
 {
@@ -73,6 +74,7 @@ int main(int argc, char* argv[])
     printf("[PC Port] Initializing game system...\n");
     fflush(stdout);
     gsys->Initialise();
+    pc_settings_p2d_init();
 
     printf("[PC Port] Creating node manager...\n");
     nodeMgr = new NodeMgr();

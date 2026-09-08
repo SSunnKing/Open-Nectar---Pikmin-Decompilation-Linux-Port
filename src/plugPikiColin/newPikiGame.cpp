@@ -43,6 +43,9 @@
 #include "zen/ogTutorial.h"
 #if defined(PIKI_PC_PORT)
 #include "timing/pc_render_phase.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_permadeath.h"
+#endif
 #endif
 
 //////////////////////////////////////////////////////
@@ -1132,6 +1135,37 @@ void RunningModeState::postRender(Graphics& gfx)
  * @param result Output update flag, to pass to other game flow machinery - see `ModeUpdateFlags` enum.
  * @return Pointer to active state for next frame, always `this` in practice, since `DayOverModeState` is queued to the parent section.
  */
+#if defined(PIKI_PC_PORT)
+/**
+ * @brief Erases the save the current run came from, for permadeath.
+ *
+ * Uses the game's own delete -- the one the file-select screen's delete option
+ * calls -- so a file lost to permadeath ends up in exactly the state a
+ * manually deleted one does, rather than in some state only this mod produces.
+ *
+ * getQuickInfos fills four entries indexed by in-game save slot, which is how
+ * the file screen maps a slot to its card file. A slot with nothing saved in
+ * it reads back as mMemCardSaveIndex -1, and there is then nothing to erase:
+ * a run that died before it was ever saved.
+ */
+static void pcErasePermadeathSave()
+{
+	CardQuickInfo infos[4];
+	gameflow.mMemoryCard.getQuickInfos(infos);
+	const u32 slot = gameflow.mPlayState.mSaveSlot;
+	if (slot >= 3) {
+		PRINT("permadeath: save slot %d is out of range, erased nothing\n", slot);
+		return;
+	}
+	if (infos[slot].mMemCardSaveIndex == -1) {
+		PRINT("permadeath: slot %d held no save, erased nothing\n", slot);
+		return;
+	}
+	PRINT("permadeath: erasing save slot %d\n", slot);
+	gameflow.mMemoryCard.delFile(infos[slot]);
+}
+#endif
+
 ModeState* MessageModeState::update(u32& result)
 {
 	if (flowCont.mGameEndFlag == GAMEEND_NaviDown) {
@@ -1144,7 +1178,14 @@ ModeState* MessageModeState::update(u32& result)
 			if (mStateTimer < 0.0f) {
 				mStateTimer                      = 2.0f;
 				mapMgr->mTargetDesaturationLevel = 1.0f;
-				if ((gameflow.mIsChallengeMode || gameflow.mWorldClock.mCurrentDay == MAX_DAYS) && gameoverWindow) {
+				bool showGameOver = gameflow.mIsChallengeMode || gameflow.mWorldClock.mCurrentDay == MAX_DAYS;
+#if defined(PIKI_PC_PORT)
+				// Permadeath makes losing Olimar the end of the run on any day,
+				// not just the last one, so the window that says so is due here
+				// whatever the date.
+				if (pc_permadeath_active()) showGameOver = true;
+#endif
+				if (showGameOver && gameoverWindow) {
 					gameoverWindow->start(zen::DrawGameOver::MODE_NaviDown, 40.0f);
 				}
 				mState = STATE_Desaturate;
@@ -1174,6 +1215,23 @@ ModeState* MessageModeState::update(u32& result)
 		{
 			mapMgr->mTargetFadeLevel         = 0.0f;
 			mapMgr->mTargetDesaturationLevel = 0.0f;
+#if defined(PIKI_PC_PORT)
+			// Permadeath: the run is over. Erase its save and go to the title
+			// screen, instead of the day-end results that would carry the file
+			// into tomorrow. GameExit is queued first so the section tears its
+			// heaps down the same way every other exit does.
+			if (pc_permadeath_active()) {
+				pcErasePermadeathSave();
+				// Back to file select rather than the day-end results that
+				// would carry this file into tomorrow. It is the same exit the
+				// pause menu's "return to last save" takes out of live
+				// gameplay, and it lands the player on the slot they were
+				// playing -- now empty, which is the point.
+				mParentSection->mPendingOnePlayerSectionID = ONEPLAYER_CardSelect;
+				gsys->setFade(0.0f);
+				return new QuittingGameModeState(mParentSection);
+			}
+#endif
 			PRINT("DOING FORCE RESULTS SCREEN !!!\n");
 			// set up day end state
 			DayOverModeState* state = new DayOverModeState(mParentSection, DayOverModeState::STATE_PhaseOne);

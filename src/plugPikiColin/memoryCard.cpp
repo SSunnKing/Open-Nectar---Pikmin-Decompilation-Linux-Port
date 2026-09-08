@@ -5,6 +5,9 @@
 #include "PlayerState.h"
 #include "Stream.h"
 #include "gameflow.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_permadeath.h"
+#endif
 #include "system.h"
 #include <string.h>
 
@@ -864,6 +867,11 @@ void MemoryCard::saveCurrentGame()
 
 	writeCurrentGame(stream, gameflow.mPlayState);
 	stream->padFileTo(0x8000, 8);
+#if defined(PIKI_PC_PORT)
+	// After the padding and before the checksum: the block lands in bytes the
+	// game zero-fills, and is covered by the sum computed just below.
+	pc_permadeath_write_block(*stream, pc_permadeath_active());
+#endif
 
 	u32 sum = calcChecksum(getGameFilePtr(gameflow.mGamePrefs.mSpareMemCardSaveIndex - 1), 0x7FF8);
 	stream->writeInt(gameflow.mGamePrefs.mMostRecentSaveIndex);
@@ -913,6 +921,12 @@ void MemoryCard::writeCurrentGame(RandomAccessStream* output, PlayState& playSta
  */
 void MemoryCard::readCurrentGame(RandomAccessStream* data)
 {
+#if defined(PIKI_PC_PORT)
+	// Before the play state, because reading the block seeks and restores the
+	// position, and doing it first means a corrupt tail cannot be mistaken for
+	// game data that has already been consumed.
+	pc_permadeath_read_block(*data);
+#endif
 	gameflow.mPlayState.read(*data);
 	if (gameflow.mPlayState.mSaveStatus == PlayState::ReadyToSave && playerState) {
 		PRINT("LOADING PLAYERSTATE->LOADCARD!!\n");
@@ -1105,6 +1119,11 @@ void MemoryCard::delFile(CardQuickInfo& target)
 	RamStream* stream = getGameFileStream(gameflow.mGamePrefs.mSpareMemCardSaveIndex - 1);
 	writeCurrentGame(stream, state);
 	stream->padFileTo(0x8000, 8);
+#if defined(PIKI_PC_PORT)
+	// A deleted slot is an empty slot: clear the block too, or the next file
+	// created here would inherit a rule nobody chose for it.
+	pc_permadeath_write_block(*stream, false);
+#endif
 	u32 sum = calcChecksum(getGameFilePtr(gameflow.mGamePrefs.mSpareMemCardSaveIndex - 1), 0x7FF8);
 	stream->writeInt(gameflow.mGamePrefs.mMostRecentSaveIndex);
 	stream->writeInt(sum);
@@ -1342,6 +1361,11 @@ void MemoryCard::getQuickInfos(CardQuickInfo* infos)
 	for (i = 0; i < 4; i++) {
 		infos[i].mMemCardSaveIndex = infos[i].mMostRecentSaveSlot = -1;
 	}
+#if defined(PIKI_PC_PORT)
+	// Re-derived below from whichever card file wins each slot, so start clean:
+	// a slot that has since been deleted must not keep yesterday's mark.
+	pc_permadeath_clear_slots();
+#endif
 	for (i = 0; i < 4; i++) {
 		u32 sum           = calcChecksum(TERNARY_BUILD_MATCHING(&cardData[i * 0x8000 + 0x6000], getGameFilePtr(i)), 0x7FF8);
 		RamStream* stream = getGameFileStream(i);
@@ -1374,6 +1398,12 @@ void MemoryCard::getQuickInfos(CardQuickInfo* infos)
 					info.mRedPikiCount       = state.mRedPikiCount;
 					info.mYellowPikiCount    = state.mYellowPikiCount;
 					info.mBluePikiCount      = state.mBluePikiCount;
+#if defined(PIKI_PC_PORT)
+					// Peek, never adopt: this runs over every file on the card
+					// to build the list, and the run in progress is not
+					// whichever one happens to be read last.
+					pc_permadeath_note_slot(slot, pc_permadeath_peek_block(*stream));
+#endif
 				}
 			} else {
 				gameflow.mGamePrefs.mSpareMemCardSaveIndex = i + 1;

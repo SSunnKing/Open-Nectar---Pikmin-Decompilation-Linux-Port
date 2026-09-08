@@ -12,6 +12,7 @@
  */
 
 #include "settings/pc_settings.h"
+#include "settings/pc_settings_p2d.h"
 #include "pc_menu_repeat.h"
 
 #include <SDL2/SDL.h>
@@ -636,7 +637,20 @@ void latchKeys() {
     gPrevKeys.assign(state, state + numKeys);
 }
 
+// Defined further down, with the rest of the prompt. Declared here because the
+// prompt has to read input from inside this function: keys are latched right
+// after it returns, so anything polling later in the frame sees no edges.
+void pcNewGamePromptInput();
+
 void pollMenuInput() {
+    if (pc_newgame_prompt_active()) {
+        // The prompt owns input while it is up, including F1: opening the
+        // settings menu over a modal that is deciding a save file's rules
+        // would leave two menus fighting for the same keys.
+        pcNewGamePromptInput();
+        return;
+    }
+
     // F1 toggles the menu.
     if (keyWentDown(SDL_SCANCODE_F1)) {
         if (sMenuOpen) {
@@ -1188,6 +1202,8 @@ void ensureFont() {
     if (sFontTried) return;
     sFontTried = true;
     if (gsys) {
+        const int previousHeap = gsys->getHeapNum();
+        gsys->setHeap(SYSHEAP_Sys);
         sFont = new Font;
         Texture* tex = gsys->loadTexture("consFont.bti", true);
         if (tex) {
@@ -1196,7 +1212,12 @@ void ensureFont() {
             delete sFont;
             sFont = nullptr;
         }
+        gsys->setHeap(previousHeap);
     }
+}
+
+int menuTextWidth(const char* text) {
+    return pc_settings_p2d_active() ? pc_settings_p2d_text_width(text) : sFont->stringWidth(text);
 }
 
 void drawText(const char* fmt, ...) {
@@ -1220,6 +1241,10 @@ Colour lerpColour(Colour a, Colour b, float t) {
 void fillRoundRectGrad(DGXGraphics* gfx, int x, int y, int w, int h, int r,
                        Colour top, Colour bottom) {
     if (w <= 0 || h <= 0) return;
+    if (pc_settings_p2d_active()) {
+        // Native selection is a game cursor plus yellow text.
+        return;
+    }
     if (r > w / 2) r = w / 2;
     if (r > h / 2) r = h / 2;
     const int step = 2;
@@ -1250,6 +1275,10 @@ void drawTextOutline(int x, int y, const char* fmt, Colour main, Colour shadow, 
     vsnprintf(buf, sizeof(buf), fmt, vl);
     va_end(vl);
 
+    if (pc_settings_p2d_active()) {
+        pc_settings_p2d_text(x, y, buf, main);
+        return;
+    }
     DGXGraphics* gfx = static_cast<DGXGraphics*>(gsys->mDGXGfx);
     gfx->setColour(shadow, true);
     gfx->setAuxColour(shadow);
@@ -1266,6 +1295,11 @@ void drawTextOutline(int x, int y, const char* fmt, Colour main, Colour shadow, 
 }
 
 void drawPikminPanel(DGXGraphics* gfx, int x, int y, int w, int h, int radius) {
+    if (pc_settings_p2d_active()) {
+        pc_settings_p2d_plate(x, y, w, h, 0);
+        pc_settings_p2d_plate(x, y, w, h, 1);
+        return;
+    }
     // Soft offset shadow, then the broad silver/black bezel used throughout
     // Pikmin's menus. Layering rounded fills keeps this independent of assets.
     fillRoundRectGrad(gfx, x + 7, y + 9, w, h, radius,
@@ -1284,7 +1318,13 @@ void drawPikminPanel(DGXGraphics* gfx, int x, int y, int w, int h, int radius) {
 
 void drawPikminHeader(DGXGraphics* gfx, int panelX, int panelY, int panelW,
                       const char* title) {
-    int titleW = sFont->stringWidth(title);
+    int titleW = menuTextWidth(title);
+    if (pc_settings_p2d_active()) {
+        pc_settings_p2d_plate(panelX + (panelW - 250) / 2, panelY - 18, 250, 52, 1);
+        const int nativeTitleW = pc_settings_p2d_text_width(title, 16);
+        pc_settings_p2d_text(panelX + (panelW - nativeTitleW) / 2, panelY - 2, title, Colour(218,255,255,255), 16, 24);
+        return;
+    }
     int w = titleW + 92;
     if (w < 250) w = 250;
     if (w > panelW - 70) w = panelW - 70;
@@ -1307,20 +1347,31 @@ void drawPikminHeader(DGXGraphics* gfx, int panelX, int panelY, int panelW,
 void drawSubmenuSurface(DGXGraphics* gfx, int x, int y, int w, int h,
                         const char* title, const char* helpTop,
                         const char* helpBottom) {
+    if (pc_settings_p2d_active()) {
+        // A submenu replaces the parent page; translucent native plates must
+        // not reveal a second list of settings underneath.
+        pc_settings_p2d_clear();
+        pc_settings_p2d_plate(x, y, w, h, 0);
+        pc_settings_p2d_plate(x, y, w, h, 1);
+        pc_settings_p2d_text(x + (w - pc_settings_p2d_text_width(title, 14))/2, y+10, title, Colour(255,207,75,255), 14, 20);
+        pc_settings_p2d_text(x + (w-pc_settings_p2d_text_width(helpTop, 10))/2, y+h-39, helpTop, Colour(205,239,250,255), 10, 15);
+        pc_settings_p2d_text(x + (w-pc_settings_p2d_text_width(helpBottom, 10))/2, y+h-23, helpBottom, Colour(205,239,250,255), 10, 15);
+        return;
+    }
     // Opaque surface: the parent settings must not remain legible through a
     // child page. The old translucent rectangle caused both lists to overlap.
     fillRoundRectGrad(gfx, x, y, w, h, 14,
                       Colour(5, 7, 12, 255), Colour(0, 1, 4, 255));
     fillRoundRectGrad(gfx, x + 4, y + 4, w - 8, 30, 11,
                       Colour(74, 84, 112, 255), Colour(18, 23, 40, 255));
-    int titleX = x + w / 2 - sFont->stringWidth(title) / 2;
+    int titleX = x + w / 2 - menuTextWidth(title) / 2;
     drawTextOutline(titleX, y + 12, "%s", Colour(255, 207, 75, 255),
                     Colour(49, 20, 0, 255), title);
 
     int helpY = y + h - 39;
-    drawTextOutline(x + w / 2 - sFont->stringWidth(helpTop) / 2, helpY,
+    drawTextOutline(x + w / 2 - menuTextWidth(helpTop) / 2, helpY,
                     "%s", Colour(205, 239, 250, 255), Colour(0, 8, 13, 255), helpTop);
-    drawTextOutline(x + w / 2 - sFont->stringWidth(helpBottom) / 2, helpY + 16,
+    drawTextOutline(x + w / 2 - menuTextWidth(helpBottom) / 2, helpY + 16,
                     "%s", Colour(205, 239, 250, 255), Colour(0, 8, 13, 255), helpBottom);
 }
 
@@ -1335,7 +1386,7 @@ void drawSubmenuRow(DGXGraphics* gfx, int x, int y, int w,
     Colour main = selected ? Colour(255, 190, 28, 255) : Colour(185, 237, 255, 255);
     Colour shadow = selected ? Colour(62, 25, 0, 255) : Colour(0, 9, 15, 255);
     const int split = x + w / 2;
-    drawTextOutline(split - 14 - sFont->stringWidth(label), y, "%s",
+    drawTextOutline(split - 14 - menuTextWidth(label), y, "%s",
                     main, shadow, label);
     drawTextOutline(split + 14, y, "%s", main, shadow, value);
 }
@@ -1375,9 +1426,12 @@ void pc_settings_init(void) {
 }
 
 bool pc_settings_consume_game_input(void) {
+    const bool promptWasOpen = pc_newgame_prompt_active();
     pollMenuInput();   // edge-detect using the previous frame's snapshot
     latchKeys();       // snapshot AFTER polling so next frame sees this one
-    return sMenuOpen;
+    // Swallow the frame the prompt closes on too, or the button that dismissed
+    // it reaches the screen underneath as a fresh press.
+    return sMenuOpen || promptWasOpen;
 }
 
 void pc_settings_apply_video(void) {
@@ -1390,8 +1444,15 @@ bool pc_settings_has_pending_video(void) {
     return sVideoConfirmActive;
 }
 
-void pc_settings_draw(void) {
-    if (!sMenuOpen) return;
+// ─── Permadeath badge on the file-select screen ───
+//
+// The file screen is BLO data and its panes carry no colour the port can
+// change -- P2DPaneLibrary offers alpha and mirroring, nothing else -- so the
+// mark is drawn over the slot rather than tinting it. Coordinates arrive in
+// the 640x480 space the BLO screens use, and are scaled to the window here.
+
+void pc_permadeath_draw_slot_badge(int vx, int vy, int vw)
+{
     if (!gsys || !gsys->mDGXGfx) return;
     DGXGraphics* gfx = static_cast<DGXGraphics*>(gsys->mDGXGfx);
     ensureFont();
@@ -1403,15 +1464,192 @@ void pc_settings_draw(void) {
     Matrix4f ortho;
     gfx->setOrthogonal(ortho.mMtx, RectArea(0, 0, screenW, screenH));
 
+    const int x = vx * screenW / 640;
+    const int y = vy * screenH / 480;
+    const int w = vw * screenW / 640;
+
+    const char* label = "PERMADEATH";
+    const int textW  = menuTextWidth(label);
+    const int padX   = 16;
+    const int badgeW = textW + padX * 2;
+    const int badgeH = 26;
+    const int badgeX = x + w / 2 - badgeW / 2;
+    const int radius = badgeH / 2;   // a capsule, like the screen's own plates
+
+    // Everything on this screen glows rather than having edges, so the mark
+    // fades outward instead of carrying a border. Three passes, each wider and
+    // fainter, approximate the falloff.
+    for (int i = 3; i >= 1; i--) {
+        const int grow = i * 5;
+        const u8 alpha = (u8)(26 - i * 6);
+        fillRoundRectGrad(gfx, badgeX - grow, y - grow,
+                          badgeW + grow * 2, badgeH + grow * 2,
+                          radius + grow,
+                          Colour(255, 70, 70, alpha), Colour(180, 20, 30, alpha));
+    }
+
+    // Pale rim, then the plate itself: the glass look here is a light edge
+    // around a darker translucent body, not a drawn outline.
+    fillRoundRectGrad(gfx, badgeX - 2, y - 2, badgeW + 4, badgeH + 4, radius + 2,
+                      Colour(255, 190, 190, 150), Colour(120, 30, 40, 130));
+    fillRoundRectGrad(gfx, badgeX, y, badgeW, badgeH, radius,
+                      Colour(196, 44, 52, 214), Colour(74, 6, 14, 224));
+
+    // Reflected strip along the upper inner edge, the same trick the port's
+    // panels use to read as glass.
+    fillRoundRectGrad(gfx, badgeX + 6, y + 3, badgeW - 12, badgeH / 2 - 2,
+                      (badgeH / 2 - 2) / 2,
+                      Colour(255, 255, 255, 70), Colour(255, 200, 200, 6));
+
+    drawTextOutline(badgeX + padX, y + 6, "%s",
+                    Colour(255, 240, 240, 255), Colour(50, 0, 6, 255), label);
+}
+
+// ─── New-game permadeath prompt ───
+//
+// Shown by the file-select section when a run is about to be created, so the
+// choice belongs to the file rather than to the port's configuration. It is
+// drawn with the same native P2D toolkit as F1. The explanatory strings stay
+// in the port; the original message archives and save-file rules are unchanged.
+
+namespace {
+bool sNewGamePromptOpen = false;
+int  sNewGamePromptChoice = 0;   // 0 = normal, 1 = permadeath
+int  sNewGamePromptResult = PC_NEWGAME_PENDING;
+}
+
+void pc_newgame_prompt_open(void) {
+    sNewGamePromptOpen   = true;
+    sNewGamePromptChoice = 0;
+    sNewGamePromptResult = PC_NEWGAME_PENDING;
+    pc_menu_edge_reset();
+}
+
+bool pc_newgame_prompt_active(void) { return sNewGamePromptOpen; }
+
+int pc_newgame_prompt_result(void) { return sNewGamePromptResult; }
+
+namespace {
+void pcNewGamePromptInput() {
+    if (!sNewGamePromptOpen) return;
+
+    bool left   = keyWentDown(SDL_SCANCODE_LEFT)  || keyWentDown(SDL_SCANCODE_A);
+    bool right  = keyWentDown(SDL_SCANCODE_RIGHT) || keyWentDown(SDL_SCANCODE_D);
+    bool accept = keyWentDown(SDL_SCANCODE_RETURN) || keyWentDown(SDL_SCANCODE_SPACE);
+    bool cancel = keyWentDown(SDL_SCANCODE_ESCAPE);
+
+    SDL_GameController* ctl = pc_window_get_controller();
+    if (ctl) {
+        if (padNavLeft(ctl))  left   = true;
+        if (padNavRight(ctl)) right  = true;
+        if (padNavA(ctl))     accept = true;
+        if (padNavB(ctl))     cancel = true;
+    }
+
+    if (left || right) sNewGamePromptChoice = sNewGamePromptChoice ? 0 : 1;
+
+    if (accept) {
+        sNewGamePromptResult = sNewGamePromptChoice ? PC_NEWGAME_PERMADEATH
+                                                    : PC_NEWGAME_NORMAL;
+        sNewGamePromptOpen   = false;
+    } else if (cancel) {
+        sNewGamePromptResult = PC_NEWGAME_CANCELLED;
+        sNewGamePromptOpen   = false;
+    }
+}
+
+} // namespace
+
+void pc_newgame_prompt_draw(void) {
+    if (!sNewGamePromptOpen) return;
+    if (!gsys || !gsys->mDGXGfx) return;
+    DGXGraphics* gfx = static_cast<DGXGraphics*>(gsys->mDGXGfx);
+    ensureFont();
+    if (!sFont) return;
+
+    const int screenW = gfx->mScreenWidth;
+    const int screenH = gfx->mScreenHeight;
+    PcSettingsP2DFrame nativeFrame(screenW, screenH);
+
+    Matrix4f ortho;
+    gfx->setOrthogonal(ortho.mMtx, RectArea(0, 0, screenW, screenH));
+
+    gfx->setColour(Colour(0, 0, 0, 170), true);
+    gfx->setAuxColour(Colour(0, 0, 0, 170));
+    gfx->fillRectangle(RectArea(0, 0, screenW, screenH));
+
+    const int panelW = 620;
+    const int panelH = 260;
+    const int panelX = screenW / 2 - panelW / 2;
+    const int panelY = screenH / 2 - panelH / 2;
+
+    drawPikminPanel(gfx, panelX, panelY, panelW, panelH, 22);
+    drawPikminHeader(gfx, panelX, panelY, panelW, "New Game");
+
+    const char* line1 = "How should this file play?";
+    drawTextOutline(panelX + panelW / 2 - menuTextWidth(line1) / 2, panelY + 62,
+                    "%s", Colour(214, 224, 245, 255), Colour(8, 12, 28, 255), line1);
+
+    const char* options[2] = { "Normal", "Permadeath" };
+    const int optY = panelY + 108;
+    for (int i = 0; i < 2; i++) {
+        const bool sel = (i == sNewGamePromptChoice);
+        const int boxW = 230;
+        const int boxX = panelX + 40 + i * (boxW + 40);
+        if (pc_settings_p2d_active()) {
+            if (sel) pc_settings_p2d_plate(boxX, optY, boxW, 44, 2);
+            pc_settings_p2d_plate(boxX, optY, boxW, 44, 1);
+            if (sel) pc_settings_p2d_text(boxX + 16, optY + 12, ">", Colour(255,229,120,255));
+        } else {
+            gfx->setColour(sel ? Colour(70, 92, 150, 240) : Colour(26, 30, 48, 220), true);
+            gfx->setAuxColour(sel ? Colour(70, 92, 150, 240) : Colour(26, 30, 48, 220));
+            gfx->fillRectangle(RectArea(boxX, optY, boxX + boxW, optY + 40));
+        }
+        const int tw = menuTextWidth(options[i]);
+        drawTextOutline(boxX + boxW / 2 - tw / 2, optY + 12, "%s",
+                        sel ? Colour(255, 229, 120, 255) : Colour(170, 180, 200, 255),
+                        Colour(8, 12, 28, 255), options[i]);
+    }
+
+    // Say plainly what the dangerous option does. This is the only place the
+    // player is told, and it costs a save file to find out the hard way.
+    const char* detail = sNewGamePromptChoice
+                             ? "If Olimar loses all his health, this file is erased."
+                             : "Losing Olimar ends the day. The original rules.";
+    drawTextOutline(panelX + panelW / 2 - menuTextWidth(detail) / 2, panelY + 172,
+                    "%s",
+                    sNewGamePromptChoice ? Colour(255, 150, 150, 255)
+                                         : Colour(190, 200, 220, 255),
+                    Colour(8, 12, 28, 255), detail);
+
+    const char* help = "Left/Right: choose    A / Enter: start    B / Esc: back";
+    drawTextOutline(panelX + panelW / 2 - menuTextWidth(help) / 2, panelY + 212,
+                    "%s", Colour(150, 165, 195, 255), Colour(8, 12, 28, 255), help);
+}
+
+void pc_settings_draw(void) {
+    if (!sMenuOpen) return;
+    if (!gsys || !gsys->mDGXGfx) return;
+    DGXGraphics* gfx = static_cast<DGXGraphics*>(gsys->mDGXGfx);
+    ensureFont();
+    if (!sFont) return;
+
+    const int screenW = gfx->mScreenWidth;
+    const int screenH = gfx->mScreenHeight;
+    PcSettingsP2DFrame nativeFrame(screenW, screenH);
+
+    Matrix4f ortho;
+    gfx->setOrthogonal(ortho.mMtx, RectArea(0, 0, screenW, screenH));
+
     // Dim backdrop.
     gfx->setColour(Colour(0, 0, 0, 160), true);
     gfx->setAuxColour(Colour(0, 0, 0, 160));
     gfx->fillRectangle(RectArea(0, 0, screenW, screenH));
 
     const int panelX = 74;
-    const int panelY = 64;
+    const int panelY = pc_settings_p2d_active() ? 52 : 64;
     const int panelW = screenW - 148;
-    const int panelH = screenH - 116;
+    const int panelH = screenH - (pc_settings_p2d_active() ? 88 : 116);
     const int px1 = panelX, py1 = panelY;
     const int px2 = panelX + panelW, py2 = panelY + panelH;
     const int radius = 26;
@@ -1430,13 +1668,13 @@ void pc_settings_draw(void) {
         const int remainS = (int)((remainMs + 999) / 1000); // redondeo al alza
 
         int cy = py1 + headerH + 26;
-        drawTextOutline(px1 + panelW / 2 - sFont->stringWidth("Video settings changed.") / 2, cy,
+        drawTextOutline(px1 + panelW / 2 - menuTextWidth("Video settings changed.") / 2, cy,
                         "Video settings changed.", Colour(255, 240, 180, 255), Colour(18, 26, 56, 255));
-        drawTextOutline(px1 + panelW / 2 - sFont->stringWidth("A: keep   B: revert") / 2, cy + 26,
+        drawTextOutline(px1 + panelW / 2 - menuTextWidth("A: keep   B: revert") / 2, cy + 26,
                         "A: keep   B: revert", Colour(255, 255, 255, 255), Colour(18, 26, 56, 255));
         char autoBuf[64];
         snprintf(autoBuf, sizeof(autoBuf), "Auto-reverting in %d s", remainS);
-        drawTextOutline(px1 + panelW / 2 - sFont->stringWidth(autoBuf) / 2, cy + 52,
+        drawTextOutline(px1 + panelW / 2 - menuTextWidth(autoBuf) / 2, cy + 52,
                         "%s", Colour(255, 255, 255, 255), Colour(18, 26, 56, 255), autoBuf);
         return;
     }
@@ -1444,7 +1682,7 @@ void pc_settings_draw(void) {
     const char* labels[ROW_COUNT] = {
         "Display Mode", "Resolution", "Aspect Ratio", "3D Resolution", "Refresh Rate", "Frame Sync (VSync)",
         "FPS Mode", "Controls", "Gamepad", "Advanced Settings", "Mods",
-        "[  Reset to Defaults  ]", "[  Save  ]", "[  Close  ]",
+        "Reset to Defaults", "Save", "Close",
     };
     const bool actionRow[ROW_COUNT] = { false, false, false, false, false, false, false, false, false, false, false, true, true, true };
 
@@ -1491,15 +1729,17 @@ void pc_settings_draw(void) {
         valueBuf[5], valueBuf[6], "Open >", "Open >", "Open >", "Open >",
     };
 
-    const int rowH = 18;
+    const int rowH = pc_settings_p2d_active() ? 20 : 18;
     const int labelRight = px1 + panelW / 2 - 12;
     const int valueLeft = px1 + panelW / 2 + 20;
     int y = py1 + headerH + 12;
     for (int i = 0; i < ROW_COUNT; i++) {
         bool selected = (i == sSelection);
         if (actionRow[i]) {
-            int tx = px1 + panelW / 2 - sFont->stringWidth(labels[i]) / 2;
+            int tx = px1 + panelW / 2 - menuTextWidth(labels[i]) / 2;
             if (selected) {
+                if (pc_settings_p2d_active())
+                    drawTextOutline(px1 + 29, y, ">", Colour(255,232,130,255), Colour(0,0,0,255));
                 fillRoundRectGrad(gfx, px1 + 70, y - 3, panelW - 140, rowH + 4, 8,
                                   Colour(47, 45, 35, 210), Colour(8, 8, 10, 220));
             }
@@ -1513,7 +1753,7 @@ void pc_settings_draw(void) {
             }
             Colour main = selected ? Colour(255, 190, 28, 255) : Colour(178, 235, 255, 255);
             Colour shadow = selected ? Colour(62, 25, 0, 255) : Colour(0, 10, 18, 255);
-            drawTextOutline(labelRight - sFont->stringWidth(labels[i]), y, "%s",
+            drawTextOutline(labelRight - menuTextWidth(labels[i]), y, "%s",
                             main, shadow, labels[i]);
             drawTextOutline(valueLeft, y, "%s", main, shadow, rowValues[i]);
             if (selected) {
@@ -1566,7 +1806,7 @@ void pc_settings_draw(void) {
         if (PC_KEY_ACT_COUNT > visibleItems) {
             char hint[64];
             snprintf(hint, sizeof(hint), "%d / %d", sControlSelection + 1, PC_KEY_ACT_COUNT);
-            drawTextOutline(subX + subW - 12 - sFont->stringWidth(hint),
+            drawTextOutline(subX + subW - 12 - menuTextWidth(hint),
                             subY + 12, "%s",
                             Colour(180, 180, 200, 255), Colour(10, 16, 36, 255), hint);
         }
@@ -1615,7 +1855,7 @@ void pc_settings_draw(void) {
         if (PC_KEY_ACT_COUNT > visibleItems) {
             char hint[64];
             snprintf(hint, sizeof(hint), "%d / %d", sGamepadSelection + 1, PC_KEY_ACT_COUNT);
-            drawTextOutline(subX + subW - 12 - sFont->stringWidth(hint),
+            drawTextOutline(subX + subW - 12 - menuTextWidth(hint),
                             subY + 12, "%s",
                             Colour(180, 180, 200, 255), Colour(10, 16, 36, 255), hint);
         }
@@ -1706,7 +1946,7 @@ void pc_settings_draw(void) {
         if (choiceCount > visibleItems) {
             char hint[64];
             snprintf(hint, sizeof(hint), "%d / %d", sResolutionSubmenuSel + 1, choiceCount);
-            drawTextOutline(subX + subW - 12 - sFont->stringWidth(hint),
+            drawTextOutline(subX + subW - 12 - menuTextWidth(hint),
                             subY + 12, "%s",
                             Colour(180, 180, 200, 255), Colour(10, 16, 36, 255), hint);
         }
@@ -1778,13 +2018,13 @@ void pc_settings_draw(void) {
     }
 
     // Footer / help.
-    drawTextOutline(px1 + panelW / 2 - sFont->stringWidth("Left/Right: change   Up/Down: move   Esc: close") / 2, y + 14,
+    drawTextOutline(px1 + panelW / 2 - menuTextWidth("Left/Right: change   Up/Down: move   Esc: close") / 2, y + 14,
                     "Left/Right: change   Up/Down: move   Esc: close",
                     Colour(200, 210, 235, 255), Colour(10, 16, 36, 255));
     if (pc_window_get_last_error()[0]) {
         char errBuf[128];
         snprintf(errBuf, sizeof(errBuf), "Video error: %s", pc_window_get_last_error());
-        drawTextOutline(px1 + panelW / 2 - sFont->stringWidth(errBuf) / 2, y + 34,
+        drawTextOutline(px1 + panelW / 2 - menuTextWidth(errBuf) / 2, y + 34,
                         "%s", Colour(255, 120, 120, 255), Colour(10, 16, 36, 255), errBuf);
     }
 }

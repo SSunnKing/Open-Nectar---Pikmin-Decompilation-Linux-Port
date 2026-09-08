@@ -9,6 +9,14 @@
 #include "zen/DrawCommon.h"
 #include "zen/EffectMgr2D.h"
 #include "zen/ogNitaku.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_permadeath.h"
+#include "P2D/Picture.h"
+#include "P2D/Font.h"
+#include "P2D/Print.h"
+#include "P2D/Screen.h"
+#include "settings/pc_settings.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -21,6 +29,46 @@ DEFINE_ERROR(__LINE__) // Never used in the DLL
  * @note UNUSED Size: 0000F4
  */
 DEFINE_PRINT("OgFileSelectSection")
+
+#if defined(PIKI_PC_PORT)
+// A child of the onion pane: coordinates, selection motion and visibility
+// belong to the slot. Drawing here also keeps the badge below the screen fade.
+class PcPermadeathBadge : public P2DPicture {
+public:
+	PcPermadeathBadge(Texture* texture, int slot)
+	    : P2DPicture(texture)
+	    , mFont("sumiw9_2.bfn")
+	    , mSlot(slot)
+	{
+		// The onion pane is 74 x 90; centre the original 160 x 88 artwork
+		// underneath it, retaining the artwork's rounded edge and shadow.
+		place(PUTRect(-43, 82, 117, 170));
+	}
+
+protected:
+	virtual void drawSelf(int x, int y, immut Matrix4f* view)
+	{
+		if (!pc_permadeath_slot(mSlot)) {
+			return;
+		}
+		P2DPicture::drawSelf(x, y, view);
+
+		// Match P2DTextBox: view * pane world matrix, with local text coords.
+		// A world matrix alone omits the perspective camera translation.
+		Matrix4f matrix;
+		view->multiplyTo(mWorldMtx, matrix);
+		GXLoadPosMtxImm(matrix.mMtx, 0);
+		P2DPrint print(&mFont, 0, 0, Colour(255, 255, 255, getAlpha()), Colour(255, 230, 180, getAlpha()));
+		print.setFontSize(15, 24);
+		print.locate(x, y);
+		print.printReturn("PERMADEATH", getWidth(), getHeight(), TBOXHBIND_Center, TBOXVBIND_Center, 0, 0);
+	}
+
+private:
+	P2DFont mFont;
+	int mSlot;
+};
+#endif
 
 /**
  * @todo: Documentation
@@ -789,6 +837,14 @@ zen::ogScrFileSelectMgr::ogScrFileSelectMgr()
 	getPane_FileTop1();
 	getPane_FileTop2();
 	getPane_FileIcon();
+#if defined(PIKI_PC_PORT)
+	Texture* permadeathPlate = zen::loadTexExp("ws08_red.bti", true, true);
+	if (permadeathPlate) {
+		for (int slot = 0; slot < 3; ++slot) {
+			mIconOnyonPanes[slot]->appendChild(new PcPermadeathBadge(permadeathPlate, slot));
+		}
+	}
+#endif
 	getPane_CpyCurScreen();
 	SetTitleMsg(SelectDataToSave);
 	setOperateMode(Normal);
