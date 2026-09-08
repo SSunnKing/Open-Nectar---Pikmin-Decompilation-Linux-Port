@@ -2258,8 +2258,13 @@ static bool bloom_build()
 // Half-resolution pair for occlusion and its denoise blur.
 static bool ao_ensure_targets()
 {
-    const int w = std::max(1, sRenderWidth / 2);
-    const int h = std::max(1, sRenderHeight / 2);
+    // Full resolution, matching the depth buffer it reads. At half resolution
+    // the pass point-samples one depth pixel in four -- depth is NEAREST, as it
+    // must be -- and which one it lands on changes as geometry moves under a
+    // pixel. That is an aliasing pattern that moves with the camera, which is
+    // what the crawling lines and the shimmering grass looked like.
+    const int w = std::max(1, sRenderWidth);
+    const int h = std::max(1, sRenderHeight);
     if (!sAoFbo[0]) {
         glGenFramebuffers_ptr(2, sAoFbo);
         glGenTextures(2, sAoTex);

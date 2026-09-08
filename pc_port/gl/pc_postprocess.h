@@ -28,6 +28,10 @@ struct PcPostEffects {
 	// Ambient occlusion. The first effect here that reads depth, and the only
 	// one that cannot run at all when the driver denied us a depth texture.
 	bool ssao          = false;
+	// Shows the occlusion buffer on its own instead of applying it, so an
+	// artefact can be traced to the pass that produced it rather than guessed
+	// at from the composited picture. Set with PIKMIN_AO_DEBUG=1.
+	bool ssaoDebug     = false;
 	float ssaoRadius    = 40.0f;  // world units searched around each pixel
 	float ssaoIntensity = 0.0f;   // 0 darkens nothing, so the pass is skipped
 
@@ -49,7 +53,7 @@ struct PcPostEffects {
 
 	bool operator==(const PcPostEffects& o) const
 	{
-		return fxaa == o.fxaa && ssao == o.ssao
+		return fxaa == o.fxaa && ssao == o.ssao && ssaoDebug == o.ssaoDebug
 		    && ssaoRadius == o.ssaoRadius && ssaoIntensity == o.ssaoIntensity
 		    && bloom == o.bloom
 		    && bloomThreshold == o.bloomThreshold && bloomIntensity == o.bloomIntensity

@@ -425,6 +425,7 @@ void applyGraphics(const PcConfig& config) {
     static const float kAoRadius[4]    = { 40.0f, 28.0f, 40.0f, 55.0f };
     const int aoStep = (config.ssao >= 0 && config.ssao <= 3) ? config.ssao : 0;
     fx.ssao          = aoStep != 0;
+    fx.ssaoDebug     = getenv("PIKMIN_AO_DEBUG") != nullptr;
     fx.ssaoIntensity = kAoIntensity[aoStep];
     fx.ssaoRadius    = kAoRadius[aoStep];
 

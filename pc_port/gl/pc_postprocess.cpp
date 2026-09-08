@@ -336,6 +336,13 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 		src += "    vec3 c = texture(uScene, vUV).rgb;\n";
 	}
 
+	if (pc_post_ssao_active(fx) && fx.ssaoDebug) {
+		// Straight out, nothing else applied. What reaches the screen is what
+		// the occlusion pass produced.
+		src += "    oColour = vec4(vec3(texture(uAO, vUV).r), 1.0);\n";
+		src += "    return;\n";
+	}
+
 	if (pc_post_ssao_active(fx)) {
 		// Multiplied, and before bloom: occlusion is ambient light that never
 		// arrived, so it scales what the surface received. Bloom is light that
