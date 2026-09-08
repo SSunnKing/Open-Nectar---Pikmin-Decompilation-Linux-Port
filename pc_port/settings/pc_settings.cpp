@@ -12,6 +12,7 @@
  */
 
 #include "settings/pc_settings.h"
+#include "pc_menu_repeat.h"
 
 #include <SDL2/SDL.h>
 #include <cstdio>
@@ -86,6 +87,12 @@ struct PcConfig {
     // parameter of its own (AIConstant "p15"), so raising it is supported
     // rather than forced. 100 is the original.
     int pikiLimit = 100;
+    // Minutes of play per in-game day, as shown in the menu. 10 is the original.
+    int dayMinutes = 10;
+    // Debug shortcuts (F5/F6). A menu option rather than an environment
+    // variable: the launcher starts the game as a child process, so an
+    // exported variable does not reliably reach it.
+    int debugKeys = 0;
 
     void applyDefaults() {
         windowWidth = 1280;
@@ -104,6 +111,8 @@ struct PcConfig {
         chainActions = 0;
         mouseWheelAction = 0;
         pikiLimit = 100;
+        dayMinutes = 10;
+        debugKeys = 0;
         for (int i = 0; i < PC_KEY_ACT_COUNT; i++) {
             keyboardBindings[i] = kDefaultKeyBindings[i];
             gamepadBindings[i] = -1; // -1 = not remapped (use default)
@@ -112,6 +121,17 @@ struct PcConfig {
 };
 
 PcConfig sConfig;      // the confirmed, persisted settings
+
+namespace {
+int menuStickThreshold()
+{
+	// Same units the game uses: the setting counts in pad steps, the axis in
+	// SDL's 16-bit range. A zero setting would make the menu react to noise,
+	// so keep a small floor.
+	const int threshold = sConfig.stickDeadZone * 256;
+	return threshold < 2048 ? 2048 : threshold;
+}
+} // namespace
 PcConfig sPending;     // settings staged while editing
 
 // ---------------------------------------------------------------------------
@@ -197,11 +217,22 @@ constexpr int kAdvancedRowCount = 4;
 // alone. 0=control scheme, 1=chain Pikmin actions.
 bool sInModsSubmenu = false;
 int sModsSelection = 0;
-constexpr int kModsRowCount = 4;
+#if PIKI_DEBUG_KEYS
+constexpr int kModsRowCount = 6;
+#else
+// The debug row is the last one, so leaving it off simply shortens the list.
+constexpr int kModsRowCount = 5;
+#endif
 
 // Field-limit stops. 100 is what the original game uses.
 constexpr int kPikiLimits[]   = { 50, 100, 150, 200, 300, 500, 750, 999 };
 constexpr int kPikiLimitCount = int(sizeof(kPikiLimits) / sizeof(kPikiLimits[0]));
+
+// Day length, in real minutes of actual play. The clock's own figure covers a
+// full 24-hour cycle, but a day is played from 7am to 7pm -- half of it -- so
+// the menu shows the half the player experiences. 10 is the original.
+constexpr int kDayMinutes[]    = { 5, 7, 10, 15, 20, 30 };
+constexpr int kDayMinutesCount = int(sizeof(kDayMinutes) / sizeof(kDayMinutes[0]));
 
 // Submenu de resolucion. La lista sale del monitor, asi que puede traer veinte
 // o cuarenta entradas segun el panel: recorrerlas de una en una con
@@ -423,6 +454,8 @@ void saveConfig() {
     out << "chainActions = " << sConfig.chainActions << "\n";
     out << "mouseWheelAction = " << sConfig.mouseWheelAction << "\n";
     out << "pikiLimit = " << sConfig.pikiLimit << "\n";
+    out << "dayMinutes = " << sConfig.dayMinutes << "\n";
+    out << "debugKeys = " << sConfig.debugKeys << "\n";
     out << "controlMode = " << sConfig.controlMode << "\n";
     out << "mouseSensitivity = " << sConfig.mouseSensitivity << "\n";
     out << "stickDeadZone = " << sConfig.stickDeadZone << "\n";
@@ -515,6 +548,13 @@ void loadConfig() {
             sConfig.pikiLimit = atoi(val.c_str());
             if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
         }
+        else if (key == "dayMinutes") {
+            sConfig.dayMinutes = atoi(val.c_str());
+            if (sConfig.dayMinutes < 1 || sConfig.dayMinutes > 120) sConfig.dayMinutes = 10;
+        }
+        else if (key == "debugKeys") {
+            sConfig.debugKeys = atoi(val.c_str()) ? 1 : 0;
+        }
         else if (key == "stickInvert") sConfig.stickInvert = atoi(val.c_str()) & 3;
         else if (key == "cStickInvert") sConfig.cStickInvert = atoi(val.c_str()) & 3;
         else if (key.rfind("key_", 0) == 0) {
@@ -547,6 +587,39 @@ void loadConfig() {
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
+
+namespace {
+/// Menu input repeat lives in pc_menu_repeat so its timing can be tested
+/// without a controller and without waiting. See that header.
+bool padEdge(bool pressed, int slot) { return pc_menu_edge(pressed, slot, SDL_GetTicks()); }
+
+/// Stick threshold for menus. Follows the configured dead zone, which a fixed
+/// 8000 used to ignore -- so changing the setting appeared to do nothing.
+int menuStickThreshold();
+
+bool padNavUp(SDL_GameController* c)
+{
+	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP)
+	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -menuStickThreshold(), 0);
+}
+bool padNavDown(SDL_GameController* c)
+{
+	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) > menuStickThreshold(), 1);
+}
+bool padNavLeft(SDL_GameController* c)
+{
+	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT)
+	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -menuStickThreshold(), 2);
+}
+bool padNavRight(SDL_GameController* c)
+{
+	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
+	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) > menuStickThreshold(), 3);
+}
+bool padNavA(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A), 4); }
+bool padNavB(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_B), 5); }
+} // namespace
 
 bool keyWentDown(SDL_Scancode sc) {
     int numKeys = 0;
@@ -598,11 +671,11 @@ void pollMenuInput() {
         }
         if (keyWentDown(SDL_SCANCODE_RETURN) || keyWentDown(SDL_SCANCODE_SPACE) ||
             keyWentDown(SDL_SCANCODE_J) ||
-            (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))) {
+            (ctl && padNavA(ctl))) {
             confirmVideoSettings();
         } else if (keyWentDown(SDL_SCANCODE_ESCAPE) || keyWentDown(SDL_SCANCODE_K) ||
                    keyWentDown(SDL_SCANCODE_B) ||
-                   (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))) {
+                   (ctl && padNavB(ctl))) {
             revertVideoSettings();
         }
         return;
@@ -627,7 +700,7 @@ void pollMenuInput() {
                 }
             }
             // ESC cancels capture.
-            if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))) {
+            if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && padNavB(ctl))) {
                 sWaitingForKey = false;
             }
             return;
@@ -641,19 +714,15 @@ void pollMenuInput() {
         bool ok = keyWentDown(SDL_SCANCODE_RETURN) || keyWentDown(SDL_SCANCODE_SPACE);
 
         if (ctl) {
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+            if (padNavUp(ctl))
                 up = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+            if (padNavDown(ctl))
                 down = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) < -8000))
+            if (padNavLeft(ctl))
                 left = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) > 8000))
+            if (padNavRight(ctl))
                 right = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))
+            if (padNavA(ctl))
                 ok = true;
         }
 
@@ -676,7 +745,7 @@ void pollMenuInput() {
         }
         // B / ESC exits submenu.
         if (keyWentDown(SDL_SCANCODE_ESCAPE) || keyWentDown(SDL_SCANCODE_K) ||
-            keyWentDown(SDL_SCANCODE_B) || (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))) {
+            keyWentDown(SDL_SCANCODE_B) || (ctl && padNavB(ctl))) {
             sInControlsSubmenu = false;
             sWaitingForKey = false;
         }
@@ -697,7 +766,7 @@ void pollMenuInput() {
                 }
             }
             // ESC cancels capture.
-            if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))) {
+            if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && padNavB(ctl))) {
                 sWaitingForButton = false;
             }
             return;
@@ -711,19 +780,15 @@ void pollMenuInput() {
         bool ok = keyWentDown(SDL_SCANCODE_RETURN) || keyWentDown(SDL_SCANCODE_SPACE);
 
         if (ctl) {
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+            if (padNavUp(ctl))
                 up = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+            if (padNavDown(ctl))
                 down = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) < -8000))
+            if (padNavLeft(ctl))
                 left = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) > 8000))
+            if (padNavRight(ctl))
                 right = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))
+            if (padNavA(ctl))
                 ok = true;
         }
 
@@ -744,7 +809,7 @@ void pollMenuInput() {
             return;
         }
         if (keyWentDown(SDL_SCANCODE_ESCAPE) || keyWentDown(SDL_SCANCODE_K) ||
-            keyWentDown(SDL_SCANCODE_B) || (ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))) {
+            keyWentDown(SDL_SCANCODE_B) || (ctl && padNavB(ctl))) {
             sInGamepadSubmenu = false;
             sWaitingForButton = false;
         }
@@ -762,21 +827,17 @@ void pollMenuInput() {
                       keyWentDown(SDL_SCANCODE_B);
 
         if (ctl) {
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+            if (padNavUp(ctl))
                 up = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+            if (padNavDown(ctl))
                 down = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) < -8000))
+            if (padNavLeft(ctl))
                 left = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) > 8000))
+            if (padNavRight(ctl))
                 right = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))
+            if (padNavA(ctl))
                 ok = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))
+            if (padNavB(ctl))
                 cancel = true;
         }
 
@@ -829,15 +890,13 @@ void pollMenuInput() {
                       keyWentDown(SDL_SCANCODE_B);
 
         if (ctl) {
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+            if (padNavUp(ctl))
                 up = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+            if (padNavDown(ctl))
                 down = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))
+            if (padNavA(ctl))
                 ok = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))
+            if (padNavB(ctl))
                 cancel = true;
         }
 
@@ -878,19 +937,15 @@ void pollMenuInput() {
                       keyWentDown(SDL_SCANCODE_B);
 
         if (ctl) {
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+            if (padNavUp(ctl))
                 up = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+            if (padNavDown(ctl))
                 down = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) < -8000))
+            if (padNavLeft(ctl))
                 left = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-                (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) > 8000))
+            if (padNavRight(ctl))
                 right = true;
-            if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))
+            if (padNavB(ctl))
                 cancel = true;
         }
 
@@ -932,6 +987,20 @@ void pollMenuInput() {
             else if (right) idx = (idx + 1) % kPikiLimitCount;
             sPending.pikiLimit = kPikiLimits[idx];
         }
+        // Day length.
+        else if (sModsSelection == 4) {
+            int idx = 0;
+            for (int i = 0; i < kDayMinutesCount; i++) {
+                if (kDayMinutes[i] == sPending.dayMinutes) { idx = i; break; }
+            }
+            if (left) idx = (idx + kDayMinutesCount - 1) % kDayMinutesCount;
+            else if (right) idx = (idx + 1) % kDayMinutesCount;
+            sPending.dayMinutes = kDayMinutes[idx];
+        }
+        // Debug shortcuts.
+        else if (sModsSelection == 5) {
+            if (left || right) sPending.debugKeys = sPending.debugKeys ? 0 : 1;
+        }
         return;
     }
 
@@ -945,21 +1014,17 @@ void pollMenuInput() {
                   keyWentDown(SDL_SCANCODE_B);
 
     if (ctl) {
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_UP) ||
-            (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) < -8000))
+        if (padNavUp(ctl))
             up = true;
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_DOWN) ||
-            (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTY) > 8000))
+        if (padNavDown(ctl))
             down = true;
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_LEFT) ||
-            (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) < -8000))
+        if (padNavLeft(ctl))
             left = true;
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-            (SDL_GameControllerGetAxis(ctl, SDL_CONTROLLER_AXIS_LEFTX) > 8000))
+        if (padNavRight(ctl))
             right = true;
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A))
+        if (padNavA(ctl))
             ok = true;
-        if (SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_B))
+        if (padNavB(ctl))
             cancel = true;
     }
 
@@ -1662,6 +1727,10 @@ void pc_settings_draw(void) {
             "Chain Pikmin Actions",
             "Mouse Wheel",
             "Pikmin Limit",
+            "Day Length",
+#if PIKI_DEBUG_KEYS
+            "Debug Keys (F5/F6)",
+#endif
         };
 
         const int listStartY = subY + 62;
@@ -1682,6 +1751,15 @@ void pc_settings_draw(void) {
             } else if (i == 2) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.mouseWheelAction ? "Camera Zoom" : "Pikmin Colour");
+            } else if (i == 5) {
+                snprintf(value, sizeof(value), "%s",
+                         sPending.debugKeys ? "On" : "Off");
+            } else if (i == 4) {
+                if (sPending.dayMinutes == 10) {
+                    snprintf(value, sizeof(value), "10 min (original)");
+                } else {
+                    snprintf(value, sizeof(value), "%d min", sPending.dayMinutes);
+                }
             } else {
                 if (sPending.pikiLimit == 100) {
                     snprintf(value, sizeof(value), "100 (original)");
@@ -1725,4 +1803,12 @@ int pc_settings_get_mouse_wheel_action(void) {
 
 int pc_settings_get_piki_limit(void) {
     return sConfig.pikiLimit;
+}
+
+int pc_settings_get_day_minutes(void) {
+    return sConfig.dayMinutes;
+}
+
+int pc_settings_get_debug_keys(void) {
+    return sConfig.debugKeys;
 }

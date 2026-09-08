@@ -85,6 +85,11 @@ set(NATIVE_COMPILE_OPTIONS
 # with -DPIKMIN_NATIVE_JAUDIO=ON to drive audio from the original engine.
 option(PIKMIN_NATIVE_JAUDIO "Drive audio with the original src/jaudio engine" OFF)
 
+# Testing shortcuts (F5 stocks Pikmin, F6 skips an hour) and the menu row that
+# switches them on. Off by default so a release carries no trace of them; turn
+# on with -DPIKMIN_DEBUG_KEYS=ON while working on the Mods settings.
+option(PIKMIN_DEBUG_KEYS "Build the F5/F6 testing shortcuts" OFF)
+
 # ─── Version define for USA Rev 1 ───
 add_compile_definitions(
     PIKI_PC_PORT=1
@@ -99,6 +104,7 @@ add_compile_definitions(
     # its DSPchannel_ voice parameter blocks through pc_dsp_host. The two
     # cannot coexist -- see the guards in dolphin_stubs/audio_stubs.cpp.
     PIKI_USE_JAUDIO=$<BOOL:${PIKMIN_NATIVE_JAUDIO}>
+    PIKI_DEBUG_KEYS=$<BOOL:${PIKMIN_DEBUG_KEYS}>
     # Some SDL2 builds (including current Arch configurations) remap main to
     # SDL_main unless the application explicitly owns its entry point.
     SDL_MAIN_HANDLED=1

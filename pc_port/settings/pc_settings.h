@@ -51,6 +51,12 @@ int pc_settings_get_mouse_wheel_action(void);
 /// Pikmin allowed on the field at once. 100 is the original.
 int pc_settings_get_piki_limit(void);
 
+/// Minutes of play per in-game day. 10 is the original.
+int pc_settings_get_day_minutes(void);
+
+/// Debug shortcuts F5 and F6, off by default.
+int pc_settings_get_debug_keys(void);
+
 #ifdef __cplusplus
 }
 #endif

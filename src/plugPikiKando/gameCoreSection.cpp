@@ -1420,6 +1420,12 @@ GameCoreSection::GameCoreSection(Controller* controller, MapMgr* mgr, Camera& ca
 	// writing it once here covers the spawn gates in pikiMgr and itemMgr as
 	// well as the HUD counter.
 	AICONST.mMaxPikisOnField(pc_settings_get_piki_limit());
+
+	// Day length. The menu shows minutes of play, and a day runs 7am to 7pm --
+	// half the 24-hour cycle this parameter describes -- so double it. The
+	// clock recomputes its speed from here every tick, and each stage's own
+	// day_multiply still applies on top, as designed.
+	gameflow.mParameters->mRealMinutesPerGameDay(f32(pc_settings_get_day_minutes()) * 2.0f);
 #endif
 	gameflow.addGenNode("AI定数", AIConstant::_instance); // 'AI Constants'
 
@@ -1526,21 +1532,21 @@ GameCoreSection::GameCoreSection(Controller* controller, MapMgr* mgr, Camera& ca
 /**
  * @todo: Documentation
  */
-#if defined(PIKI_PC_PORT)
+#if defined(PIKI_PC_PORT) && PIKI_DEBUG_KEYS
 /**
- * @brief Debug shortcut: F5 puts 20 more red Pikmin in the Onion.
+ * @brief Debug shortcuts for the Mods settings, switched on in that menu.
  *
- * Purely a testing aid for the configurable field limit -- reaching 200 the
- * honest way takes far too long to iterate on. Adds them as leaf Pikmin
- * straight into the Onion's stock, updating both the stock and the running
- * total the HUD reads, which is what growing a seed does.
+ * F5 stocks 20 red Pikmin in the Onion, up to the configured limit: reaching a
+ * few hundred the honest way takes far too long to iterate on. F6 pushes the
+ * clock on by an in-game hour, so a change to the day length can be judged
+ * without sitting through it.
  */
-static void pcDebugStockRedPikmin()
+static void pcDebugKeys()
 {
 	// Off unless asked for: a stray F5 would otherwise fill someone's Onion
 	// mid-game. Enable with PIKMIN_DEBUG_KEYS=1.
-	static const bool enabled = getenv("PIKMIN_DEBUG_KEYS") != nullptr;
-	if (!enabled) {
+	// Read every frame, so the switch in the Mods menu takes effect at once.
+	if (!pc_settings_get_debug_keys()) {
 		return;
 	}
 
@@ -1583,14 +1589,28 @@ static void pcDebugStockRedPikmin()
 		}
 	}
 	wasDown = isDown;
+
+	// F6 pushes the clock on by an in-game hour, so a change to the day length
+	// can be judged in seconds instead of by sitting through it.
+	static bool hourWasDown = false;
+	const bool hourDown     = keys != nullptr && keys[SDL_SCANCODE_F6] != 0;
+	if (hourDown && !hourWasDown) {
+		WorldClock& clock = gameflow.mWorldClock;
+		const f32 next    = clock.mTimeOfDay + 1.0f;
+		clock.setTime(next >= clock.mHoursInDay ? clock.mHoursInDay - 0.01f : next);
+		fprintf(stderr, "[DEBUG] clock -> %02d:00 (day is %d min of play)\n",
+		        clock.mCurrentGameHour, pc_settings_get_day_minutes());
+		fflush(stderr);
+	}
+	hourWasDown = hourDown;
 }
 #endif
 
 void GameCoreSection::update()
 {
 	STACK_PAD_VAR(2);
-#if defined(PIKI_PC_PORT)
-	pcDebugStockRedPikmin();
+#if defined(PIKI_PC_PORT) && PIKI_DEBUG_KEYS
+	pcDebugKeys();
 #endif
 	if (!gameflow.mMoviePlayer->mIsActive && !mDoneSundownWarn && gameflow.mWorldClock.mTimeOfDay >= gameflow.mParameters->mNightWarning()
 	    && (flowCont.mGameEndFlag != GAMEEND_PikminExtinction || flowCont.mGameEndFlag != GAMEEND_NaviDown)) {
