@@ -28,6 +28,7 @@
 
 #include "pc_window.h"
 #include "gl/pc_gfx.h"
+#include "gl/pc_postprocess.h"
 #include "Graphics.h"
 #include "Font.h"
 #include "Colour.h"
@@ -90,6 +91,12 @@ struct PcConfig {
     int pikiLimit = 100;
     // Minutes of play per in-game day, as shown in the menu. 10 is the original.
     int dayMinutes = 10;
+    // Colour grading. Neutral by default: the port should look like the game
+    // until someone asks otherwise.
+    int colourGrading = 0;
+    float gamma       = 1.0f;
+    float brightness  = 0.0f;
+    float saturation  = 1.0f;
     // Debug shortcuts (F5/F6). A menu option rather than an environment
     // variable: the launcher starts the game as a child process, so an
     // exported variable does not reliably reach it.
@@ -113,6 +120,10 @@ struct PcConfig {
         mouseWheelAction = 0;
         pikiLimit = 100;
         dayMinutes = 10;
+        colourGrading = 0;
+        gamma         = 1.0f;
+        brightness    = 0.0f;
+        saturation    = 1.0f;
         debugKeys = 0;
         for (int i = 0; i < PC_KEY_ACT_COUNT; i++) {
             keyboardBindings[i] = kDefaultKeyBindings[i];
@@ -150,6 +161,7 @@ enum Row {
     ROW_CONTROLS,
     ROW_GAMEPAD,
     ROW_ADVANCED,
+    ROW_GRAPHICS,
     ROW_MODS,
     ROW_RESET,
     ROW_SAVE,
@@ -211,6 +223,26 @@ bool sWaitingForButton = false;
 bool sInAdvancedSubmenu = false;
 int sAdvancedSelection = 0; // 0=sensitivity, 1=dead zone, 2=stick invert, 3=c-stick invert
 constexpr int kAdvancedRowCount = 4;
+
+// Graphics submenu state. Everything here changes how the game *looks* without
+// changing how it plays, which is why it is kept apart from Mods: someone
+// chasing frame rate and someone chasing fidelity are looking for different
+// pages, and neither wants the other's rows in the way.
+//
+// Every effect is switchable. The port runs on modest hardware -- the
+// reference machine is a GTX 1050 -- so nothing here may be mandatory.
+bool sInGraphicsSubmenu = false;
+int sGraphicsSelection = 0;
+constexpr int kGraphicsRowCount = 4;
+
+// Colour grading stops. Neutral is in every list, and the pass is skipped
+// entirely when all three sit there.
+constexpr float kGammaStops[]      = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f, 1.6f };
+constexpr int kGammaStopCount      = int(sizeof(kGammaStops) / sizeof(kGammaStops[0]));
+constexpr float kBrightnessStops[] = { -0.15f, -0.10f, -0.05f, 0.0f, 0.05f, 0.10f, 0.15f, 0.20f };
+constexpr int kBrightnessStopCount = int(sizeof(kBrightnessStops) / sizeof(kBrightnessStops[0]));
+constexpr float kSaturationStops[] = { 0.0f, 0.5f, 0.8f, 1.0f, 1.2f, 1.5f, 2.0f };
+constexpr int kSaturationStopCount = int(sizeof(kSaturationStops) / sizeof(kSaturationStops[0]));
 
 // Mods submenu state. Everything here changes how the game *plays* rather than
 // how it looks or reads input hardware, so it lives apart from the rest: a
@@ -370,6 +402,17 @@ void applyVideo() {
     pc_gfx_set_aspect_ratio_mode(sPending.aspectRatioMode);
 }
 
+// Pushes the grading settings down to the renderer. The pass decides for
+// itself whether it is worth running, so this can be called freely.
+void applyGraphics(const PcConfig& config) {
+    PcPostEffects fx;
+    fx.colourGrading = config.colourGrading != 0;
+    fx.gamma         = config.gamma;
+    fx.brightness    = config.brightness;
+    fx.saturation    = config.saturation;
+    pc_gfx_set_post_effects(fx);
+}
+
 void applyControls(const PcConfig& config) {
     pc_window_set_control_mode(config.controlMode);
     pc_window_set_mouse_sensitivity(config.mouseSensitivity);
@@ -393,6 +436,7 @@ void confirmVideoSettings() {
     sConfig = sPending;
     applyVideo();
     applyControls(sConfig);
+    applyGraphics(sConfig);
     saveConfig();
     sVideoConfirmActive = false;
 }
@@ -432,6 +476,7 @@ void resetToDefaults() {
     sPending = sConfig;
     applyVideo();
     applyControls(sConfig);
+    applyGraphics(sConfig);
     saveConfig();
     sVideoConfirmActive = false;
 }
@@ -456,6 +501,10 @@ void saveConfig() {
     out << "mouseWheelAction = " << sConfig.mouseWheelAction << "\n";
     out << "pikiLimit = " << sConfig.pikiLimit << "\n";
     out << "dayMinutes = " << sConfig.dayMinutes << "\n";
+    out << "colourGrading = " << sConfig.colourGrading << "\n";
+    out << "gamma = " << sConfig.gamma << "\n";
+    out << "brightness = " << sConfig.brightness << "\n";
+    out << "saturation = " << sConfig.saturation << "\n";
     out << "debugKeys = " << sConfig.debugKeys << "\n";
     out << "controlMode = " << sConfig.controlMode << "\n";
     out << "mouseSensitivity = " << sConfig.mouseSensitivity << "\n";
@@ -548,6 +597,21 @@ void loadConfig() {
         else if (key == "pikiLimit") {
             sConfig.pikiLimit = atoi(val.c_str());
             if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
+        }
+        else if (key == "colourGrading") {
+            sConfig.colourGrading = atoi(val.c_str()) ? 1 : 0;
+        }
+        else if (key == "gamma") {
+            sConfig.gamma = (float)atof(val.c_str());
+            if (!(sConfig.gamma >= 0.5f && sConfig.gamma <= 2.0f)) sConfig.gamma = 1.0f;
+        }
+        else if (key == "brightness") {
+            sConfig.brightness = (float)atof(val.c_str());
+            if (!(sConfig.brightness >= -0.5f && sConfig.brightness <= 0.5f)) sConfig.brightness = 0.0f;
+        }
+        else if (key == "saturation") {
+            sConfig.saturation = (float)atof(val.c_str());
+            if (!(sConfig.saturation >= 0.0f && sConfig.saturation <= 2.0f)) sConfig.saturation = 1.0f;
         }
         else if (key == "dayMinutes") {
             sConfig.dayMinutes = atoi(val.c_str());
@@ -941,6 +1005,63 @@ void pollMenuInput() {
         return;
     }
 
+    // Graphics submenu.
+    if (sInGraphicsSubmenu) {
+        bool up = keyWentDown(SDL_SCANCODE_UP) || keyWentDown(SDL_SCANCODE_W);
+        bool down = keyWentDown(SDL_SCANCODE_DOWN) || keyWentDown(SDL_SCANCODE_S);
+        bool left = keyWentDown(SDL_SCANCODE_LEFT) || keyWentDown(SDL_SCANCODE_A);
+        bool right = keyWentDown(SDL_SCANCODE_RIGHT) || keyWentDown(SDL_SCANCODE_D);
+        bool cancel = keyWentDown(SDL_SCANCODE_ESCAPE) || keyWentDown(SDL_SCANCODE_K) ||
+                      keyWentDown(SDL_SCANCODE_B);
+
+        if (ctl) {
+            if (padNavUp(ctl)) up = true;
+            if (padNavDown(ctl)) down = true;
+            if (padNavLeft(ctl)) left = true;
+            if (padNavRight(ctl)) right = true;
+            if (padNavB(ctl)) cancel = true;
+        }
+
+        if (up) {
+            sGraphicsSelection = (sGraphicsSelection + kGraphicsRowCount - 1) % kGraphicsRowCount;
+            return;
+        }
+        if (down) {
+            sGraphicsSelection = (sGraphicsSelection + 1) % kGraphicsRowCount;
+            return;
+        }
+        if (cancel) {
+            sInGraphicsSubmenu = false;
+            return;
+        }
+
+        // Stepped through meaningful values rather than one hundredth at a
+        // time: the menu repeats slowly on purpose, and a fine slider would
+        // take hundreds of presses to cross the range.
+        auto step = [](float current, const float* stops, int count, bool back) {
+            int idx = 0;
+            for (int i = 0; i < count; i++) {
+                if (stops[i] == current) { idx = i; break; }
+            }
+            idx = back ? (idx + count - 1) % count : (idx + 1) % count;
+            return stops[idx];
+        };
+
+        if (sGraphicsSelection == 0) {
+            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
+        } else if (sGraphicsSelection == 1) {
+            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
+        } else if (sGraphicsSelection == 2) {
+            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+        } else if (sGraphicsSelection == 3) {
+            if (left || right) sPending.saturation = step(sPending.saturation, kSaturationStops, kSaturationStopCount, left);
+        }
+        // Applied as you move, so the effect can be judged against the scene
+        // behind the menu instead of by reading numbers.
+        applyGraphics(sPending);
+        return;
+    }
+
     // Mods submenu.
     if (sInModsSubmenu) {
         bool up = keyWentDown(SDL_SCANCODE_UP) || keyWentDown(SDL_SCANCODE_W);
@@ -1155,6 +1276,12 @@ void pollMenuInput() {
             sAdvancedSelection = 0;
         }
         break;
+    case ROW_GRAPHICS:
+        if (ok) {
+            sInGraphicsSubmenu = true;
+            sGraphicsSelection = 0;
+        }
+        break;
     case ROW_MODS:
         if (ok) {
             sInModsSubmenu = true;
@@ -1173,6 +1300,7 @@ void pollMenuInput() {
                 sConfig = sPending;
                 applyVideo();
                 applyControls(sConfig);
+                applyGraphics(sConfig);
                 saveConfig();
             }
         }
@@ -1422,6 +1550,7 @@ void pc_settings_init(void) {
     pc_gfx_set_render_scale(sPending.renderScale);
     pc_gfx_set_aspect_ratio_mode(sPending.aspectRatioMode);
     applyControls(sConfig);
+    applyGraphics(sConfig);
     printf("[PC Settings] Init complete.\n");
 }
 
@@ -1681,10 +1810,10 @@ void pc_settings_draw(void) {
 
     const char* labels[ROW_COUNT] = {
         "Display Mode", "Resolution", "Aspect Ratio", "3D Resolution", "Refresh Rate", "Frame Sync (VSync)",
-        "FPS Mode", "Controls", "Gamepad", "Advanced Settings", "Mods",
+        "FPS Mode", "Controls", "Gamepad", "Advanced Settings", "Graphics", "Mods",
         "Reset to Defaults", "Save", "Close",
     };
-    const bool actionRow[ROW_COUNT] = { false, false, false, false, false, false, false, false, false, false, false, true, true, true };
+    const bool actionRow[ROW_COUNT] = { false, false, false, false, false, false, false, false, false, false, false, false, true, true, true };
 
     const char* aspectNames[5] = { "Auto", "4:3", "16:10", "16:9", "21:9" };
     char aspectBuf[32];
@@ -1949,6 +2078,50 @@ void pc_settings_draw(void) {
             drawTextOutline(subX + subW - 12 - menuTextWidth(hint),
                             subY + 12, "%s",
                             Colour(180, 180, 200, 255), Colour(10, 16, 36, 255), hint);
+        }
+
+        return; // Don't draw footer when submenu is open.
+    }
+
+    // Graphics submenu overlay.
+    if (sInGraphicsSubmenu) {
+        const int subX = px1 + 18, subY = py1 + 44;
+        const int subW = panelW - 36, subH = panelH - 58;
+        drawSubmenuSurface(gfx, subX, subY, subW, subH, "Graphics",
+                           "Left/Right: change   These change how the game looks",
+                           "Up/Down: select   Esc/B: back");
+
+        const char* labels[kGraphicsRowCount] = {
+            "Colour Grading",
+            "Gamma",
+            "Brightness",
+            "Saturation",
+        };
+
+        const int listStartY = subY + 62;
+        const int itemH = 28;
+        const bool gradingOn = sPending.colourGrading != 0;
+
+        for (int i = 0; i < kGraphicsRowCount; i++) {
+            const int itemY = listStartY + i * itemH;
+            const bool selected = (i == sGraphicsSelection);
+
+            char value[64];
+            if (i == 0) {
+                snprintf(value, sizeof(value), "%s", gradingOn ? "On" : "Off");
+            } else if (!gradingOn) {
+                // The three sliders do nothing while grading is off. Saying so
+                // beats letting someone move them and conclude it is broken.
+                snprintf(value, sizeof(value), "--");
+            } else if (i == 1) {
+                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
+            } else if (i == 2) {
+                snprintf(value, sizeof(value), sPending.brightness == 0.0f ? "%+.2f  (neutral)" : "%+.2f", sPending.brightness);
+            } else {
+                snprintf(value, sizeof(value), sPending.saturation == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.saturation);
+            }
+
+            drawSubmenuRow(gfx, subX + 20, itemY, subW - 40, labels[i], value, selected);
         }
 
         return; // Don't draw footer when submenu is open.

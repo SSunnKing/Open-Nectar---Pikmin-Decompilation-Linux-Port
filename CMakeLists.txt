@@ -155,6 +155,7 @@ set(PC_PORT_SOURCES
     pc_port/pc_permadeath.cpp
     pc_port/gl/pc_gfx.cpp
     pc_port/gl/pc_tev_shader.cpp
+    pc_port/gl/pc_postprocess.cpp
     pc_port/timing/pc_frame_scheduler.cpp
     pc_port/timing/pc_render_phase.cpp
     pc_port/timing/pc_visual_snapshot.cpp
@@ -595,6 +596,15 @@ add_executable(pc_tev_shader_test
 target_include_directories(pc_tev_shader_test PRIVATE pc_port/gl)
 target_compile_options(pc_tev_shader_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_tev_shader_test COMMAND pc_tev_shader_test)
+
+# Post-process shader generation (no GL context needed)
+add_executable(pc_postprocess_test
+    pc_port/gl/pc_postprocess_test.cpp
+    pc_port/gl/pc_postprocess.cpp
+)
+target_include_directories(pc_postprocess_test PRIVATE pc_port/gl)
+target_compile_options(pc_postprocess_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_postprocess_test COMMAND pc_postprocess_test)
 
 add_executable(pc_render_packet_test
     pc_port/timing/pc_render_packet_test.cpp

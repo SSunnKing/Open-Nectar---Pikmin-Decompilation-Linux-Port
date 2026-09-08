@@ -128,6 +128,11 @@ size_t pc_gfx_get_specialised_program_count(void);
  */
 unsigned int pc_gfx_get_depth_texture(void);
 
+/// Sets the post-process effect set. With nothing enabled the pass is skipped
+/// entirely and the scene blits straight to the window.
+struct PcPostEffects;
+void pc_gfx_set_post_effects(const PcPostEffects& effects);
+
 /**
  * @brief The scene colour target, at internal render resolution.
  *

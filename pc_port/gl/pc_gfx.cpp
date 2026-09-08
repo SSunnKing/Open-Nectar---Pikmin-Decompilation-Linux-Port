@@ -17,6 +17,7 @@
 
 #include "../timing/pc_render_packet.h"
 #include "pc_tev_shader.h"
+#include "pc_postprocess.h"
 #include "../timing/pc_render_phase.h"
 #include "../timing/pc_tick_profiler.h"
 
@@ -54,6 +55,8 @@ typedef void (APIENTRYP PCGLGETQUERYOBJECTUI64VPROC) (GLuint id, GLenum pname, G
 // through SDL_GL_GetProcAddress like the rest. On Linux these two happen to be
 // declared by the system header, which is why they were called directly.
 static PFNGLACTIVETEXTUREPROC glActiveTexture_ptr = nullptr;
+static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays_ptr = nullptr;
+static PFNGLBINDVERTEXARRAYPROC glBindVertexArray_ptr = nullptr;
 static PFNGLBLENDEQUATIONPROC glBlendEquation_ptr = nullptr;
 static PFNGLGENBUFFERSPROC glGenBuffers_ptr = nullptr;
 static PFNGLBINDBUFFERPROC glBindBuffer_ptr = nullptr;
@@ -106,6 +109,8 @@ static PCGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v_ptr = nullptr;
 
 static void load_gl_functions() {
     glActiveTexture_ptr = (PFNGLACTIVETEXTUREPROC)SDL_GL_GetProcAddress("glActiveTexture");
+    glGenVertexArrays_ptr = (PFNGLGENVERTEXARRAYSPROC)SDL_GL_GetProcAddress("glGenVertexArrays");
+    glBindVertexArray_ptr = (PFNGLBINDVERTEXARRAYPROC)SDL_GL_GetProcAddress("glBindVertexArray");
     glBlendEquation_ptr = (PFNGLBLENDEQUATIONPROC)SDL_GL_GetProcAddress("glBlendEquation");
     glGenBuffers_ptr = (PFNGLGENBUFFERSPROC)SDL_GL_GetProcAddress("glGenBuffers");
     glBindBuffer_ptr = (PFNGLBINDBUFFERPROC)SDL_GL_GetProcAddress("glBindBuffer");
@@ -1917,6 +1922,175 @@ void pc_gfx_begin_frame(void) {
     perf_gpu_scene_begin();
 }
 
+// ─── Post-processing ───
+//
+// Runs between the scene render and the blit to the window. The scene target
+// is sampled into a second one of the same size, and the blit then reads from
+// whichever holds the result.
+//
+// With nothing switched on this does nothing at all and the blit reads the
+// scene directly, exactly as it did before: a fullscreen pass that only copies
+// the frame is pure cost, and the port's reference GPU is a GTX 1050.
+
+static PcPostEffects sPostEffects;
+static PcPostEffects sPostCompiledFor;
+static bool sPostCompiled = false;
+static GLuint sPostFramebuffer = 0;
+static GLuint sPostColorTexture = 0;
+static GLuint sPostProgram = 0;
+static GLuint sPostVAO = 0;
+static int sPostWidth = 0, sPostHeight = 0;
+
+void pc_gfx_set_post_effects(const PcPostEffects& fx) { sPostEffects = fx; }
+
+static GLuint post_compile(GLenum type, const char* src, const char* what)
+{
+    GLuint sh = glCreateShader_ptr(type);
+    glShaderSource_ptr(sh, 1, &src, nullptr);
+    glCompileShader_ptr(sh);
+    GLint ok = 0;
+    if (glGetShaderiv_ptr) glGetShaderiv_ptr(sh, GL_COMPILE_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        char log[2048] = { 0 };
+        if (glGetShaderInfoLog_ptr) glGetShaderInfoLog_ptr(sh, sizeof(log), nullptr, log);
+        printf("[PC Port] post-process %s failed to compile: %s\n", what, log);
+        glDeleteShader_ptr(sh);
+        return 0;
+    }
+    return sh;
+}
+
+// Builds the program for the current effect set. Returns false if anything at
+// all is missing, and every caller treats that as "no post-processing" rather
+// than as a reason to stop drawing.
+static bool post_ensure_program()
+{
+    if (sPostCompiled && sPostCompiledFor == sPostEffects && sPostProgram) return true;
+
+    if (sPostProgram) {
+        glDeleteProgram_ptr(sPostProgram);
+        sPostProgram = 0;
+    }
+    sPostCompiled = false;
+
+    if (!glCreateShader_ptr || !glCreateProgram_ptr || !glGenVertexArrays_ptr) return false;
+
+    const std::string frag = pc_post_build_fragment_shader(sPostEffects);
+    GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "vertex shader");
+    if (!vs) return false;
+    GLuint fs = post_compile(GL_FRAGMENT_SHADER, frag.c_str(), "fragment shader");
+    if (!fs) { glDeleteShader_ptr(vs); return false; }
+
+    sPostProgram = glCreateProgram_ptr();
+    glAttachShader_ptr(sPostProgram, vs);
+    glAttachShader_ptr(sPostProgram, fs);
+    glLinkProgram_ptr(sPostProgram);
+    glDeleteShader_ptr(vs);
+    glDeleteShader_ptr(fs);
+
+    GLint linked = 0;
+    if (glGetProgramiv_ptr) glGetProgramiv_ptr(sPostProgram, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE) {
+        char log[2048] = { 0 };
+        if (glGetProgramInfoLog_ptr) glGetProgramInfoLog_ptr(sPostProgram, sizeof(log), nullptr, log);
+        printf("[PC Port] post-process program failed to link: %s\n", log);
+        glDeleteProgram_ptr(sPostProgram);
+        sPostProgram = 0;
+        return false;
+    }
+
+    if (!sPostVAO) glGenVertexArrays_ptr(1, &sPostVAO);
+    sPostCompiledFor = sPostEffects;
+    sPostCompiled = true;
+    // Once per change of settings, not per frame. Says which effects the pass
+    // is actually running, which is otherwise only visible by looking hard at
+    // the picture.
+    printf("[PC Port] Post-process pass:%s\n",
+           sPostEffects.colourGrading ? " colour grading" : " (none)");
+    fflush(stdout);
+    return true;
+}
+
+// Keeps the destination the same size as the scene target, which the render
+// scale changes at runtime.
+static bool post_ensure_target()
+{
+    if (!glGenFramebuffers_ptr || !glBindFramebuffer_ptr || !glFramebufferTexture2D_ptr) return false;
+    if (!sPostFramebuffer) {
+        glGenFramebuffers_ptr(1, &sPostFramebuffer);
+        glGenTextures(1, &sPostColorTexture);
+        sPostWidth = sPostHeight = 0;
+    }
+    if (sPostWidth != sRenderWidth || sPostHeight != sRenderHeight) {
+        glBindTexture(GL_TEXTURE_2D, sPostColorTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, sRenderWidth, sRenderHeight,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sPostFramebuffer);
+        glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                   sPostColorTexture, 0);
+        const bool complete = glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindTexture(GL_TEXTURE_2D, 0);
+        sBoundTextures[0] = 0;
+        if (!complete) return false;
+        sPostWidth = sRenderWidth;
+        sPostHeight = sRenderHeight;
+    }
+    return true;
+}
+
+// Returns the framebuffer the blit should read from.
+static GLuint post_apply()
+{
+    if (!pc_post_any_enabled(sPostEffects)) return sNativeFramebuffer;
+    // An effect that needs depth cannot run when the driver made us fall back
+    // to a renderbuffer. Drop the pass rather than sample a texture that is
+    // not there.
+    if (pc_post_needs_depth(sPostEffects) && !sDepthIsTexture) return sNativeFramebuffer;
+    // Any of these failing means no post-processing, never a stopped frame.
+    if (!post_ensure_target() || !post_ensure_program()) return sNativeFramebuffer;
+
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sPostFramebuffer);
+    glViewport(0, 0, sRenderWidth, sRenderHeight);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    glUseProgram_ptr(sPostProgram);
+    if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
+    if (glUniform1i_ptr) {
+        glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uScene"), 0);
+    }
+    if (pc_post_needs_depth(sPostEffects) && glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+        if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDepth"), 1);
+        glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (sPostEffects.colourGrading && glUniform1f_ptr) {
+        glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uGamma"), sPostEffects.gamma);
+        glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uBrightness"), sPostEffects.brightness);
+        glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uSaturation"), sPostEffects.saturation);
+    }
+
+    // The scene leaves vertex arrays and buffers bound. An empty vertex array
+    // object detaches all of it, so the pass cannot be disturbed by whatever
+    // the last draw was doing; the geometry comes from gl_VertexID.
+    glBindVertexArray_ptr(sPostVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray_ptr(0);
+
+    glUseProgram_ptr(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+    return sPostFramebuffer;
+}
+
 void pc_gfx_present(void) {
     pc_gfx_flush_batch();
 #ifdef GL_TIME_ELAPSED
@@ -1937,7 +2111,8 @@ void pc_gfx_present(void) {
         }
     }
 #endif
-    glBindFramebuffer_ptr(GL_READ_FRAMEBUFFER, sNativeFramebuffer);
+    const GLuint sourceFramebuffer = post_apply();
+    glBindFramebuffer_ptr(GL_READ_FRAMEBUFFER, sourceFramebuffer);
     glBindFramebuffer_ptr(GL_DRAW_FRAMEBUFFER, 0);
     // Game renders to the target aspect ratio. Display it centered in the window.
     float windowAspect = float(sDrawableWidth) / float(sDrawableHeight);
