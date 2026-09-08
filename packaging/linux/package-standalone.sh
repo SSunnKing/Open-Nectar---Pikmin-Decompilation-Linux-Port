@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package-standalone.sh [--clean] [--skip-tests] [--build-dir DIR]
+# package-standalone.sh [--clean] [--skip-tests] [--build-dir DIR] [--lang es|en]
 #
 # Genera un paquete Linux x86-64 totalmente autocontenido en
 # packaging/linux/out/pikmin-native-linux — sin Docker ni herramientas
@@ -12,7 +12,7 @@
 #     pikmin-launcher.real  binario real
 #     lib/              <- glibc, libstdc++, SDL2 y demás librerías
 #     lib/licenses/     <- avisos de licencia de las librerías incluidas
-#     LEEME.txt
+#     README.txt       <- LEEME.txt con --lang es
 #
 # Los lanzadores invocan el ld-linux incluido en lib/, así que el juego
 # arranca con la glibc del paquete aunque la distro del usuario sea más
@@ -29,19 +29,34 @@ stage_dir="${build_dir}/stage"
 
 clean=0
 run_tests=1
+# El paquete se publica en inglés, así que ese es el idioma por defecto.
+lang=en
 while (($#)); do
     case "$1" in
         --clean) clean=1 ;;
         --skip-tests) run_tests=0 ;;
         --build-dir) build_dir="$2"; stage_dir="${build_dir}/stage"; shift ;;
+        --lang)
+            case "${2-}" in
+                en|es) lang="$2" ;;
+                *) printf 'Idioma no soportado: %s (usa en o es)\n' "${2-}" >&2; exit 2 ;;
+            esac
+            shift
+            ;;
         --help|-h)
-            printf 'Uso: %s [--clean] [--skip-tests] [--build-dir DIR]\n' "$0"
+            printf 'Uso: %s [--clean] [--skip-tests] [--build-dir DIR] [--lang es|en]\n' "$0"
             exit 0
             ;;
         *) printf 'Opción desconocida: %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
 done
+
+if [[ "${lang}" == es ]]; then
+    readme_source=LEEME.txt
+else
+    readme_source=README.txt
+fi
 
 if ((clean)); then
     rm -rf "${build_dir}" "${output_dir}"
@@ -76,7 +91,7 @@ DESTDIR="${stage_dir}" cmake --install "${build_dir}" --strip >/dev/null
 mkdir -p "${output_dir}/lib"
 cp "${stage_dir}/usr/bin/nectar" "${output_dir}/nectar.real"
 cp "${stage_dir}/usr/bin/nectar-launcher" "${output_dir}/nectar-launcher.real"
-cp "${script_dir}/LEEME.txt" "${output_dir}/LEEME.txt"
+cp "${script_dir}/${readme_source}" "${output_dir}/${readme_source}"
 
 printf '%s\n' '[4/5] Copiando librerías del sistema al paquete...'
 # Librerías acopladas al driver de GPU o al kernel: las aporta el sistema.
@@ -180,4 +195,4 @@ fi
 "${output_dir}/nectar-launcher" --help >/dev/null
 
 printf '\nPaquete autocontenido creado en:\n  %s\n' "${output_dir}"
-printf '%s\n' 'Cópialo a cualquier Linux x86-64 y ejecuta ./pikmin-launcher.'
+printf '%s\n' 'Cópialo a cualquier Linux x86-64 y ejecuta ./nectar-launcher.'
