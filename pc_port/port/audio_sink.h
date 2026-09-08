@@ -26,6 +26,10 @@ int PikiAudioSinkDrained(void);
 int PikiAudioSinkGetProgress(uint64_t* submittedFrames, uint64_t* queuedFrames);
 void PikiAudioSinkPause(void);
 void PikiAudioSinkClose(void);
+/* Closes the device and releases the audio subsystem. Close() keeps the
+   subsystem up so a failed open can be retried cheaply; this is the real
+   teardown, for process shutdown. */
+void PikiAudioSinkShutdown(void);
 uint64_t PikiAudioSinkSubmittedFrames(void);
 uint64_t PikiAudioSinkQueuedFrames(void);
 uint64_t PikiAudioSinkPlayedFrames(void);

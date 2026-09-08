@@ -20,6 +20,7 @@
 #include <limits>
 #include <numeric>
 #include <chrono>
+#include <thread>
 
 #include <Dolphin/ai.h>
 #include <Dolphin/ar.h>
@@ -1551,15 +1552,72 @@ bool sSinkReady = false;
 u64 sNextSinkAttempt = 0;
 u64 sNextSilentFrame = 0;
 bool sPumping = false;
+
+// Opening the playback device can block for a long time when the default
+// device is missing or busy -- SDL's PulseAudio backend waits a full 30
+// seconds before reporting failure. This pump runs on the game thread, so a
+// blocking open froze the whole game in 30-second chunks, retrying every half
+// second: the black screen and the very slow start people saw when audio was
+// not ready at launch. Attempt the open on a worker and keep simulating and
+// rendering silently until it lands.
+//
+// Only the pump touches the sink, and it leaves it alone while an attempt is
+// in flight (sSinkReady stays false, which gates every other sink call), so
+// the worker owns the sink for the duration of its attempt.
+enum class SinkOpen { Idle, Running, Finished };
+std::thread sSinkOpenThread;
+std::atomic<SinkOpen> sSinkOpenState { SinkOpen::Idle };
+std::atomic<bool> sSinkOpenResult { false };
+bool sSinkFailureReported = false;
+
+void joinSinkOpenThread()
+{
+    if (sSinkOpenThread.joinable()) sSinkOpenThread.join();
+}
+
+void beginSinkOpen()
+{
+    joinSinkOpenThread();
+    sSinkOpenState.store(SinkOpen::Running);
+    sSinkOpenThread = std::thread([] {
+        const bool ok = PikiAudioSinkTryOpen(kHostSampleRate) != 0;
+        sSinkOpenResult.store(ok);
+        sSinkOpenState.store(SinkOpen::Finished);
+    });
+}
+
+void serviceSinkOpen(u64 now)
+{
+    switch (sSinkOpenState.load()) {
+    case SinkOpen::Idle:
+        if (now >= sNextSinkAttempt) beginSinkOpen();
+        break;
+    case SinkOpen::Running:
+        break;
+    case SinkOpen::Finished:
+        joinSinkOpenThread();
+        sSinkReady = sSinkOpenResult.load();
+        sSinkOpenState.store(SinkOpen::Idle);
+        sNextSinkAttempt = now + kSinkRetryPeriodNs;
+        // Say so once, so a silent game is distinguishable from a broken one.
+        // Retries continue in the background; if a device appears later the
+        // sound comes back on its own.
+        if (!sSinkReady && !sSinkFailureReported) {
+            sSinkFailureReported = true;
+            std::fprintf(stderr, "[jaudio] no audio device yet; playing silently and retrying\n");
+        } else if (sSinkReady) {
+            sSinkFailureReported = false;
+        }
+        break;
+    }
+}
+
 void pumpAudio()
 {
     if (!sAudioRunning.load() || sPumping) return;
     sPumping = true;
     const u64 now = monotonicNs();
-    if (!sSinkReady && now >= sNextSinkAttempt) {
-        sSinkReady = PikiAudioSinkTryOpen(kHostSampleRate) != 0;
-        sNextSinkAttempt = now + kSinkRetryPeriodNs;
-    }
+    if (!sSinkReady) serviceSinkOpen(now);
     std::array<s16, kFrameSamples * 2> pcm {};
     // Bound catch-up work and queued latency even after a long frame stall.
     for (size_t frame = 0; frame < 12; ++frame) {
@@ -1747,8 +1805,13 @@ void PikiJAudioTick() { pumpAudio(); }
 void StopAudioThread()
 {
     sAudioRunning.store(false);
-    PikiAudioSinkClose();
+    // The worker may still be sitting in a blocking open; it owns the sink
+    // until it returns, so wait for it before touching the device.
+    joinSinkOpenThread();
+    sSinkOpenState.store(SinkOpen::Idle);
+    PikiAudioSinkShutdown();
     sSinkReady = false;
+    sNextSinkAttempt = 0;
     sAudioDiagnostics.stop();
     std::free(sExpandedHeap);
     sExpandedHeap = nullptr;

@@ -9,20 +9,35 @@ SDL_AudioDeviceID device = 0;
 uint64_t submitted = 0;
 bool ownsAudio = false;
 }
+namespace {
+// Bringing the audio subsystem up connects SDL's client to the system daemon.
+// Retries must not repeat that: only the device open is retried, so keep the
+// subsystem alive between attempts and tear it down once, at shutdown.
+bool ensureSubsystem()
+{
+    if (ownsAudio) return true;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return false;
+    ownsAudio = true;
+    return true;
+}
+}
 extern "C" {
 void PikiAudioSinkClose()
 {
     if (device) SDL_CloseAudioDevice(device);
     device = 0;
     submitted = 0;
+}
+void PikiAudioSinkShutdown()
+{
+    PikiAudioSinkClose();
     if (ownsAudio) SDL_QuitSubSystem(SDL_INIT_AUDIO);
     ownsAudio = false;
 }
 int PikiAudioSinkTryOpen(int rate)
 {
     PikiAudioSinkClose();
-    if (rate <= 0 || SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return 0;
-    ownsAudio = true;
+    if (rate <= 0 || !ensureSubsystem()) return 0;
     SDL_AudioSpec spec {};
     spec.freq = rate;
     spec.format = AUDIO_S16SYS;
