@@ -280,6 +280,18 @@ Press **F1** at any time to open the configuration menu:
 - **Pikmin limit**: how many Pikmin may be on the field at once, from 50 up to 999. The original is 100. The Onion, the field and the matrix pool are all sized from this number, so it applies when a stage loads rather than mid-day. Tested to 945 Pikmin on screen; high values do cost frame rate, and how much depends on your machine
 - **Day length**: 5 to 30 minutes of play per in-game day, 10 being the original. This stretches the game's own clock, so nothing moves faster or slower — sunset simply arrives sooner or later
 
+**Permadeath** is not in this menu, because it belongs to a save file rather than to the port. You choose it once, when you create the file, and the file screen marks the files that carry it. Lose Olimar and the run ends and that save is erased — through the game's own delete, so the slot ends up exactly as a manually deleted one does. A copy of a permadeath file is a permadeath file.
+
+**Photo mode** is on **F3**. It freezes the world and hands you the camera:
+
+| | |
+|---|---|
+| `WASD` | move along the look direction |
+| `Space` / `Ctrl` | up / down |
+| Arrow keys | look |
+| `Q` / `E` | tilt; `R` levels |
+| `Shift` / `Alt` | faster / slower |
+
 **Controls:**
 - **Control scheme**: Classic (GameCube) or Mouse pointer
 - **Mouse sensitivity**: 0.1x to 5.0x

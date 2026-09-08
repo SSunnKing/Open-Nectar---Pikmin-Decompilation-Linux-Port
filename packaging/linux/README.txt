@@ -6,10 +6,18 @@ You don't need to install dependencies for most of the program.
 This build runs the game's original JAudio sound engine: music, sound
 effects and cinematic audio all play.
 
-New in 0.3.1: the game no longer freezes on startup when the audio device
+New in 0.3.5: permadeath, chosen when you create a file and carried by
+that file thereafter -- lose Olimar and the run ends and its save is
+erased. Photo mode on F3 freezes the world and lets you fly the camera
+anywhere. The Pikmin limit now really reaches its high settings: a second
+fixed pool ran out somewhere past four hundred on screen and took the game
+with it. And the practice stage no longer falls silent when a boss comes
+near.
+
+From 0.3.1: the game no longer freezes on startup when the audio device
 is busy or slow to appear. It starts silently and the sound joins in once
 the device opens. Controller sticks no longer invert at the very end of
-their travel, and the F1 menu is navigable with a controller. Two new mods
+their travel, and the F1 menu is navigable with a controller. Two mods
 under Mods in the F1 menu: a Pikmin field limit from 50 to 999, and an
 adjustable day length between 5 and 30 minutes.
 

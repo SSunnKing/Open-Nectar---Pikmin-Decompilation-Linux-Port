@@ -98,6 +98,14 @@ Under Mods:
   - Chain Pikmin actions: Pikmin look for more work after finishing a task.
     Off by default, to stay faithful to the original.
 
+Permadeath is not in this menu. It belongs to a save file rather than to
+the port, so it is chosen once, when you create the file, and the file
+screen marks the files that carry it.
+
+Photo mode is on F3. It freezes the world and hands you the camera: WASD
+moves along the look direction, space and control lift and drop, the
+arrows look, Q and E tilt and R levels, and shift or alt change pace.
+
 
 KNOWN STATE
 -----------
