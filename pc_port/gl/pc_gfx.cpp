@@ -3101,7 +3101,11 @@ static std::vector<TevProgramEntry> sTevPrograms;
 // configuration and skip both the hash and the table scan when it repeats.
 // Fog, as the game asks for it. Kept here rather than thrown away in the stub:
 // the values are per stage and the game already computes them correctly.
-static bool sFogEnabled = false;
+// What the game asked for, and whether the player allows it. Kept apart so a
+// toggle takes effect on the next frame drawn rather than on the next time the
+// game happens to call setFog.
+static bool sFogRequested = false;
+static bool sFogAllowed = true;
 static float sFogStart = 0.0f, sFogEnd = 0.0f, sFogNear = 0.0f, sFogFar = 0.0f;
 static float sFogColour[3] = { 0.0f, 0.0f, 0.0f };
 
@@ -3111,7 +3115,7 @@ void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float fa
     // A span of zero would divide by nothing and a near/far pair that is not
     // ordered cannot describe a view, so treat either as "no fog" rather than
     // letting it reach the shader.
-    sFogEnabled = enabled != 0 && endZ != startZ && farZ > nearZ;
+    sFogRequested = enabled != 0 && endZ != startZ && farZ > nearZ;
     sFogStart = startZ;
     sFogEnd = endZ;
     sFogNear = nearZ;
@@ -3123,13 +3127,15 @@ void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float fa
     // are arriving and what they are, which is otherwise only answerable by
     // staring at a horizon.
     static bool reported = false;
-    if (sFogEnabled && !reported) {
+    if (sFogRequested && !reported) {
         reported = true;
         printf("[PC Port] Fog active: %.0f..%.0f (view %.0f..%.0f) colour %d,%d,%d\n",
                startZ, endZ, nearZ, farZ, r, g, b);
         fflush(stdout);
     }
 }
+
+void pc_gfx_set_fog_allowed(int allowed) { sFogAllowed = allowed != 0; }
 
 static PcTevShaderKey sLastTevKey;
 static bool sLastTevKeyValid = false;
@@ -3178,7 +3184,7 @@ static void build_tev_shader_key(PcTevShaderKey& key) {
     key.useMaterialRgb   = uint8_t(sChannels[0].matSrc == GX_SRC_REG ? 1 : 0);
     key.useMaterialAlpha = uint8_t(sChannels[0].alphaMatSrc == GX_SRC_REG ? 1 : 0);
     key.useMaterialRgb1  = uint8_t(sChannels[1].matSrc == GX_SRC_REG ? 1 : 0);
-    key.fog              = uint8_t(sFogEnabled ? 1 : 0);
+    key.fog              = uint8_t(sFogRequested && sFogAllowed ? 1 : 0);
 }
 
 // Compiles and links one specialised program. Returns 0 on failure, which

@@ -133,6 +133,10 @@ unsigned int pc_gfx_get_depth_texture(void);
 void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float farZ,
                     unsigned char r, unsigned char g, unsigned char b);
 
+/// Player override. The game keeps asking for fog either way; this decides
+/// whether the request is honoured, so a toggle lands on the next frame.
+void pc_gfx_set_fog_allowed(int allowed);
+
 /// Sets the post-process effect set. With nothing enabled the pass is skipped
 /// entirely and the scene blits straight to the window.
 struct PcPostEffects;

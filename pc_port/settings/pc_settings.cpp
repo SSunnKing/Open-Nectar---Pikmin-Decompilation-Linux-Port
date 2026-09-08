@@ -94,6 +94,7 @@ struct PcConfig {
     // Colour grading. Neutral by default: the port should look like the game
     // until someone asks otherwise.
     int antialiasing = 0;   // 0 off, 1 FXAA
+    int fog = 1;            // the game's own fog, on by default
     int colourGrading = 0;
     float gamma       = 1.0f;
     float brightness  = 0.0f;
@@ -122,6 +123,7 @@ struct PcConfig {
         pikiLimit = 100;
         dayMinutes = 10;
         antialiasing  = 0;
+        fog           = 1;
         colourGrading = 0;
         gamma         = 1.0f;
         brightness    = 0.0f;
@@ -235,7 +237,7 @@ constexpr int kAdvancedRowCount = 4;
 // reference machine is a GTX 1050 -- so nothing here may be mandatory.
 bool sInGraphicsSubmenu = false;
 int sGraphicsSelection = 0;
-constexpr int kGraphicsRowCount = 5;
+constexpr int kGraphicsRowCount = 6;
 
 // Colour grading stops. Neutral is in every list, and the pass is skipped
 // entirely when all three sit there.
@@ -408,6 +410,7 @@ void applyVideo() {
 // itself whether it is worth running, so this can be called freely.
 void applyGraphics(const PcConfig& config) {
     PcPostEffects fx;
+    pc_gfx_set_fog_allowed(config.fog);
     fx.fxaa          = config.antialiasing != 0;
     fx.colourGrading = config.colourGrading != 0;
     fx.gamma         = config.gamma;
@@ -505,6 +508,7 @@ void saveConfig() {
     out << "pikiLimit = " << sConfig.pikiLimit << "\n";
     out << "dayMinutes = " << sConfig.dayMinutes << "\n";
     out << "antialiasing = " << sConfig.antialiasing << "\n";
+    out << "fog = " << sConfig.fog << "\n";
     out << "colourGrading = " << sConfig.colourGrading << "\n";
     out << "gamma = " << sConfig.gamma << "\n";
     out << "brightness = " << sConfig.brightness << "\n";
@@ -601,6 +605,9 @@ void loadConfig() {
         else if (key == "pikiLimit") {
             sConfig.pikiLimit = atoi(val.c_str());
             if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
+        }
+        else if (key == "fog") {
+            sConfig.fog = atoi(val.c_str()) ? 1 : 0;
         }
         else if (key == "antialiasing") {
             sConfig.antialiasing = atoi(val.c_str()) ? 1 : 0;
@@ -1057,12 +1064,14 @@ void pollMenuInput() {
         if (sGraphicsSelection == 0) {
             if (left || right) sPending.antialiasing = sPending.antialiasing ? 0 : 1;
         } else if (sGraphicsSelection == 1) {
-            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
+            if (left || right) sPending.fog = sPending.fog ? 0 : 1;
         } else if (sGraphicsSelection == 2) {
-            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
+            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
         } else if (sGraphicsSelection == 3) {
-            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
         } else if (sGraphicsSelection == 4) {
+            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+        } else if (sGraphicsSelection == 5) {
             if (left || right) sPending.saturation = step(sPending.saturation, kSaturationStops, kSaturationStopCount, left);
         }
         // Applied as you move, so the effect can be judged against the scene
@@ -2102,6 +2111,7 @@ void pc_settings_draw(void) {
 
         const char* labels[kGraphicsRowCount] = {
             "Antialiasing",
+            "Fog",
             "Colour Grading",
             "Gamma",
             "Brightness",
@@ -2120,14 +2130,18 @@ void pc_settings_draw(void) {
             if (i == 0) {
                 snprintf(value, sizeof(value), "%s", sPending.antialiasing ? "FXAA" : "Off");
             } else if (i == 1) {
+                // The game draws fog of its own, so on is the original and off
+                // is the deviation. Say which is which.
+                snprintf(value, sizeof(value), "%s", sPending.fog ? "On  (original)" : "Off");
+            } else if (i == 2) {
                 snprintf(value, sizeof(value), "%s", gradingOn ? "On" : "Off");
             } else if (!gradingOn) {
                 // The three sliders do nothing while grading is off. Saying so
                 // beats letting someone move them and conclude it is broken.
                 snprintf(value, sizeof(value), "--");
-            } else if (i == 2) {
-                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
             } else if (i == 3) {
+                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
+            } else if (i == 4) {
                 snprintf(value, sizeof(value), sPending.brightness == 0.0f ? "%+.2f  (neutral)" : "%+.2f", sPending.brightness);
             } else {
                 snprintf(value, sizeof(value), sPending.saturation == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.saturation);
