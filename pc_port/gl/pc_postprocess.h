@@ -25,6 +25,15 @@ struct PcPostEffects {
 	// the leaves and the grass along with everything else.
 	bool fxaa = false;
 
+	// Bloom. Unlike the others this is not one pass: bright areas are pulled
+	// out into a half-resolution target, blurred separably, and added back.
+	// Half resolution is not a compromise here -- the result is a wide blur, so
+	// the detail thrown away was never going to survive it, and it makes the
+	// blur four times cheaper.
+	bool bloom          = false;
+	float bloomThreshold = 0.75f;  // luma above which a pixel contributes
+	float bloomIntensity = 0.0f;   // 0 adds nothing, so the pass is skipped
+
 	// Colour grading. Cheap, needs only the scene colour, and it is the effect
 	// that proves the whole path works end to end.
 	bool colourGrading = false;
@@ -34,7 +43,9 @@ struct PcPostEffects {
 
 	bool operator==(const PcPostEffects& o) const
 	{
-		return fxaa == o.fxaa && colourGrading == o.colourGrading && gamma == o.gamma
+		return fxaa == o.fxaa && bloom == o.bloom
+		    && bloomThreshold == o.bloomThreshold && bloomIntensity == o.bloomIntensity
+		    && colourGrading == o.colourGrading && gamma == o.gamma
 		    && brightness == o.brightness && saturation == o.saturation;
 	}
 	bool operator!=(const PcPostEffects& o) const { return !(*this == o); }
@@ -65,3 +76,15 @@ const char* pc_post_vertex_shader();
 
 /// Fragment shader containing only the effects that are switched on.
 std::string pc_post_build_fragment_shader(const PcPostEffects& fx);
+
+/// True when bloom will actually contribute. Bloom at zero intensity is the
+/// same picture for the price of three extra passes.
+bool pc_post_bloom_active(const PcPostEffects& fx);
+
+/// Extracts the parts of the scene bright enough to bloom, into a smaller
+/// target. Shares the fullscreen vertex shader.
+std::string pc_post_build_brightpass_shader();
+
+/// One half of a separable Gaussian blur. uBlurStep carries the direction and
+/// the texel size together, so the same program serves both axes.
+std::string pc_post_build_blur_shader();

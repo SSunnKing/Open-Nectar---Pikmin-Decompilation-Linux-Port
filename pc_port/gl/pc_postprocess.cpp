@@ -1,8 +1,16 @@
 #include "pc_postprocess.h"
 
+bool pc_post_bloom_active(const PcPostEffects& fx)
+{
+	// Zero intensity is the same picture, and bloom is the one effect here
+	// that costs three extra passes to produce it.
+	return fx.bloom && fx.bloomIntensity > 0.0f;
+}
+
 bool pc_post_any_enabled(const PcPostEffects& fx)
 {
 	if (fx.fxaa) return true;
+	if (pc_post_bloom_active(fx)) return true;
 	if (!fx.colourGrading) return false;
 	// Switched on but set to neutral values is the same picture, so skip the
 	// pass instead of spending a fullscreen draw reproducing the input.
@@ -15,6 +23,58 @@ bool pc_post_needs_depth(const PcPostEffects& fx)
 	// field and depth-based fog will change this when they arrive.
 	(void)fx;
 	return false;
+}
+
+std::string pc_post_build_brightpass_shader()
+{
+	// Runs at half resolution, so each fetch already averages four scene
+	// pixels through bilinear filtering -- a free first blur step.
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uScene;\n";
+	src += "uniform float uThreshold;\n";
+	src += "void main() {\n";
+	src += "    vec3 c = texture(uScene, vUV).rgb;\n";
+	src += "    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));\n";
+	// Scaling by how far past the threshold it went, rather than passing the
+	// colour through unchanged, keeps the transition soft. A hard cut makes
+	// bloom pop in and out as something drifts across the threshold.
+	src += "    float excess = max(luma - uThreshold, 0.0);\n";
+	src += "    float weight = (luma > 1e-5) ? (excess / luma) : 0.0;\n";
+	src += "    oColour = vec4(c * weight, 1.0);\n";
+	src += "}\n";
+	return src;
+}
+
+std::string pc_post_build_blur_shader()
+{
+	// Separable Gaussian: the same program is run once across and once down,
+	// which is nine taps instead of the eighty-one a single two-dimensional
+	// kernel of the same width would need.
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uSource;\n";
+	src += "uniform vec2 uBlurStep;\n";
+	src += "void main() {\n";
+	src += "    const float w0 = 0.227027;\n";
+	src += "    const float w1 = 0.316216;\n";
+	src += "    const float w2 = 0.070270;\n";
+	// Sampling between texels lets one bilinear fetch stand for two, so a
+	// five-tap loop covers the reach of nine.
+	src += "    const float o1 = 1.384615;\n";
+	src += "    const float o2 = 3.230769;\n";
+	src += "    vec3 c = texture(uSource, vUV).rgb * w0;\n";
+	src += "    c += texture(uSource, vUV + uBlurStep * o1).rgb * w1;\n";
+	src += "    c += texture(uSource, vUV - uBlurStep * o1).rgb * w1;\n";
+	src += "    c += texture(uSource, vUV + uBlurStep * o2).rgb * w2;\n";
+	src += "    c += texture(uSource, vUV - uBlurStep * o2).rgb * w2;\n";
+	src += "    oColour = vec4(c, 1.0);\n";
+	src += "}\n";
+	return src;
 }
 
 const char* pc_post_vertex_shader()
@@ -47,6 +107,10 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 
 	if (pc_post_needs_depth(fx)) {
 		src += "uniform sampler2D uDepth;\n";
+	}
+	if (pc_post_bloom_active(fx)) {
+		src += "uniform sampler2D uBloom;\n";
+		src += "uniform float uBloomIntensity;\n";
 	}
 	if (fx.colourGrading) {
 		src += "uniform float uGamma;\n";
@@ -103,6 +167,16 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 		src += "    vec3 c = fxaaFilter(vUV, uTexelSize.xy);\n";
 	} else {
 		src += "    vec3 c = texture(uScene, vUV).rgb;\n";
+	}
+
+	if (pc_post_bloom_active(fx)) {
+		// Added, not mixed: bloom is light that scattered on its way to the
+		// lens, so it arrives on top of what is already there rather than
+		// replacing part of it.
+		//
+		// Before grading, because grading is the tone curve applied to the
+		// light reaching the sensor, and this is part of that light.
+		src += "    c += texture(uBloom, vUV).rgb * uBloomIntensity;\n";
 	}
 
 	if (fx.colourGrading) {

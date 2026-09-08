@@ -165,6 +165,82 @@ int main()
 		check(a != b, "antialiasing is part of the comparison");
 	}
 
+	// Bloom is the one effect that costs three extra passes, so "on" alone is
+	// not enough to run it -- it has to actually contribute something.
+	{
+		PcPostEffects fx;
+		fx.bloom = true;
+		fx.bloomIntensity = 0.0f;
+		check(!pc_post_bloom_active(fx), "bloom at zero intensity is not active");
+		check(!pc_post_any_enabled(fx), "bloom at zero intensity runs no pass");
+		fx.bloomIntensity = 0.6f;
+		check(pc_post_bloom_active(fx), "bloom with intensity is active");
+		check(pc_post_any_enabled(fx), "active bloom runs the pass");
+		fx.bloom = false;
+		check(!pc_post_bloom_active(fx), "switching bloom off overrides its intensity");
+	}
+
+	// The composite must be added and not mixed: bloom is light that scattered
+	// on the way to the lens, so it arrives on top of the image rather than
+	// replacing part of it.
+	{
+		PcPostEffects fx;
+		fx.bloom = true;
+		fx.bloomIntensity = 0.6f;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(contains(src, "uniform sampler2D uBloom"), "bloom declares its sampler");
+		check(contains(src, "c += texture(uBloom, vUV).rgb * uBloomIntensity;"),
+		      "bloom is added, not mixed");
+
+		PcPostEffects off;
+		const std::string bare = pc_post_build_fragment_shader(off);
+		check(!contains(bare, "uBloom"), "no bloom means no bloom sampler");
+	}
+
+	// Order matters: grading is the tone curve applied to the light reaching
+	// the sensor, and bloom is part of that light, so it must come first.
+	{
+		PcPostEffects fx;
+		fx.bloom = true;
+		fx.bloomIntensity = 0.6f;
+		fx.colourGrading = true;
+		fx.gamma = 1.2f;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		const size_t bloomAt = src.find("uBloomIntensity");
+		const size_t gradeAt = src.find("1.0 / uGamma");
+		check(bloomAt != std::string::npos && gradeAt != std::string::npos,
+		      "both effects are present");
+		check(bloomAt < gradeAt, "bloom is composited before grading");
+	}
+
+	// The two helper stages are separate programs and must stand alone.
+	{
+		const std::string bright = pc_post_build_brightpass_shader();
+		const std::string blur   = pc_post_build_blur_shader();
+		for (const std::string* src : { &bright, &blur }) {
+			check(src->rfind("#version", 0) == 0, "a helper stage begins with its version");
+			check(contains(*src, "void main"), "a helper stage has an entry point");
+			check(contains(*src, "oColour"), "a helper stage writes its output");
+		}
+		check(contains(bright, "uThreshold"), "the bright pass takes a threshold");
+		// A hard cut makes bloom pop in and out as something drifts across the
+		// threshold; weighting by how far past it went keeps that smooth.
+		check(contains(bright, "excess / luma"), "the bright pass fades in rather than cutting");
+		check(contains(blur, "uBlurStep"), "the blur takes a direction");
+		check(contains(blur, "uSource"), "the blur reads its own source, not the scene");
+	}
+
+	// Recompilation is driven by equality, so every bloom field has to be in it.
+	{
+		PcPostEffects a, b;
+		b.bloom = true;
+		check(a != b, "the bloom switch is part of the comparison");
+		b = a; b.bloomIntensity = 0.5f;
+		check(a != b, "bloom intensity is part of the comparison");
+		b = a; b.bloomThreshold = 0.5f;
+		check(a != b, "bloom threshold is part of the comparison");
+	}
+
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");
 	return failures == 0 ? 0 : 1;
 }

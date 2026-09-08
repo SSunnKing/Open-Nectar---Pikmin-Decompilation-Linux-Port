@@ -81,6 +81,7 @@ static PFNGLUNIFORMMATRIX3FVPROC glUniformMatrix3fv_ptr = nullptr;
 static PFNGLUNIFORM1IPROC glUniform1i_ptr = nullptr;
 static PFNGLUNIFORM1FPROC glUniform1f_ptr = nullptr;
 static PFNGLUNIFORM4FPROC glUniform4f_ptr = nullptr;
+static PFNGLUNIFORM2FPROC glUniform2f_ptr = nullptr;
 static PFNGLUNIFORM2IPROC glUniform2i_ptr = nullptr;
 static PFNGLUNIFORM4IPROC glUniform4i_ptr = nullptr;
 static PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray_ptr = nullptr;
@@ -134,6 +135,7 @@ static void load_gl_functions() {
     glUniform1i_ptr = (PFNGLUNIFORM1IPROC)SDL_GL_GetProcAddress("glUniform1i");
     glUniform1f_ptr = (PFNGLUNIFORM1FPROC)SDL_GL_GetProcAddress("glUniform1f");
     glUniform4f_ptr = (PFNGLUNIFORM4FPROC)SDL_GL_GetProcAddress("glUniform4f");
+    glUniform2f_ptr = (PFNGLUNIFORM2FPROC)SDL_GL_GetProcAddress("glUniform2f");
     glUniform2i_ptr = (PFNGLUNIFORM2IPROC)SDL_GL_GetProcAddress("glUniform2i");
     glUniform4i_ptr = (PFNGLUNIFORM4IPROC)SDL_GL_GetProcAddress("glUniform4i");
     glEnableVertexAttribArray_ptr = (PFNGLENABLEVERTEXATTRIBARRAYPROC)SDL_GL_GetProcAddress("glEnableVertexAttribArray");
@@ -1945,6 +1947,14 @@ static GLuint sPostProgram = 0;
 static GLuint sPostVAO = 0;
 static int sPostWidth = 0, sPostHeight = 0;
 
+// Bloom works at half resolution in two ping-pong targets: bright pass into
+// the first, blur across into the second, blur down back into the first.
+static GLuint sBloomFbo[2] = { 0, 0 };
+static GLuint sBloomTex[2] = { 0, 0 };
+static GLuint sBrightProgram = 0;
+static GLuint sBlurProgram = 0;
+static int sBloomWidth = 0, sBloomHeight = 0;
+
 void pc_gfx_set_post_effects(const PcPostEffects& fx) { sPostEffects = fx; }
 
 static GLuint post_compile(GLenum type, const char* src, const char* what)
@@ -2004,13 +2014,50 @@ static bool post_ensure_program()
     }
 
     if (!sPostVAO) glGenVertexArrays_ptr(1, &sPostVAO);
+
+    // The bloom chain's two programs do not depend on the settings, only on
+    // whether bloom is wanted at all, so they are built once and kept.
+    if (pc_post_bloom_active(sPostEffects) && !sBrightProgram && glUniform2f_ptr) {
+        const std::string brightSrc = pc_post_build_brightpass_shader();
+        const std::string blurSrc   = pc_post_build_blur_shader();
+        GLuint bvs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "bloom vertex shader");
+        GLuint bfs = bvs ? post_compile(GL_FRAGMENT_SHADER, brightSrc.c_str(), "bright pass") : 0;
+        GLuint lvs = bfs ? post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "blur vertex shader") : 0;
+        GLuint lfs = lvs ? post_compile(GL_FRAGMENT_SHADER, blurSrc.c_str(), "blur") : 0;
+        if (bvs && bfs && lvs && lfs) {
+            sBrightProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sBrightProgram, bvs);
+            glAttachShader_ptr(sBrightProgram, bfs);
+            glLinkProgram_ptr(sBrightProgram);
+            sBlurProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sBlurProgram, lvs);
+            glAttachShader_ptr(sBlurProgram, lfs);
+            glLinkProgram_ptr(sBlurProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) {
+                glGetProgramiv_ptr(sBrightProgram, GL_LINK_STATUS, &ok);
+                if (ok == GL_TRUE) glGetProgramiv_ptr(sBlurProgram, GL_LINK_STATUS, &ok);
+            }
+            if (ok != GL_TRUE) {
+                printf("[PC Port] bloom programs failed to link; bloom is off\n");
+                glDeleteProgram_ptr(sBrightProgram); sBrightProgram = 0;
+                glDeleteProgram_ptr(sBlurProgram); sBlurProgram = 0;
+            }
+        }
+        if (bvs) glDeleteShader_ptr(bvs);
+        if (bfs) glDeleteShader_ptr(bfs);
+        if (lvs) glDeleteShader_ptr(lvs);
+        if (lfs) glDeleteShader_ptr(lfs);
+    }
+
     sPostCompiledFor = sPostEffects;
     sPostCompiled = true;
     // Once per change of settings, not per frame. Says which effects the pass
     // is actually running, which is otherwise only visible by looking hard at
     // the picture.
-    printf("[PC Port] Post-process pass:%s%s\n",
+    printf("[PC Port] Post-process pass:%s%s%s\n",
            sPostEffects.fxaa ? " FXAA" : "",
+           pc_post_bloom_active(sPostEffects) ? " bloom" : "",
            sPostEffects.colourGrading ? " colour-grading" : "");
     fflush(stdout);
     return true;
@@ -2047,6 +2094,84 @@ static bool post_ensure_target()
     return true;
 }
 
+// Half-resolution ping-pong pair for the bloom chain.
+static bool bloom_ensure_targets()
+{
+    const int w = std::max(1, sRenderWidth / 2);
+    const int h = std::max(1, sRenderHeight / 2);
+    if (!sBloomFbo[0]) {
+        glGenFramebuffers_ptr(2, sBloomFbo);
+        glGenTextures(2, sBloomTex);
+        sBloomWidth = sBloomHeight = 0;
+    }
+    if (sBloomWidth == w && sBloomHeight == h) return true;
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, sBloomTex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        // Linear, and clamped: the blur reads between texels on purpose, and
+        // wrapping would drag the far edge of the screen into the near one.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sBloomFbo[i]);
+        glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sBloomTex[i], 0);
+        if (glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            sBoundTextures[0] = 0;
+            return false;
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+    sBloomWidth = w;
+    sBloomHeight = h;
+    return true;
+}
+
+// Bright pass, blur across, blur down. Leaves the result in sBloomTex[0].
+static bool bloom_build()
+{
+    if (!sBrightProgram || !sBlurProgram) return false;
+    if (!bloom_ensure_targets()) return false;
+
+    glViewport(0, 0, sBloomWidth, sBloomHeight);
+    glBindVertexArray_ptr(sPostVAO);
+
+    // Bright pass: scene -> [0]
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sBloomFbo[0]);
+    glUseProgram_ptr(sBrightProgram);
+    if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
+    if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sBrightProgram, "uScene"), 0);
+    if (glUniform1f_ptr) {
+        glUniform1f_ptr(glGetUniformLocation_ptr(sBrightProgram, "uThreshold"),
+                        sPostEffects.bloomThreshold);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Blur across: [0] -> [1], then down: [1] -> [0]
+    glUseProgram_ptr(sBlurProgram);
+    const GLint blurSource = glGetUniformLocation_ptr(sBlurProgram, "uSource");
+    const GLint blurStep = glGetUniformLocation_ptr(sBlurProgram, "uBlurStep");
+    for (int axis = 0; axis < 2; axis++) {
+        const int from = axis == 0 ? 0 : 1;
+        const int to   = axis == 0 ? 1 : 0;
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sBloomFbo[to]);
+        glBindTexture(GL_TEXTURE_2D, sBloomTex[from]);
+        if (glUniform1i_ptr) glUniform1i_ptr(blurSource, 0);
+        if (glUniform2f_ptr && blurStep >= 0) {
+            glUniform2f_ptr(blurStep,
+                            axis == 0 ? 1.0f / float(sBloomWidth) : 0.0f,
+                            axis == 0 ? 0.0f : 1.0f / float(sBloomHeight));
+        }
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
+    glBindVertexArray_ptr(0);
+    return true;
+}
+
 // Returns the framebuffer the blit should read from.
 static GLuint post_apply()
 {
@@ -2057,6 +2182,14 @@ static GLuint post_apply()
     if (pc_post_needs_depth(sPostEffects) && !sDepthIsTexture) return sNativeFramebuffer;
     // Any of these failing means no post-processing, never a stopped frame.
     if (!post_ensure_target() || !post_ensure_program()) return sNativeFramebuffer;
+
+    // Bloom runs its own chain first, at half resolution, leaving its result in
+    // sBloomTex[0] for the main pass to add in. A failure here is not fatal:
+    // the composite simply reads a texture that contributes nothing.
+    bool bloomReady = false;
+    if (pc_post_bloom_active(sPostEffects)) {
+        bloomReady = bloom_build();
+    }
 
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sPostFramebuffer);
     glViewport(0, 0, sRenderWidth, sRenderHeight);
@@ -2076,6 +2209,20 @@ static GLuint post_apply()
         glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
         if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDepth"), 1);
         glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (bloomReady && glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, sBloomTex[0]);
+        if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uBloom"), 2);
+        glActiveTexture_ptr(GL_TEXTURE0);
+        if (glUniform1f_ptr) {
+            glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uBloomIntensity"),
+                            sPostEffects.bloomIntensity);
+        }
+    } else if (pc_post_bloom_active(sPostEffects) && glUniform1f_ptr) {
+        // The shader was built with the composite in it, so silence it rather
+        // than sampling a texture that was never filled.
+        glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uBloomIntensity"), 0.0f);
     }
     if (sPostEffects.fxaa && glUniform4f_ptr) {
         glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uTexelSize"),
