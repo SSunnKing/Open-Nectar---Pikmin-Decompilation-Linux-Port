@@ -1955,6 +1955,21 @@ static GLuint sBrightProgram = 0;
 static GLuint sBlurProgram = 0;
 static int sBloomWidth = 0, sBloomHeight = 0;
 
+// Ambient occlusion shares the shape of the bloom chain: compute at half
+// resolution, then blur the noise out with the same separable program.
+static GLuint sAoFbo[2] = { 0, 0 };
+static GLuint sAoTex[2] = { 0, 0 };
+static GLuint sSsaoProgram = 0;
+static int sAoWidth = 0, sAoHeight = 0;
+
+// The perspective projection's terms, kept for the post-process pass.
+//
+// Captured here rather than read back at the end of the frame, because by then
+// the last projection set is the HUD's orthographic one and unprojecting screen
+// pixels with that would place the whole world in the wrong position.
+static float sViewInvP00 = 1.0f, sViewInvP11 = 1.0f;
+static float sViewNear = 1.0f, sViewFar = 15000.0f;
+
 void pc_gfx_set_post_effects(const PcPostEffects& fx) { sPostEffects = fx; }
 
 static GLuint post_compile(GLenum type, const char* src, const char* what)
@@ -2017,6 +2032,7 @@ static bool post_ensure_program()
 
     // The bloom chain's two programs do not depend on the settings, only on
     // whether bloom is wanted at all, so they are built once and kept.
+    const bool wantsBlur = pc_post_bloom_active(sPostEffects) || pc_post_ssao_active(sPostEffects);
     if (pc_post_bloom_active(sPostEffects) && !sBrightProgram && glUniform2f_ptr) {
         const std::string brightSrc = pc_post_build_brightpass_shader();
         const std::string blurSrc   = pc_post_build_blur_shader();
@@ -2050,13 +2066,58 @@ static bool post_ensure_program()
         if (lfs) glDeleteShader_ptr(lfs);
     }
 
+    if (pc_post_ssao_active(sPostEffects) && !sSsaoProgram) {
+        const std::string ssaoSrc = pc_post_build_ssao_shader();
+        GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "ssao vertex shader");
+        GLuint fs = vs ? post_compile(GL_FRAGMENT_SHADER, ssaoSrc.c_str(), "ssao") : 0;
+        if (vs && fs) {
+            sSsaoProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sSsaoProgram, vs);
+            glAttachShader_ptr(sSsaoProgram, fs);
+            glLinkProgram_ptr(sSsaoProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) glGetProgramiv_ptr(sSsaoProgram, GL_LINK_STATUS, &ok);
+            if (ok != GL_TRUE) {
+                printf("[PC Port] ssao program failed to link; ambient occlusion is off\n");
+                glDeleteProgram_ptr(sSsaoProgram);
+                sSsaoProgram = 0;
+            }
+        }
+        if (vs) glDeleteShader_ptr(vs);
+        if (fs) glDeleteShader_ptr(fs);
+    }
+
+    // Bloom builds the blur alongside its bright pass. When occlusion is on
+    // without it, the blur still has to exist -- it is what removes the noise
+    // the rotated sample kernel deliberately introduces.
+    if (wantsBlur && !sBlurProgram && glUniform2f_ptr) {
+        const std::string blurSrc = pc_post_build_blur_shader();
+        GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "blur vertex shader");
+        GLuint fs = vs ? post_compile(GL_FRAGMENT_SHADER, blurSrc.c_str(), "blur") : 0;
+        if (vs && fs) {
+            sBlurProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sBlurProgram, vs);
+            glAttachShader_ptr(sBlurProgram, fs);
+            glLinkProgram_ptr(sBlurProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) glGetProgramiv_ptr(sBlurProgram, GL_LINK_STATUS, &ok);
+            if (ok != GL_TRUE) {
+                glDeleteProgram_ptr(sBlurProgram);
+                sBlurProgram = 0;
+            }
+        }
+        if (vs) glDeleteShader_ptr(vs);
+        if (fs) glDeleteShader_ptr(fs);
+    }
+
     sPostCompiledFor = sPostEffects;
     sPostCompiled = true;
     // Once per change of settings, not per frame. Says which effects the pass
     // is actually running, which is otherwise only visible by looking hard at
     // the picture.
-    printf("[PC Port] Post-process pass:%s%s%s\n",
+    printf("[PC Port] Post-process pass:%s%s%s%s\n",
            sPostEffects.fxaa ? " FXAA" : "",
+           pc_post_ssao_active(sPostEffects) ? " SSAO" : "",
            pc_post_bloom_active(sPostEffects) ? " bloom" : "",
            sPostEffects.colourGrading ? " colour-grading" : "");
     fflush(stdout);
@@ -2172,6 +2233,87 @@ static bool bloom_build()
     return true;
 }
 
+// Half-resolution pair for occlusion and its denoise blur.
+static bool ao_ensure_targets()
+{
+    const int w = std::max(1, sRenderWidth / 2);
+    const int h = std::max(1, sRenderHeight / 2);
+    if (!sAoFbo[0]) {
+        glGenFramebuffers_ptr(2, sAoFbo);
+        glGenTextures(2, sAoTex);
+        sAoWidth = sAoHeight = 0;
+    }
+    if (sAoWidth == w && sAoHeight == h) return true;
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, sAoTex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[i]);
+        glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sAoTex[i], 0);
+        if (glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            sBoundTextures[0] = 0;
+            return false;
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+    sAoWidth = w;
+    sAoHeight = h;
+    return true;
+}
+
+// Occlusion into [0], blurred across into [1] and back down into [0].
+static bool ao_build()
+{
+    if (!sSsaoProgram || !sBlurProgram) return false;
+    // Depth is the whole input. Without a depth texture there is nothing to
+    // compute from, which is exactly the fallback case pc_gfx warned about.
+    if (!sDepthIsTexture || !sNativeDepthTexture) return false;
+    if (!ao_ensure_targets()) return false;
+
+    glViewport(0, 0, sAoWidth, sAoHeight);
+    glBindVertexArray_ptr(sPostVAO);
+
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[0]);
+    glUseProgram_ptr(sSsaoProgram);
+    if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+    if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uDepth"), 0);
+    if (glUniform4f_ptr) {
+        glUniform4f_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uProjInfo"),
+                        sViewInvP00, sViewInvP11, sViewNear, sViewFar);
+        // The bias discards the shallow self-occlusion that the faceted
+        // derivative normal produces on flat ground.
+        glUniform4f_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uAOParams"),
+                        sPostEffects.ssaoRadius, sPostEffects.ssaoIntensity, 0.02f, 0.0f);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glUseProgram_ptr(sBlurProgram);
+    const GLint blurSource = glGetUniformLocation_ptr(sBlurProgram, "uSource");
+    const GLint blurStep = glGetUniformLocation_ptr(sBlurProgram, "uBlurStep");
+    for (int axis = 0; axis < 2; axis++) {
+        const int from = axis == 0 ? 0 : 1;
+        const int to   = axis == 0 ? 1 : 0;
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[to]);
+        glBindTexture(GL_TEXTURE_2D, sAoTex[from]);
+        if (glUniform1i_ptr) glUniform1i_ptr(blurSource, 0);
+        if (glUniform2f_ptr && blurStep >= 0) {
+            glUniform2f_ptr(blurStep,
+                            axis == 0 ? 1.0f / float(sAoWidth) : 0.0f,
+                            axis == 0 ? 0.0f : 1.0f / float(sAoHeight));
+        }
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
+    glBindVertexArray_ptr(0);
+    return true;
+}
+
 // Returns the framebuffer the blit should read from.
 static GLuint post_apply()
 {
@@ -2186,6 +2328,11 @@ static GLuint post_apply()
     // Bloom runs its own chain first, at half resolution, leaving its result in
     // sBloomTex[0] for the main pass to add in. A failure here is not fatal:
     // the composite simply reads a texture that contributes nothing.
+    bool aoReady = false;
+    if (pc_post_ssao_active(sPostEffects)) {
+        aoReady = ao_build();
+    }
+
     bool bloomReady = false;
     if (pc_post_bloom_active(sPostEffects)) {
         bloomReady = bloom_build();
@@ -2208,6 +2355,12 @@ static GLuint post_apply()
         glActiveTexture_ptr(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
         if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDepth"), 1);
+        glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (aoReady && glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, sAoTex[0]);
+        if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uAO"), 3);
         glActiveTexture_ptr(GL_TEXTURE0);
     }
     if (bloomReady && glActiveTexture_ptr) {
@@ -2302,7 +2455,24 @@ void pc_gfx_present(void) {
 }
 
 void pc_gfx_set_projection(const Mtx44 mtx, GXProjectionType type) {
-    (void)type;
+    if (mtx && type == GX_PERSPECTIVE) {
+        const float p00 = mtx[0][0];
+        const float p11 = mtx[1][1];
+        const float m22 = mtx[2][2];
+        const float m23 = mtx[2][3];
+        // C_MTXPerspective sets m22 = -n/(f-n) and m23 = -fn/(f-n), so their
+        // ratio is the far plane and the near one follows from either.
+        if (p00 != 0.0f && p11 != 0.0f && m22 != 0.0f && m22 != 1.0f) {
+            const float f = m23 / m22;
+            const float n = -m22 * f / (1.0f - m22);
+            if (f > n && n > 0.0f) {
+                sViewInvP00 = 1.0f / p00;
+                sViewInvP11 = 1.0f / p11;
+                sViewNear = n;
+                sViewFar = f;
+            }
+        }
+    }
     if (mtx) {
         // Dolphin matrices are indexed [row][column], while OpenGL consumes a
         // column-major float array when transpose is GL_FALSE.

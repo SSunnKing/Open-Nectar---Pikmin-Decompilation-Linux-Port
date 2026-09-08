@@ -241,6 +241,82 @@ int main()
 		check(a != b, "bloom threshold is part of the comparison");
 	}
 
+	// Occlusion is the first effect that cannot run without a depth texture,
+	// and the port falls back to a renderbuffer on drivers that refuse one.
+	// Saying so has to be answerable before the pass is set up.
+	{
+		PcPostEffects fx;
+		check(!pc_post_needs_depth(fx), "an empty effect set needs no depth");
+		fx.ssao = true;
+		fx.ssaoIntensity = 0.8f;
+		check(pc_post_ssao_active(fx), "occlusion with intensity is active");
+		check(pc_post_needs_depth(fx), "occlusion needs depth");
+		check(pc_post_any_enabled(fx), "active occlusion runs the pass");
+
+		fx.ssaoIntensity = 0.0f;
+		check(!pc_post_ssao_active(fx), "occlusion at zero intensity is not active");
+		check(!pc_post_needs_depth(fx), "inactive occlusion does not demand depth");
+		fx.ssaoIntensity = 0.8f;
+		fx.ssaoRadius = 0.0f;
+		check(!pc_post_ssao_active(fx), "occlusion with no radius is not active");
+	}
+
+	// Multiplied, and before bloom: occlusion is ambient light that never
+	// arrived, so it scales what the surface received; bloom is light that did
+	// arrive and then scattered, so it lands on top of the result.
+	{
+		PcPostEffects fx;
+		fx.ssao = true;
+		fx.ssaoIntensity = 0.8f;
+		fx.bloom = true;
+		fx.bloomIntensity = 0.6f;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(contains(src, "uniform sampler2D uAO"), "occlusion declares its sampler");
+		check(contains(src, "c *= texture(uAO, vUV).r;"), "occlusion multiplies");
+		const size_t aoAt = src.find("uAO, vUV");
+		const size_t bloomAt = src.find("uBloom, vUV");
+		check(aoAt != std::string::npos && bloomAt != std::string::npos, "both are present");
+		check(aoAt < bloomAt, "occlusion is applied before bloom");
+
+		PcPostEffects off;
+		check(!contains(pc_post_build_fragment_shader(off), "uAO"),
+		      "no occlusion means no occlusion sampler");
+	}
+
+	// The occlusion stage rebuilds position and normal from depth alone, and
+	// the depth range is the GameCube's. The same mistake made the fog
+	// invisible once; here it would make occlusion cover everything or nothing.
+	{
+		const std::string src = pc_post_build_ssao_shader();
+		check(src.rfind("#version", 0) == 0, "the occlusion stage begins with its version");
+		check(contains(src, "void main"), "the occlusion stage has an entry point");
+		check(contains(src, "n - ndc * (f - n)"),
+		      "occlusion linearises with the GameCube depth range");
+		check(!contains(src, "f + n - ndc"),
+		      "occlusion does not use the OpenGL depth range");
+		check(contains(src, "uProjInfo"), "occlusion takes the projection terms");
+		check(contains(src, "dFdx(P)") && contains(src, "dFdy(P)"),
+		      "the normal comes from screen-space derivatives");
+		// Without the flip the normal's sign follows the quad winding and half
+		// the screen occludes backwards.
+		check(contains(src, "if (N.z < 0.0) N = -N;"), "the normal is forced to face the camera");
+		// Without the range check a depth discontinuity reads as an occluder
+		// and every silhouette gets a black halo.
+		check(contains(src, "smoothstep"), "occlusion range-checks its samples");
+		check(contains(src, "kKernel"), "occlusion uses a baked sample kernel");
+	}
+
+	// Recompilation is driven by equality.
+	{
+		PcPostEffects a, b;
+		b.ssao = true;
+		check(a != b, "the occlusion switch is part of the comparison");
+		b = a; b.ssaoIntensity = 0.5f;
+		check(a != b, "occlusion intensity is part of the comparison");
+		b = a; b.ssaoRadius = 10.0f;
+		check(a != b, "occlusion radius is part of the comparison");
+	}
+
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");
 	return failures == 0 ? 0 : 1;
 }

@@ -96,6 +96,7 @@ struct PcConfig {
     int antialiasing = 0;   // 0 off, 1 FXAA
     int fog = 1;            // the game's own fog, on by default
     int bloom = 0;          // 0 off, 1 subtle, 2 normal, 3 strong
+    int ssao = 0;           // 0 off, 1 subtle, 2 normal, 3 strong
     int colourGrading = 0;
     float gamma       = 1.0f;
     float brightness  = 0.0f;
@@ -126,6 +127,7 @@ struct PcConfig {
         antialiasing  = 0;
         fog           = 1;
         bloom         = 0;
+        ssao          = 0;
         colourGrading = 0;
         gamma         = 1.0f;
         brightness    = 0.0f;
@@ -239,7 +241,7 @@ constexpr int kAdvancedRowCount = 4;
 // reference machine is a GTX 1050 -- so nothing here may be mandatory.
 bool sInGraphicsSubmenu = false;
 int sGraphicsSelection = 0;
-constexpr int kGraphicsRowCount = 7;
+constexpr int kGraphicsRowCount = 8;
 
 // Colour grading stops. Neutral is in every list, and the pass is skipped
 // entirely when all three sit there.
@@ -417,6 +419,15 @@ void applyGraphics(const PcConfig& config) {
     // Presets rather than sliders: bloom looks wrong across most of the range
     // a slider would offer, and three named steps are easier to choose between
     // than a number whose good values are not obvious.
+    // Occlusion darkens contact points; too much of it turns every crease into
+    // a black line, so the strong step is still well short of 1.
+    static const float kAoIntensity[4] = { 0.0f, 0.5f, 0.8f, 1.2f };
+    static const float kAoRadius[4]    = { 40.0f, 28.0f, 40.0f, 55.0f };
+    const int aoStep = (config.ssao >= 0 && config.ssao <= 3) ? config.ssao : 0;
+    fx.ssao          = aoStep != 0;
+    fx.ssaoIntensity = kAoIntensity[aoStep];
+    fx.ssaoRadius    = kAoRadius[aoStep];
+
     static const float kBloomIntensity[4] = { 0.0f, 0.35f, 0.6f, 1.0f };
     static const float kBloomThreshold[4] = { 0.75f, 0.80f, 0.72f, 0.62f };
     const int bloomStep = (config.bloom >= 0 && config.bloom <= 3) ? config.bloom : 0;
@@ -521,6 +532,7 @@ void saveConfig() {
     out << "antialiasing = " << sConfig.antialiasing << "\n";
     out << "fog = " << sConfig.fog << "\n";
     out << "bloom = " << sConfig.bloom << "\n";
+    out << "ssao = " << sConfig.ssao << "\n";
     out << "colourGrading = " << sConfig.colourGrading << "\n";
     out << "gamma = " << sConfig.gamma << "\n";
     out << "brightness = " << sConfig.brightness << "\n";
@@ -617,6 +629,10 @@ void loadConfig() {
         else if (key == "pikiLimit") {
             sConfig.pikiLimit = atoi(val.c_str());
             if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
+        }
+        else if (key == "ssao") {
+            sConfig.ssao = atoi(val.c_str());
+            if (sConfig.ssao < 0 || sConfig.ssao > 3) sConfig.ssao = 0;
         }
         else if (key == "bloom") {
             sConfig.bloom = atoi(val.c_str());
@@ -1085,12 +1101,15 @@ void pollMenuInput() {
             if (left) sPending.bloom = (sPending.bloom + 3) % 4;
             else if (right) sPending.bloom = (sPending.bloom + 1) % 4;
         } else if (sGraphicsSelection == 3) {
-            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
+            if (left) sPending.ssao = (sPending.ssao + 3) % 4;
+            else if (right) sPending.ssao = (sPending.ssao + 1) % 4;
         } else if (sGraphicsSelection == 4) {
-            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
+            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
         } else if (sGraphicsSelection == 5) {
-            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
         } else if (sGraphicsSelection == 6) {
+            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+        } else if (sGraphicsSelection == 7) {
             if (left || right) sPending.saturation = step(sPending.saturation, kSaturationStops, kSaturationStopCount, left);
         }
         // Applied as you move, so the effect can be judged against the scene
@@ -2132,6 +2151,7 @@ void pc_settings_draw(void) {
             "Antialiasing",
             "Fog",
             "Bloom",
+            "Ambient Occlusion",
             "Colour Grading",
             "Gamma",
             "Brightness",
@@ -2158,14 +2178,18 @@ void pc_settings_draw(void) {
                 const int b = (sPending.bloom >= 0 && sPending.bloom <= 3) ? sPending.bloom : 0;
                 snprintf(value, sizeof(value), "%s", bloomNames[b]);
             } else if (i == 3) {
+                const char* aoNames[4] = { "Off", "Subtle", "Normal", "Strong" };
+                const int a = (sPending.ssao >= 0 && sPending.ssao <= 3) ? sPending.ssao : 0;
+                snprintf(value, sizeof(value), "%s", aoNames[a]);
+            } else if (i == 4) {
                 snprintf(value, sizeof(value), "%s", gradingOn ? "On" : "Off");
             } else if (!gradingOn) {
                 // The three sliders do nothing while grading is off. Saying so
                 // beats letting someone move them and conclude it is broken.
                 snprintf(value, sizeof(value), "--");
-            } else if (i == 4) {
-                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
             } else if (i == 5) {
+                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
+            } else if (i == 6) {
                 snprintf(value, sizeof(value), sPending.brightness == 0.0f ? "%+.2f  (neutral)" : "%+.2f", sPending.brightness);
             } else {
                 snprintf(value, sizeof(value), sPending.saturation == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.saturation);

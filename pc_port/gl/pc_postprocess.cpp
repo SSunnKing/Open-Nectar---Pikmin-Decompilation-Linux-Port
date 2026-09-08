@@ -1,5 +1,8 @@
 #include "pc_postprocess.h"
 
+#include <cmath>
+#include <cstdio>
+
 bool pc_post_bloom_active(const PcPostEffects& fx)
 {
 	// Zero intensity is the same picture, and bloom is the one effect here
@@ -7,9 +10,15 @@ bool pc_post_bloom_active(const PcPostEffects& fx)
 	return fx.bloom && fx.bloomIntensity > 0.0f;
 }
 
+bool pc_post_ssao_active(const PcPostEffects& fx)
+{
+	return fx.ssao && fx.ssaoIntensity > 0.0f && fx.ssaoRadius > 0.0f;
+}
+
 bool pc_post_any_enabled(const PcPostEffects& fx)
 {
 	if (fx.fxaa) return true;
+	if (pc_post_ssao_active(fx)) return true;
 	if (pc_post_bloom_active(fx)) return true;
 	if (!fx.colourGrading) return false;
 	// Switched on but set to neutral values is the same picture, so skip the
@@ -19,10 +28,100 @@ bool pc_post_any_enabled(const PcPostEffects& fx)
 
 bool pc_post_needs_depth(const PcPostEffects& fx)
 {
-	// Colour grading reads only the scene colour. Ambient occlusion, depth of
-	// field and depth-based fog will change this when they arrive.
-	(void)fx;
-	return false;
+	// Ambient occlusion is the only one so far. Depth of field will join it.
+	return pc_post_ssao_active(fx);
+}
+
+std::string pc_post_build_ssao_shader()
+{
+	// There is no G-buffer here, so position and normal are both rebuilt from
+	// the depth buffer. The normal comes from the screen-space derivatives of
+	// the reconstructed position, which is faceted per 2x2 quad and wrong
+	// across a depth discontinuity -- the range check below is what keeps those
+	// edges from producing a black halo.
+	const int kSamples = 12;
+
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uDepth;\n";
+	// x,y are the inverse projection scales, z,w the near and far planes.
+	src += "uniform vec4 uProjInfo;\n";
+	// x radius in world units, y intensity, z bias.
+	src += "uniform vec4 uAOParams;\n";
+
+	// The depth range is the GameCube's, not OpenGL's: C_MTXPerspective puts
+	// the far plane at ndc 0 rather than +1. Getting this wrong does not look
+	// subtly off, it makes the whole world measure as touching the camera --
+	// the same mistake that left the fog invisible.
+	src += "float viewDepth(vec2 uv) {\n";
+	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
+	src += "    float n = uProjInfo.z;\n";
+	src += "    float f = uProjInfo.w;\n";
+	src += "    float denom = n - ndc * (f - n);\n";
+	src += "    return (abs(denom) < 1e-6) ? f : (n * f) / denom;\n";
+	src += "}\n";
+
+	src += "vec3 viewPos(vec2 uv) {\n";
+	src += "    float z = viewDepth(uv);\n";
+	src += "    vec2 ndc = uv * 2.0 - 1.0;\n";
+	src += "    return vec3(ndc * uProjInfo.xy * z, -z);\n";
+	src += "}\n";
+
+	// A spiral built at generation time. Baking the offsets keeps the loop free
+	// of trigonometry and makes the pattern identical on every machine.
+	src += "const vec2 kKernel[";
+	src += std::to_string(kSamples);
+	src += "] = vec2[](\n";
+	for (int i = 0; i < kSamples; ++i) {
+		const double golden = 2.399963229728653;
+		const double angle  = golden * i;
+		const double radius = std::sqrt((i + 0.5) / kSamples);
+		char buf[128];
+		std::snprintf(buf, sizeof(buf), "    vec2(%.6f, %.6f)%s\n",
+		              std::cos(angle) * radius, std::sin(angle) * radius,
+		              i + 1 == kSamples ? "" : ",");
+		src += buf;
+	}
+	src += ");\n";
+
+	src += "void main() {\n";
+	src += "    vec3 P = viewPos(vUV);\n";
+	// The sky sits on the far plane and has nothing in front of it to occlude.
+	src += "    if (-P.z >= uProjInfo.w * 0.999) { oColour = vec4(1.0); return; }\n";
+	src += "    vec3 N = normalize(cross(dFdx(P), dFdy(P)));\n";
+	// The derivative order decides the sign, and it flips with the winding of
+	// the quad. Force it to face the camera instead of relying on that.
+	src += "    if (N.z < 0.0) N = -N;\n";
+
+	// Rotating the kernel per pixel turns the banding a fixed pattern would
+	// leave into noise, which the blur that follows can actually remove.
+	src += "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;\n";
+	src += "    float sa = sin(a), ca = cos(a);\n";
+	src += "    mat2 rot = mat2(ca, -sa, sa, ca);\n";
+
+	// A fixed world radius has to shrink on screen as it recedes, or distant
+	// geometry gets sampled across half the screen.
+	src += "    float z = -P.z;\n";
+	src += "    vec2 uvScale = 0.5 * uAOParams.x / (uProjInfo.xy * z);\n";
+
+	src += "    float occlusion = 0.0;\n";
+	src += "    for (int i = 0; i < " + std::to_string(kSamples) + "; ++i) {\n";
+	src += "        vec2 uv = vUV + (rot * kKernel[i]) * uvScale;\n";
+	src += "        vec3 S = viewPos(clamp(uv, vec2(0.0), vec2(1.0)));\n";
+	src += "        vec3 diff = S - P;\n";
+	src += "        float dist = length(diff);\n";
+	src += "        if (dist > 1e-4) {\n";
+	// Anything far outside the radius is a different surface, not an occluder.
+	src += "            float range = smoothstep(0.0, 1.0, uAOParams.x / dist);\n";
+	src += "            occlusion += max(dot(N, diff / dist) - uAOParams.z, 0.0) * range;\n";
+	src += "        }\n";
+	src += "    }\n";
+	src += "    occlusion = occlusion / float(" + std::to_string(kSamples) + ") * uAOParams.y;\n";
+	src += "    oColour = vec4(vec3(clamp(1.0 - occlusion, 0.0, 1.0)), 1.0);\n";
+	src += "}\n";
+	return src;
 }
 
 std::string pc_post_build_brightpass_shader()
@@ -108,6 +207,9 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 	if (pc_post_needs_depth(fx)) {
 		src += "uniform sampler2D uDepth;\n";
 	}
+	if (pc_post_ssao_active(fx)) {
+		src += "uniform sampler2D uAO;\n";
+	}
 	if (pc_post_bloom_active(fx)) {
 		src += "uniform sampler2D uBloom;\n";
 		src += "uniform float uBloomIntensity;\n";
@@ -167,6 +269,13 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 		src += "    vec3 c = fxaaFilter(vUV, uTexelSize.xy);\n";
 	} else {
 		src += "    vec3 c = texture(uScene, vUV).rgb;\n";
+	}
+
+	if (pc_post_ssao_active(fx)) {
+		// Multiplied, and before bloom: occlusion is ambient light that never
+		// arrived, so it scales what the surface received. Bloom is light that
+		// did arrive and then scattered, which lands on top of the result.
+		src += "    c *= texture(uAO, vUV).r;\n";
 	}
 
 	if (pc_post_bloom_active(fx)) {

@@ -25,6 +25,12 @@ struct PcPostEffects {
 	// the leaves and the grass along with everything else.
 	bool fxaa = false;
 
+	// Ambient occlusion. The first effect here that reads depth, and the only
+	// one that cannot run at all when the driver denied us a depth texture.
+	bool ssao          = false;
+	float ssaoRadius    = 40.0f;  // world units searched around each pixel
+	float ssaoIntensity = 0.0f;   // 0 darkens nothing, so the pass is skipped
+
 	// Bloom. Unlike the others this is not one pass: bright areas are pulled
 	// out into a half-resolution target, blurred separably, and added back.
 	// Half resolution is not a compromise here -- the result is a wide blur, so
@@ -43,7 +49,9 @@ struct PcPostEffects {
 
 	bool operator==(const PcPostEffects& o) const
 	{
-		return fxaa == o.fxaa && bloom == o.bloom
+		return fxaa == o.fxaa && ssao == o.ssao
+		    && ssaoRadius == o.ssaoRadius && ssaoIntensity == o.ssaoIntensity
+		    && bloom == o.bloom
 		    && bloomThreshold == o.bloomThreshold && bloomIntensity == o.bloomIntensity
 		    && colourGrading == o.colourGrading && gamma == o.gamma
 		    && brightness == o.brightness && saturation == o.saturation;
@@ -84,6 +92,13 @@ bool pc_post_bloom_active(const PcPostEffects& fx);
 /// Extracts the parts of the scene bright enough to bloom, into a smaller
 /// target. Shares the fullscreen vertex shader.
 std::string pc_post_build_brightpass_shader();
+
+/// True when ambient occlusion will actually darken something.
+bool pc_post_ssao_active(const PcPostEffects& fx);
+
+/// Computes occlusion into a single-channel-ish target. Reconstructs view
+/// position and normal from depth alone: the port has no G-buffer.
+std::string pc_post_build_ssao_shader();
 
 /// One half of a separable Gaussian blur. uBlurStep carries the direction and
 /// the texel size together, so the same program serves both axes.
