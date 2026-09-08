@@ -117,6 +117,54 @@ int main()
 		check(a != b, "the on/off switch is part of the comparison");
 	}
 
+	// Antialiasing stands on its own: it has no neutral setting, so switching
+	// it on must run the pass even with grading off and everything neutral.
+	{
+		PcPostEffects fx;
+		fx.fxaa = true;
+		check(pc_post_any_enabled(fx), "FXAA alone runs the pass");
+		check(!pc_post_needs_depth(fx), "FXAA does not need depth");
+
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(contains(src, "uniform vec4 uTexelSize"), "FXAA declares its texel size");
+		check(contains(src, "fxaaFilter"), "FXAA emits its filter");
+		// The early return is what keeps the cost down on the flat majority of
+		// a frame. Losing it would be invisible in a screenshot and expensive.
+		check(contains(src, "return rgbM;"), "FXAA keeps its flat-area early out");
+		check(!contains(src, "uGamma"), "FXAA alone brings no grading uniforms");
+	}
+
+	// Off means the filter is not in the shader at all, not that it is compiled
+	// in and skipped by a branch.
+	{
+		PcPostEffects fx;
+		fx.colourGrading = true;
+		fx.gamma = 1.2f;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(!contains(src, "fxaaFilter"), "grading alone brings no FXAA code");
+		check(!contains(src, "uTexelSize"), "grading alone brings no texel size");
+	}
+
+	// Both together: the scene is filtered first and the tone curve applied to
+	// the result, so grading must not read the raw texture when FXAA is on.
+	{
+		PcPostEffects fx;
+		fx.fxaa = true;
+		fx.colourGrading = true;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(contains(src, "vec3 c = fxaaFilter(vUV, uTexelSize.xy);"),
+		      "with FXAA on, grading works from the filtered colour");
+		check(!contains(src, "vec3 c = texture(uScene, vUV).rgb;"),
+		      "the unfiltered fetch is gone when FXAA is on");
+	}
+
+	// Recompilation is driven by equality, so the new field has to be in it.
+	{
+		PcPostEffects a, b;
+		b.fxaa = true;
+		check(a != b, "antialiasing is part of the comparison");
+	}
+
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");
 	return failures == 0 ? 0 : 1;
 }

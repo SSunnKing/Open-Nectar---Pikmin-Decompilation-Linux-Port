@@ -2005,8 +2005,9 @@ static bool post_ensure_program()
     // Once per change of settings, not per frame. Says which effects the pass
     // is actually running, which is otherwise only visible by looking hard at
     // the picture.
-    printf("[PC Port] Post-process pass:%s\n",
-           sPostEffects.colourGrading ? " colour grading" : " (none)");
+    printf("[PC Port] Post-process pass:%s%s\n",
+           sPostEffects.fxaa ? " FXAA" : "",
+           sPostEffects.colourGrading ? " colour-grading" : "");
     fflush(stdout);
     return true;
 }
@@ -2071,6 +2072,11 @@ static GLuint post_apply()
         glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
         if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDepth"), 1);
         glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (sPostEffects.fxaa && glUniform4f_ptr) {
+        glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uTexelSize"),
+                        1.0f / float(sRenderWidth), 1.0f / float(sRenderHeight),
+                        float(sRenderWidth), float(sRenderHeight));
     }
     if (sPostEffects.colourGrading && glUniform1f_ptr) {
         glUniform1f_ptr(glGetUniformLocation_ptr(sPostProgram, "uGamma"), sPostEffects.gamma);

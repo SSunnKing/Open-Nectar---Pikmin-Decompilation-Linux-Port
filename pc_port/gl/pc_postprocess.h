@@ -18,6 +18,13 @@
 /// contains exactly the ones switched on and nothing else, so a pass with two
 /// effects costs two effects rather than the worst case.
 struct PcPostEffects {
+	// Antialiasing, as a post-process rather than MSAA on the framebuffer.
+	// That is a deliberate choice for this game: Pikmin's undergrowth is drawn
+	// with alpha-tested quads, and MSAA does nothing for those edges because
+	// they are not geometry. FXAA works on the finished image, so it smooths
+	// the leaves and the grass along with everything else.
+	bool fxaa = false;
+
 	// Colour grading. Cheap, needs only the scene colour, and it is the effect
 	// that proves the whole path works end to end.
 	bool colourGrading = false;
@@ -27,7 +34,7 @@ struct PcPostEffects {
 
 	bool operator==(const PcPostEffects& o) const
 	{
-		return colourGrading == o.colourGrading && gamma == o.gamma
+		return fxaa == o.fxaa && colourGrading == o.colourGrading && gamma == o.gamma
 		    && brightness == o.brightness && saturation == o.saturation;
 	}
 	bool operator!=(const PcPostEffects& o) const { return !(*this == o); }
