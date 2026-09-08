@@ -339,6 +339,10 @@ The game binary also accepts `--audio-self-test`, which walks scenes, stages,
 boss transitions, muting, sound effects and cinematic streams without opening a
 window, and reports whether each produced audio.
 
+## AI disclosure
+
+This project was developed with the assistance of AI tools. The generated code was reviewed, tested and integrated by me. I mention it because I'd rather be upfront about how this was built.
+
 ## Legal requirements
 
 This repository **does not contain ROMs or Nintendo resources**.
