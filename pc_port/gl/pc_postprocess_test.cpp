@@ -295,8 +295,22 @@ int main()
 		check(!contains(src, "f + n - ndc"),
 		      "occlusion does not use the OpenGL depth range");
 		check(contains(src, "uProjInfo"), "occlusion takes the projection terms");
-		check(contains(src, "dFdx(P)") && contains(src, "dFdy(P)"),
-		      "the normal comes from screen-space derivatives");
+		// Derivatives were the first attempt: faceted per quad, and in grass
+		// every quad straddles a silhouette, which came out as noise. Taking
+		// the nearer neighbour on each axis keeps the difference inside one
+		// surface.
+		check(!contains(src, "dFdx(P)"), "the normal does not come from raw derivatives");
+		check(contains(src, "abs(Pr.z - P.z) < abs(P.z - Pl.z)"),
+		      "the normal picks the nearer horizontal neighbour");
+		check(contains(src, "abs(Pu.z - P.z) < abs(P.z - Pd.z)"),
+		      "the normal picks the nearer vertical neighbour");
+		check(contains(src, "uTexel"), "the normal taps need a texel size");
+		// A sine hash clusters, and neighbouring pixels drawing similar angles
+		// is what the blur cannot cancel -- it showed up as lines crawling
+		// across the ground.
+		check(!contains(src, "sin(dot(gl_FragCoord.xy"),
+		      "the kernel rotation does not use a clustering sine hash");
+		check(contains(src, "52.9829189"), "the kernel rotation uses interleaved gradient noise");
 		// Without the flip the normal's sign follows the quad winding and half
 		// the screen occludes backwards.
 		check(contains(src, "if (N.z < 0.0) N = -N;"), "the normal is forced to face the camera");
@@ -315,6 +329,22 @@ int main()
 		check(a != b, "occlusion intensity is part of the comparison");
 		b = a; b.ssaoRadius = 10.0f;
 		check(a != b, "occlusion radius is part of the comparison");
+	}
+
+	// Occlusion is denoised with a depth-aware blur, not the Gaussian bloom
+	// uses. A plain average crosses silhouettes, which drags a blade of grass's
+	// occlusion onto the ground behind it and shimmers as either one moves.
+	{
+		const std::string ao = pc_post_build_ao_blur_shader();
+		const std::string plain = pc_post_build_blur_shader();
+		check(ao.rfind("#version", 0) == 0, "the occlusion blur begins with its version");
+		check(contains(ao, "uniform sampler2D uDepth"), "the occlusion blur reads depth");
+		check(contains(ao, "depthWeight"), "the occlusion blur weights by depth");
+		check(contains(ao, "n - ndc * (f - n)"),
+		      "the occlusion blur linearises with the GameCube depth range");
+		check(!contains(plain, "uDepth"), "the plain blur stays depth-unaware");
+		// The kernel has to be at least as wide as the noise it cancels.
+		check(contains(ao, "i = -3; i <= 3"), "the occlusion blur is wide enough for the noise");
 	}
 
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");

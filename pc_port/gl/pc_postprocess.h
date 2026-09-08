@@ -100,6 +100,11 @@ bool pc_post_ssao_active(const PcPostEffects& fx);
 /// position and normal from depth alone: the port has no G-buffer.
 std::string pc_post_build_ssao_shader();
 
+/// One half of a depth-aware blur, for denoising occlusion. Unlike the plain
+/// Gaussian this will not average across a silhouette, which is what kept
+/// foliage shimmering.
+std::string pc_post_build_ao_blur_shader();
+
 /// One half of a separable Gaussian blur. uBlurStep carries the direction and
 /// the texel size together, so the same program serves both axes.
 std::string pc_post_build_blur_shader();

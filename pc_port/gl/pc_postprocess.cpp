@@ -50,6 +50,7 @@ std::string pc_post_build_ssao_shader()
 	src += "uniform vec4 uProjInfo;\n";
 	// x radius in world units, y intensity, z bias.
 	src += "uniform vec4 uAOParams;\n";
+	src += "uniform vec2 uTexel;\n";
 
 	// The depth range is the GameCube's, not OpenGL's: C_MTXPerspective puts
 	// the far plane at ndc 0 rather than +1. Getting this wrong does not look
@@ -90,14 +91,28 @@ std::string pc_post_build_ssao_shader()
 	src += "    vec3 P = viewPos(vUV);\n";
 	// The sky sits on the far plane and has nothing in front of it to occlude.
 	src += "    if (-P.z >= uProjInfo.w * 0.999) { oColour = vec4(1.0); return; }\n";
-	src += "    vec3 N = normalize(cross(dFdx(P), dFdy(P)));\n";
-	// The derivative order decides the sign, and it flips with the winding of
-	// the quad. Force it to face the camera instead of relying on that.
+	// Derivatives were the first attempt and they are faceted per 2x2 quad, so
+	// grass -- where every quad straddles a silhouette -- came out as noise.
+	// Taking both neighbours on each axis and keeping whichever is nearer in
+	// depth means the difference never crosses a discontinuity unless both
+	// sides do.
+	src += "    vec3 Pr = viewPos(vUV + vec2(uTexel.x, 0.0));\n";
+	src += "    vec3 Pl = viewPos(vUV - vec2(uTexel.x, 0.0));\n";
+	src += "    vec3 Pu = viewPos(vUV + vec2(0.0, uTexel.y));\n";
+	src += "    vec3 Pd = viewPos(vUV - vec2(0.0, uTexel.y));\n";
+	src += "    vec3 dx = (abs(Pr.z - P.z) < abs(P.z - Pl.z)) ? (Pr - P) : (P - Pl);\n";
+	src += "    vec3 dy = (abs(Pu.z - P.z) < abs(P.z - Pd.z)) ? (Pu - P) : (P - Pd);\n";
+	src += "    vec3 N = normalize(cross(dx, dy));\n";
+	// The sign follows the winding of the difference, so force it rather than
+	// trusting it.
 	src += "    if (N.z < 0.0) N = -N;\n";
 
-	// Rotating the kernel per pixel turns the banding a fixed pattern would
-	// leave into noise, which the blur that follows can actually remove.
-	src += "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;\n";
+	// Interleaved gradient noise rather than a sine hash. The sine version
+	// clusters -- neighbouring pixels often draw similar angles -- which the
+	// blur cannot average away, and that is what showed up as lines crawling
+	// across the ground as the camera moved. This distributes evenly over every
+	// small neighbourhood, so the blur has something it can actually cancel.
+	src += "    float a = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;\n";
 	src += "    float sa = sin(a), ca = cos(a);\n";
 	src += "    mat2 rot = mat2(ca, -sa, sa, ca);\n";
 
@@ -120,6 +135,56 @@ std::string pc_post_build_ssao_shader()
 	src += "    }\n";
 	src += "    occlusion = occlusion / float(" + std::to_string(kSamples) + ") * uAOParams.y;\n";
 	src += "    oColour = vec4(vec3(clamp(1.0 - occlusion, 0.0, 1.0)), 1.0);\n";
+	src += "}\n";
+	return src;
+}
+
+std::string pc_post_build_ao_blur_shader()
+{
+	// A plain Gaussian is wrong for occlusion. It averages across silhouettes,
+	// which both softens edges that should stay sharp and drags a blade of
+	// grass's occlusion onto the ground behind it -- the shimmering the plain
+	// blur left in foliage. Weighting each tap by how close it is in depth
+	// keeps the average inside one surface.
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uSource;\n";
+	src += "uniform sampler2D uDepth;\n";
+	src += "uniform vec2 uBlurStep;\n";
+	src += "uniform vec4 uProjInfo;\n";
+
+	src += "float viewDepth(vec2 uv) {\n";
+	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
+	src += "    float n = uProjInfo.z;\n";
+	src += "    float f = uProjInfo.w;\n";
+	src += "    float denom = n - ndc * (f - n);\n";
+	src += "    return (abs(denom) < 1e-6) ? f : (n * f) / denom;\n";
+	src += "}\n";
+
+	src += "void main() {\n";
+	src += "    float centre = viewDepth(vUV);\n";
+	// Scaled by distance: a centimetre of depth difference means something very
+	// different a metre away than it does across the whole stage.
+	src += "    float tolerance = max(centre * 0.02, 1.0);\n";
+	src += "    float total = 0.0;\n";
+	src += "    float weightSum = 0.0;\n";
+	// Seven taps rather than five. The kernel has to be at least as wide as the
+	// noise pattern it is cancelling, or some of that noise survives.
+	src += "    for (int i = -3; i <= 3; ++i) {\n";
+	src += "        vec2 uv = vUV + uBlurStep * float(i);\n";
+	src += "        float d = viewDepth(uv);\n";
+	src += "        float spatial = exp(-float(i * i) * 0.25);\n";
+	src += "        float depthWeight = max(1.0 - abs(d - centre) / tolerance, 0.0);\n";
+	src += "        float w = spatial * depthWeight;\n";
+	src += "        total += texture(uSource, uv).r * w;\n";
+	src += "        weightSum += w;\n";
+	src += "    }\n";
+	// The centre tap always has weight, so this cannot divide by zero, but a
+	// surface isolated from every neighbour should keep its own value.
+	src += "    float ao = (weightSum > 1e-5) ? (total / weightSum) : texture(uSource, vUV).r;\n";
+	src += "    oColour = vec4(vec3(ao), 1.0);\n";
 	src += "}\n";
 	return src;
 }

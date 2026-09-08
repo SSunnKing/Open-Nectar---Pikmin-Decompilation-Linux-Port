@@ -1960,6 +1960,7 @@ static int sBloomWidth = 0, sBloomHeight = 0;
 static GLuint sAoFbo[2] = { 0, 0 };
 static GLuint sAoTex[2] = { 0, 0 };
 static GLuint sSsaoProgram = 0;
+static GLuint sAoBlurProgram = 0;
 static int sAoWidth = 0, sAoHeight = 0;
 
 // The perspective projection's terms, kept for the post-process pass.
@@ -2032,7 +2033,7 @@ static bool post_ensure_program()
 
     // The bloom chain's two programs do not depend on the settings, only on
     // whether bloom is wanted at all, so they are built once and kept.
-    const bool wantsBlur = pc_post_bloom_active(sPostEffects) || pc_post_ssao_active(sPostEffects);
+    const bool wantsBlur = pc_post_bloom_active(sPostEffects);
     if (pc_post_bloom_active(sPostEffects) && !sBrightProgram && glUniform2f_ptr) {
         const std::string brightSrc = pc_post_build_brightpass_shader();
         const std::string blurSrc   = pc_post_build_blur_shader();
@@ -2081,6 +2082,27 @@ static bool post_ensure_program()
                 printf("[PC Port] ssao program failed to link; ambient occlusion is off\n");
                 glDeleteProgram_ptr(sSsaoProgram);
                 sSsaoProgram = 0;
+            }
+        }
+        if (vs) glDeleteShader_ptr(vs);
+        if (fs) glDeleteShader_ptr(fs);
+    }
+
+    if (pc_post_ssao_active(sPostEffects) && !sAoBlurProgram && glUniform2f_ptr) {
+        const std::string blurSrc = pc_post_build_ao_blur_shader();
+        GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "ao blur vertex shader");
+        GLuint fs = vs ? post_compile(GL_FRAGMENT_SHADER, blurSrc.c_str(), "ao blur") : 0;
+        if (vs && fs) {
+            sAoBlurProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sAoBlurProgram, vs);
+            glAttachShader_ptr(sAoBlurProgram, fs);
+            glLinkProgram_ptr(sAoBlurProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) glGetProgramiv_ptr(sAoBlurProgram, GL_LINK_STATUS, &ok);
+            if (ok != GL_TRUE) {
+                printf("[PC Port] ao blur failed to link; occlusion will be noisy\n");
+                glDeleteProgram_ptr(sAoBlurProgram);
+                sAoBlurProgram = 0;
             }
         }
         if (vs) glDeleteShader_ptr(vs);
@@ -2269,7 +2291,7 @@ static bool ao_ensure_targets()
 // Occlusion into [0], blurred across into [1] and back down into [0].
 static bool ao_build()
 {
-    if (!sSsaoProgram || !sBlurProgram) return false;
+    if (!sSsaoProgram || !sAoBlurProgram) return false;
     // Depth is the whole input. Without a depth texture there is nothing to
     // compute from, which is exactly the fallback case pc_gfx warned about.
     if (!sDepthIsTexture || !sNativeDepthTexture) return false;
@@ -2291,11 +2313,30 @@ static bool ao_build()
         glUniform4f_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uAOParams"),
                         sPostEffects.ssaoRadius, sPostEffects.ssaoIntensity, 0.02f, 0.0f);
     }
+    if (glUniform2f_ptr) {
+        // The neighbour taps that build the normal step one pixel of this
+        // target, not of the full-resolution scene.
+        glUniform2f_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uTexel"),
+                        1.0f / float(sAoWidth), 1.0f / float(sAoHeight));
+    }
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
-    glUseProgram_ptr(sBlurProgram);
-    const GLint blurSource = glGetUniformLocation_ptr(sBlurProgram, "uSource");
-    const GLint blurStep = glGetUniformLocation_ptr(sBlurProgram, "uBlurStep");
+    glUseProgram_ptr(sAoBlurProgram);
+    const GLint blurSource = glGetUniformLocation_ptr(sAoBlurProgram, "uSource");
+    const GLint blurDepth = glGetUniformLocation_ptr(sAoBlurProgram, "uDepth");
+    const GLint blurStep = glGetUniformLocation_ptr(sAoBlurProgram, "uBlurStep");
+    if (glUniform4f_ptr) {
+        glUniform4f_ptr(glGetUniformLocation_ptr(sAoBlurProgram, "uProjInfo"),
+                        sViewInvP00, sViewInvP11, sViewNear, sViewFar);
+    }
+    // Depth stays bound on its own unit for the whole blur: both axes weight
+    // their taps by it, and rebinding per pass would only cost state changes.
+    if (glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+        if (glUniform1i_ptr) glUniform1i_ptr(blurDepth, 1);
+        glActiveTexture_ptr(GL_TEXTURE0);
+    }
     for (int axis = 0; axis < 2; axis++) {
         const int from = axis == 0 ? 0 : 1;
         const int to   = axis == 0 ? 1 : 0;
