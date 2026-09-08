@@ -277,6 +277,8 @@ Press **F1** at any time to open the configuration menu:
 - **Mouse wheel**: chooses what the wheel does, one or the other:
   - `Pikmin Colour`: cycles which colour to throw next, through the colours you actually have with you. With one colour it does nothing, with two it alternates, with three it cycles. If the chosen colour is out of reach, the captain still grabs the nearest Pikmin
   - `Camera Zoom`: pulls the camera between 0.45× and 2.50× of its normal distance
+- **Pikmin limit**: how many Pikmin may be on the field at once, from 50 up to 999. The original is 100. The Onion, the field and the matrix pool are all sized from this number, so it applies when a stage loads rather than mid-day. Tested to 945 Pikmin on screen; high values do cost frame rate, and how much depends on your machine
+- **Day length**: 5 to 30 minutes of play per in-game day, 10 being the original. This stretches the game's own clock, so nothing moves faster or slower — sunset simply arrives sooner or later
 
 **Controls:**
 - **Control scheme**: Classic (GameCube) or Mouse pointer
