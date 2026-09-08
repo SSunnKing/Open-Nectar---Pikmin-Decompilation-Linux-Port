@@ -542,6 +542,16 @@ void Jac_EasyCrossFade(u8 crossfadeMode, u32 fadeFrames)
 	u8* REF_type = &crossfadeMode;
 	u32* REF_val = &fadeFrames;
 
+#if defined(PIKI_PC_PORT)
+	// The practice stage does not start a boss music layer. Boss proximity
+	// can still request it (including on return visits). Keep the current
+	// mix when the destination is absent: -1 is not a root sequence index,
+	// and fading the normal layer first would leave this stage silent.
+	if (crossfadeMode <= 1 && !bgm[crossfadeMode].isActive) {
+		return;
+	}
+#endif
+
 	switch (crossfadeMode) {
 	case 0: // exit boss mode
 	{
