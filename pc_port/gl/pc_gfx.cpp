@@ -474,7 +474,9 @@ static size_t sVboWriteOffset = 0;
 static GLuint sShaderProgram = 0;
 static GLuint sNativeFramebuffer = 0;
 static GLuint sNativeColorTexture = 0;
-static GLuint sNativeDepthStencil = 0;
+static GLuint sNativeDepthStencil = 0;   // renderbuffer, the fallback
+static GLuint sNativeDepthTexture = 0;   // sampled by post-process passes
+static bool sDepthIsTexture       = false;
 static bool sNativeFramebufferReady = false;
 static int sRenderWidth = 640;
 static int sRenderHeight = 480;
@@ -1596,17 +1598,46 @@ void pc_gfx_init(void) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                    sNativeColorTexture, 0);
-        glGenRenderbuffers_ptr(1, &sNativeDepthStencil);
-        glBindRenderbuffer_ptr(GL_RENDERBUFFER, sNativeDepthStencil);
-        glRenderbufferStorage_ptr(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, sRenderWidth, sRenderHeight);
-        glFramebufferRenderbuffer_ptr(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                      GL_RENDERBUFFER, sNativeDepthStencil);
+        // Depth as a texture rather than a renderbuffer. Nothing samples it
+        // yet, but every screen-space effect worth having -- ambient occlusion,
+        // depth-based fog, depth of field, outlines -- needs to read it, and a
+        // renderbuffer cannot be read. A renderbuffer is still the fallback:
+        // the port keeps a GL 2.1 context path for old drivers, and there
+        // packed depth-stencil textures are an extension rather than a
+        // guarantee. Losing the effects is acceptable; losing the game is not.
+        sDepthIsTexture = false;
+        glGenTextures(1, &sNativeDepthTexture);
+        glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, sRenderWidth, sRenderHeight,
+                     0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+        // Depth must not be filtered or wrapped: a sample has to be the value
+        // written at that pixel, not a blend of its neighbours.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // Sampled as a plain value, not as a shadow comparison.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                   GL_TEXTURE_2D, sNativeDepthTexture, 0);
+        if (glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            sDepthIsTexture = true;
+        } else {
+            glDeleteTextures(1, &sNativeDepthTexture);
+            sNativeDepthTexture = 0;
+            glGenRenderbuffers_ptr(1, &sNativeDepthStencil);
+            glBindRenderbuffer_ptr(GL_RENDERBUFFER, sNativeDepthStencil);
+            glRenderbufferStorage_ptr(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, sRenderWidth, sRenderHeight);
+            glFramebufferRenderbuffer_ptr(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                          GL_RENDERBUFFER, sNativeDepthStencil);
+        }
         sNativeFramebufferReady = glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebufferReady ? sNativeFramebuffer : 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         sBoundTextures[0] = 0;
-        printf("[PC Port] Scalable render target: %s (scale %.2f)\n",
-               sNativeFramebufferReady ? "active" : "unavailable", sRenderScale);
+        printf("[PC Port] Scalable render target: %s (scale %.2f), depth: %s\n",
+               sNativeFramebufferReady ? "active" : "unavailable", sRenderScale,
+               sDepthIsTexture ? "texture (readable)" : "renderbuffer (not readable)");
     }
     glEnableVertexAttribArray_ptr(sAttrPos);
     glVertexAttribPointer_ptr(sAttrPos, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, x));
@@ -1861,9 +1892,15 @@ void pc_gfx_begin_frame(void) {
             glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, sRenderWidth, sRenderHeight,
                          0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glBindRenderbuffer_ptr(GL_RENDERBUFFER, sNativeDepthStencil);
-            glRenderbufferStorage_ptr(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
-                                      sRenderWidth, sRenderHeight);
+            if (sDepthIsTexture) {
+                glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, sRenderWidth, sRenderHeight,
+                             0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+            } else {
+                glBindRenderbuffer_ptr(GL_RENDERBUFFER, sNativeDepthStencil);
+                glRenderbufferStorage_ptr(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+                                          sRenderWidth, sRenderHeight);
+            }
             glBindTexture(GL_TEXTURE_2D, 0);
             sBoundTextures[0] = 0;
             printf("[PC Port] Internal render resolution: %dx%d (aspect %.3f)\n", sRenderWidth, sRenderHeight, sCurrentAspectRatio);
@@ -3074,6 +3111,22 @@ bool pc_gfx_get_shader_specialisation(void) {
 
 size_t pc_gfx_get_specialised_program_count(void) {
     return sTevPrograms.size();
+}
+
+unsigned int pc_gfx_get_depth_texture(void)
+{
+    return sDepthIsTexture ? sNativeDepthTexture : 0;
+}
+
+unsigned int pc_gfx_get_colour_texture(void)
+{
+    return sNativeFramebufferReady ? sNativeColorTexture : 0;
+}
+
+void pc_gfx_get_render_size(int* width, int* height)
+{
+    if (width) *width = sRenderWidth;
+    if (height) *height = sRenderHeight;
 }
 
 // Per-frame submission cost, accumulated across every GX primitive and handed

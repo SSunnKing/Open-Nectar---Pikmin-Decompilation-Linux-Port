@@ -120,6 +120,23 @@ bool pc_gfx_get_shader_specialisation(void);
 size_t pc_gfx_get_specialised_program_count(void);
 
 /**
+ * @brief The scene's depth buffer, as a texture a shader can sample.
+ *
+ * Zero when the driver would not give us one and the port fell back to a
+ * renderbuffer. Every screen-space effect has to check this and switch itself
+ * off rather than assume: the fallback is a real path, not a theoretical one.
+ */
+unsigned int pc_gfx_get_depth_texture(void);
+
+/**
+ * @brief The scene colour target, at internal render resolution.
+ *
+ * This is what the render scale changes, and it is not the window size.
+ */
+unsigned int pc_gfx_get_colour_texture(void);
+void pc_gfx_get_render_size(int* width, int* height);
+
+/**
  * @brief Peak use of the two fixed draw pools since the process started.
  *
  * Both are fatal to overflow and both grow with the number of Pikmin drawn,
