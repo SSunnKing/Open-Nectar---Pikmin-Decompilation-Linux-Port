@@ -374,10 +374,14 @@ void System::run(BaseApp* app)
             // sections the 60 FPS setting actually reaches, rather than
             // inferring it from where the setting is read in the source.
             pc_audio_report_levels();
-            printf("[PC Port] FPS: %.1f, DeltaTime: %.4fms, clamp: %d, TEV programs: %zu%s\n",
+            int matrixPeak = 0, matrixMax = 0, shapePeak = 0, shapeMax = 0;
+            pc_gfx_get_pool_peaks(&matrixPeak, &matrixMax, &shapePeak, &shapeMax);
+            printf("[PC Port] FPS: %.1f, DeltaTime: %.4fms, clamp: %d, TEV programs: %zu%s, "
+                   "matrices: %d/%d, shapes: %d/%d\n",
                    getFrameRate(), mDeltaTime * 1000.0, mFrameRate,
                    pc_gfx_get_specialised_program_count(),
-                   pc_gfx_get_shader_specialisation() ? "" : " (ubershader)");
+                   pc_gfx_get_shader_specialisation() ? "" : " (ubershader)",
+                   matrixPeak, matrixMax, shapePeak, shapeMax);
             // The budget is always the 60 Hz one: the question this answers is
             // whether a tick would fit there, not whether it fits the 30 Hz
             // period it is currently running at.

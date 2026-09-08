@@ -14,6 +14,8 @@
 #include <math.h>
 #if defined(PIKI_PC_PORT)
 #include "timing/pc_render_phase.h"
+#include "GlobalGameOptions.h"
+#include "settings/pc_settings.h"
 #endif
 
 /**
@@ -865,6 +867,22 @@ Graphics::Graphics()
 	mMatrixBuffer   = gsys->mMatrices;
 
 	mCachedShapeMax = 1000;
+#if defined(PIKI_PC_PORT)
+	// A second fixed pool with the same problem as the matrix bank: every
+	// alpha-blended shape drawn in a frame takes an entry, and a Pikmin is one
+	// or two of them. 1000 is comfortable for the original hundred Pikmin and
+	// the scenery around them, and runs out somewhere past four hundred. Scale
+	// it with the field limit, as the matrix bank is scaled in StdSystem.
+	{
+		const int limit = pc_settings_get_piki_limit();
+		if (limit > MAX_PIKI_ON_FIELD) {
+			const int scaled = int((long long)mCachedShapeMax * limit / MAX_PIKI_ON_FIELD);
+			if (scaled > mCachedShapeMax) {
+				mCachedShapeMax = scaled;
+			}
+		}
+	}
+#endif
 	mCachedShapes   = new CachedShape[mCachedShapeMax];
 
 	mAmbientColour.set(0, 0, 48, 255);
@@ -885,8 +903,28 @@ void Graphics::initRender(int screenWidth, int screenHeight)
 /**
  * @todo: Documentation
  */
+#if defined(PIKI_PC_PORT)
+// Peak use of the two fixed draw pools, sampled just before each frame resets
+// them. Both overflow fatally, and both scale with how many Pikmin are on
+// screen, so the headroom is worth being able to read off a log rather than
+// inferring it from where a crash happened.
+static int sPeakMatrixUse = 0;
+static int sPeakShapeUse  = 0;
+
+extern "C" void pc_gfx_get_pool_peaks(int* matrixPeak, int* matrixMax, int* shapePeak, int* shapeMax)
+{
+	if (matrixPeak) *matrixPeak = sPeakMatrixUse;
+	if (shapePeak) *shapePeak = sPeakShapeUse;
+	if (matrixMax) *matrixMax = gsys && gsys->mGraphics ? gsys->mGraphics->mMaxMatrixCount : 0;
+	if (shapeMax) *shapeMax = gsys && gsys->mGraphics ? gsys->mGraphics->mCachedShapeMax : 0;
+}
+#endif
+
 void Graphics::resetMatrixBuffer()
 {
+#if defined(PIKI_PC_PORT)
+	if (mNextFreeMatrixIdx > sPeakMatrixUse) sPeakMatrixUse = mNextFreeMatrixIdx;
+#endif
 	mNextFreeMatrixIdx = 0;
 }
 
@@ -896,7 +934,7 @@ void Graphics::resetMatrixBuffer()
 Matrix4f* Graphics::getMatrices(int requestedMatrixCount)
 {
 	if (mNextFreeMatrixIdx + requestedMatrixCount > mMaxMatrixCount) {
-		ERROR("using too many matrices!!\n");
+		ERROR("using too many matrices!! (%d + %d > %d)\n", mNextFreeMatrixIdx, requestedMatrixCount, mMaxMatrixCount);
 	}
 
 	Matrix4f* mtx = &mMatrixBuffer[mNextFreeMatrixIdx];
@@ -909,6 +947,9 @@ Matrix4f* Graphics::getMatrices(int requestedMatrixCount)
  */
 void Graphics::resetCacheBuffer()
 {
+#if defined(PIKI_PC_PORT)
+	if (mCachedShapeCount > sPeakShapeUse) sPeakShapeUse = mCachedShapeCount;
+#endif
 	mShapeCache.mNext = &mShapeCache;
 	mShapeCache.mPrev = &mShapeCache;
 
@@ -921,7 +962,7 @@ void Graphics::resetCacheBuffer()
 void Graphics::cacheShape(BaseShape* shape, ShapeDynMaterials* mats)
 {
 	if (mCachedShapeCount >= mCachedShapeMax) {
-		ERROR("using too many shapes!!\n");
+		ERROR("using too many shapes!! (%d >= %d)\n", mCachedShapeCount, mCachedShapeMax);
 	}
 
 	CachedShape* cache = &mCachedShapes[mCachedShapeCount];

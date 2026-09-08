@@ -119,6 +119,15 @@ void pc_gfx_set_shader_specialisation(bool enabled);
 bool pc_gfx_get_shader_specialisation(void);
 size_t pc_gfx_get_specialised_program_count(void);
 
+/**
+ * @brief Peak use of the two fixed draw pools since the process started.
+ *
+ * Both are fatal to overflow and both grow with the number of Pikmin drawn,
+ * so a log line carrying the headroom beats working it out from where a
+ * crash landed. Defined in sysCommon/graphics.cpp.
+ */
+void pc_gfx_get_pool_peaks(int* matrixPeak, int* matrixMax, int* shapePeak, int* shapeMax);
+
 // Hand this frame's submission cost to the tick profiler and reset it. Called
 // once per frame, right after renderall. No-op unless PIKMIN_TICK_STATS is set.
 void pc_gfx_flush_batch(void);
