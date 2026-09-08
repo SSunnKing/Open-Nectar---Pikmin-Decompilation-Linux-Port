@@ -21,10 +21,8 @@ orig/*/*
 # Build files
 build/
 build-*/
-/packaging/arch-linux/out/
 /packaging/linux/out/
 /packaging.zip
-/Pikmin-Arch-Installer/
 /save/
 .ninja_*
 build.ninja
