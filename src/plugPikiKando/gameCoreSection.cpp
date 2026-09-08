@@ -6,6 +6,9 @@
 #endif
 #if defined(PIKI_PC_PORT)
 #include "settings/pc_settings.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_photo_mode.h"
+#endif
 #endif
 
 #include "AIConstant.h"
@@ -70,6 +73,13 @@ static bool lastDamage;
 static bool currDamage;
 static u32 damageParm;
 u16 GameCoreSection::pauseFlag;
+#if defined(PIKI_PC_PORT)
+// What the pause gates held before photo mode took them, so leaving restores
+// whatever the game was doing rather than assuming it was unpaused.
+static BOOL sPhotoModeSavedPauseAll = FALSE;
+static BOOL sPhotoModeSavedOverlay  = FALSE;
+static f32 sPhotoModeSavedRoll      = 0.0f;
+#endif
 int GameCoreSection::textDemoState;
 u16 GameCoreSection::textDemoTimer;
 int GameCoreSection::textDemoIndex;
@@ -1650,6 +1660,7 @@ void GameCoreSection::update()
 		cameraMgr->update();
 	}
 
+
 	Piki* nextThrowPiki = naviMgr->getNavi()->mNextThrowPiki;
 	int encodedNextThrowType;
 	if (nextThrowPiki) {
@@ -1711,6 +1722,81 @@ void GameCoreSection::startSundownWarn()
 void GameCoreSection::updateAI()
 {
 	STACK_PAD_VAR(2);
+#if defined(PIKI_PC_PORT)
+	// Photo mode. This lives in updateAI rather than in update() because
+	// update() is reached through Node::update(), and newPikiGame guards that
+	// call with
+	//     if (!gameflow.mPauseAll && !gameflow.mIsUIOverlayActive)
+	// -- the very flags photo mode raises. Putting the toggle there killed the
+	// code that reads it, so the mode could be entered and never left.
+	// updateAI is called outside that guard and keeps running while frozen.
+	//
+	// The toggle is ignored during a cutscene: the movie player drives the
+	// camera itself, and fighting it would only produce a mess.
+	//
+	// The camera is driven through NCamera's own viewpoint/watchpoint pair
+	// rather than by writing Camera::mPosition afterwards. makeMatrix() is what
+	// builds mLookAtMtx, and that matrix is what the renderer actually uses --
+	// setting mPosition after update() changes the reported position without
+	// moving the view at all.
+	if (!gameflow.mMoviePlayer->mIsActive && pc_photo_mode_poll_toggle()) {
+		PcamCamera* pcam = cameraMgr->mCamera;
+		if (pc_photo_mode_active()) {
+			pc_photo_mode_exit();
+			gameflow.mPauseAll          = sPhotoModeSavedPauseAll;
+			gameflow.mIsUIOverlayActive = sPhotoModeSavedOverlay;
+			if (pcam) {
+				pcam->mRotationAngle = sPhotoModeSavedRoll;
+			}
+		} else if (pcam) {
+			sPhotoModeSavedPauseAll = gameflow.mPauseAll;
+			sPhotoModeSavedOverlay  = gameflow.mIsUIOverlayActive;
+			sPhotoModeSavedRoll     = pcam->mRotationAngle;
+			// mPauseAll freezes every manager; mIsUIOverlayActive is what holds
+			// the captain and the day clock. Both, or the world is only half
+			// still.
+			gameflow.mPauseAll          = TRUE;
+			gameflow.mIsUIOverlayActive = TRUE;
+
+			// Carry on from wherever the gameplay camera was, so entering photo
+			// mode does not snap the view somewhere else.
+			Vector3f eye, look;
+			pcam->getViewpoint().output(eye);
+			pcam->getWatchpoint().output(look);
+			Vector3f dir(look.x - eye.x, look.y - eye.y, look.z - eye.z);
+			f32 pitch = 0.0f, yaw = 0.0f;
+			pc_photo_mode_angles_from_forward(dir.x, dir.y, dir.z, &pitch, &yaw);
+			pc_photo_mode_enter(eye.x, eye.y, eye.z, pitch, yaw);
+		}
+	}
+
+	if (pc_photo_mode_active()) {
+		PcamCamera* pcam = cameraMgr->mCamera;
+		if (pcam) {
+			f32 px = 0.0f, py = 0.0f, pz = 0.0f, pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
+			pc_photo_mode_update(gsys->getFrameTime(), &px, &py, &pz, &pitch, &yaw, &roll);
+
+			f32 fx = 0.0f, fy = 0.0f, fz = 0.0f;
+			pc_photo_mode_forward_vector(pitch, yaw, &fx, &fy, &fz);
+
+			// The watchpoint is a point along the look direction. Its distance
+			// only has to be far enough not to lose precision in the look-at.
+			const f32 kLookDistance = 100.0f;
+			Vector3f eye(px, py, pz);
+			Vector3f look(px + fx * kLookDistance, py + fy * kLookDistance, pz + fz * kLookDistance);
+
+			pcam->inputViewpoint(eye);
+			pcam->inputWatchpoint(look);
+			// makeMatrix rolls the up vector about the look axis by this, which
+			// is where the tilt actually comes from -- Camera::mRotation.z is
+			// not read by anything.
+			pcam->mRotationAngle = roll;
+			pcam->makeMatrix();
+			pcam->makeCamera();
+		}
+	}
+#endif
+
 	int pikis = GameStat::mapPikis;
 	if (pikis > 50) {
 		if (AIPerf::optLevel != 2)

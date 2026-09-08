@@ -21,6 +21,9 @@
 #include "system.h"
 #include "timers.h"
 #include <stddef.h>
+#if defined(PIKI_PC_PORT)
+#include "pc_photo_mode.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -3289,7 +3292,17 @@ void BaseShape::updateAnim(Graphics& gfx, immut Matrix4f& mtx, f32* p3, const vo
 	mAnimMatrices = gfx.getMatrices(mAnimMtxCount);
 
 	if (mCurrentAnimation->mData) {
-		if (!p3) {
+#if defined(PIKI_PC_PORT)
+		// Skeletal animation is advanced here, in the draw pass, so a model
+		// keeps moving even when every manager that would update it is frozen.
+		// That is why photo mode has to say so here as well as pausing the
+		// simulation -- otherwise the onions and the ship carry on animating in
+		// an otherwise still world.
+		const bool holdAnimation = pc_photo_mode_active() != 0;
+#else
+		const bool holdAnimation = false;
+#endif
+		if (!p3 && !holdAnimation) {
 			mCurrentAnimation->animate(mCurrentAnimation->mAnimSpeed);
 		}
 

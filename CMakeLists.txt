@@ -151,6 +151,8 @@ set(PC_PORT_SOURCES
     pc_port/pc_window.cpp
     pc_port/pc_pad_axis.cpp
     pc_port/pc_menu_repeat.cpp
+    pc_port/pc_photo_mode.cpp
+    pc_port/pc_permadeath.cpp
     pc_port/gl/pc_gfx.cpp
     pc_port/gl/pc_tev_shader.cpp
     pc_port/timing/pc_frame_scheduler.cpp
@@ -169,6 +171,7 @@ set(PC_PORT_SOURCES
     pc_port/audio/pc_aram.cpp
     pc_port/audio/pc_dsp_host.cpp
     pc_port/settings/pc_settings.cpp
+    pc_port/settings/pc_settings_p2d.cpp
     src/jaudio/pikiseq.c
     pc_port/dolphin_stubs/os_stubs.cpp
     pc_port/dolphin_stubs/gx_stubs.cpp
@@ -497,6 +500,19 @@ target_include_directories(pc_pad_axis_test PRIVATE ${SDL2_INCLUDE_DIRS} pc_port
 target_compile_options(pc_pad_axis_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_pad_axis_test COMMAND pc_pad_axis_test)
 
+# Permadeath save block (no game needed)
+add_executable(pc_permadeath_test pc_port/pc_permadeath_test.cpp pc_port/pc_permadeath.cpp src/sysCommon/stream.cpp src/sysCommon/string.cpp)
+target_include_directories(pc_permadeath_test PRIVATE pc_port include)
+target_compile_options(pc_permadeath_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_permadeath_test COMMAND pc_permadeath_test)
+
+# Photo mode camera convention (no stage needed)
+add_executable(pc_photo_mode_test pc_port/pc_photo_mode_test.cpp pc_port/pc_photo_mode.cpp)
+target_include_directories(pc_photo_mode_test PRIVATE ${SDL2_INCLUDE_DIRS} pc_port)
+target_link_libraries(pc_photo_mode_test PRIVATE ${SDL2_LIBRARIES})
+target_compile_options(pc_photo_mode_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_photo_mode_test COMMAND pc_photo_mode_test)
+
 # Menu input repeat (no controller needed)
 add_executable(pc_menu_repeat_test pc_port/pc_menu_repeat_test.cpp pc_port/pc_menu_repeat.cpp)
 target_include_directories(pc_menu_repeat_test PRIVATE pc_port)
@@ -604,7 +620,7 @@ message(STATUS "║   Input:    Native SDL keyboard/gamepad ║")
 message(STATUS "╚══════════════════════════════════════════╝")
 message(STATUS "")
 
-if(BUILD_TESTING AND PIKMIN_NATIVE_JAUDIO)
+if(PIKMIN_NATIVE_JAUDIO)
     add_test(NAME pc_jaudio_integration_test COMMAND pikmin_pc --audio-self-test)
     set_tests_properties(pc_jaudio_integration_test PROPERTIES
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
