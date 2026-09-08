@@ -588,6 +588,8 @@ struct ProgramLocations {
 	GLint useMaterialRgb1 = -1;
 	GLint specHalf1 = -1;   // specular half-vector for channel 1
 	GLint specAttn1 = -1;   // specular a[] coefficients
+	GLint fogParams = -1;
+	GLint fogColour = -1;
 	GLint tevChan[GX_MAXTEVSTAGE] = {};
 	GLint tcMode[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 	GLint tcMtx[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
@@ -1446,6 +1448,8 @@ static void query_program_locations(GLuint program, ProgramLocations& out) {
     out.useMaterialRgb1 = glGetUniformLocation_ptr(program, "uUseMaterialRgb1");
     out.specHalf1 = glGetUniformLocation_ptr(program, "uSpecHalf1");
     out.specAttn1 = glGetUniformLocation_ptr(program, "uSpecAttn1");
+    out.fogParams = glGetUniformLocation_ptr(program, "uFogParams");
+    out.fogColour = glGetUniformLocation_ptr(program, "uFogColour");
     for (int i = 0; i < 16; i++) {
         char buf[32];
         snprintf(buf, sizeof(buf), "uTevChan[%d]", i);
@@ -3095,6 +3099,38 @@ struct TevProgramEntry {
 static std::vector<TevProgramEntry> sTevPrograms;
 // Consecutive draws almost always share a material, so remember the last
 // configuration and skip both the hash and the table scan when it repeats.
+// Fog, as the game asks for it. Kept here rather than thrown away in the stub:
+// the values are per stage and the game already computes them correctly.
+static bool sFogEnabled = false;
+static float sFogStart = 0.0f, sFogEnd = 0.0f, sFogNear = 0.0f, sFogFar = 0.0f;
+static float sFogColour[3] = { 0.0f, 0.0f, 0.0f };
+
+void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float farZ,
+                    unsigned char r, unsigned char g, unsigned char b)
+{
+    // A span of zero would divide by nothing and a near/far pair that is not
+    // ordered cannot describe a view, so treat either as "no fog" rather than
+    // letting it reach the shader.
+    sFogEnabled = enabled != 0 && endZ != startZ && farZ > nearZ;
+    sFogStart = startZ;
+    sFogEnd = endZ;
+    sFogNear = nearZ;
+    sFogFar = farZ;
+    sFogColour[0] = r / 255.0f;
+    sFogColour[1] = g / 255.0f;
+    sFogColour[2] = b / 255.0f;
+    // Once, the first time a stage actually asks for fog. Says that the values
+    // are arriving and what they are, which is otherwise only answerable by
+    // staring at a horizon.
+    static bool reported = false;
+    if (sFogEnabled && !reported) {
+        reported = true;
+        printf("[PC Port] Fog active: %.0f..%.0f (view %.0f..%.0f) colour %d,%d,%d\n",
+               startZ, endZ, nearZ, farZ, r, g, b);
+        fflush(stdout);
+    }
+}
+
 static PcTevShaderKey sLastTevKey;
 static bool sLastTevKeyValid = false;
 
@@ -3142,6 +3178,7 @@ static void build_tev_shader_key(PcTevShaderKey& key) {
     key.useMaterialRgb   = uint8_t(sChannels[0].matSrc == GX_SRC_REG ? 1 : 0);
     key.useMaterialAlpha = uint8_t(sChannels[0].alphaMatSrc == GX_SRC_REG ? 1 : 0);
     key.useMaterialRgb1  = uint8_t(sChannels[1].matSrc == GX_SRC_REG ? 1 : 0);
+    key.fog              = uint8_t(sFogEnabled ? 1 : 0);
 }
 
 // Compiles and links one specialised program. Returns 0 on failure, which
@@ -4103,6 +4140,12 @@ void pc_gfx_end(void) {
     if (sLoc.materialColor1 >= 0)
         glUniform4f_ptr(sLoc.materialColor1, sChannels[1].matColor[0], sChannels[1].matColor[1],
                         sChannels[1].matColor[2], sChannels[1].matColor[3]);
+    // Only present in programs built with fog in the key, so the locations are
+    // -1 everywhere else and this costs nothing on the draws that have none.
+    if (sLoc.fogParams >= 0)
+        glUniform4f_ptr(sLoc.fogParams, sFogStart, sFogEnd, sFogNear, sFogFar);
+    if (sLoc.fogColour >= 0)
+        glUniform4f_ptr(sLoc.fogColour, sFogColour[0], sFogColour[1], sFogColour[2], 1.0f);
     if (sLoc.useMaterialRgb1 >= 0)
         glUniform1i_ptr(sLoc.useMaterialRgb1, sChannels[1].matSrc == GX_SRC_REG ? 1 : 0);
 

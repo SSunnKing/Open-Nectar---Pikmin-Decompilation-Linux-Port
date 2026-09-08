@@ -275,6 +275,7 @@ bool operator==(const PcTevShaderKey& a, const PcTevShaderKey& b)
 	if (a.useMaterialRgb != b.useMaterialRgb) return false;
 	if (a.useMaterialAlpha != b.useMaterialAlpha) return false;
 	if (a.useMaterialRgb1 != b.useMaterialRgb1) return false;
+	if (a.fog != b.fog) return false;
 	if (std::memcmp(a.swapTable, b.swapTable, sizeof(a.swapTable)) != 0) return false;
 	// Only the stages in use take part: whatever sits in the unused tail must
 	// never split one configuration across two cache entries.
@@ -299,6 +300,7 @@ uint64_t pc_tev_hash_key(const PcTevShaderKey& key)
 	mix(&key.useMaterialRgb, sizeof(key.useMaterialRgb));
 	mix(&key.useMaterialAlpha, sizeof(key.useMaterialAlpha));
 	mix(&key.useMaterialRgb1, sizeof(key.useMaterialRgb1));
+	mix(&key.fog, sizeof(key.fog));
 	mix(key.swapTable, sizeof(key.swapTable));
 	mix(key.stages, size_t(key.numStages) * sizeof(PcTevStageKey));
 	return hash;
@@ -346,6 +348,10 @@ std::string pc_tev_build_fragment_source(const PcTevShaderKey& key)
 	}
 	out += "uniform vec4 uMaterialColor;\n";
 	if (usesChannel1) out += "uniform vec4 uMaterialColor1;\n";
+	if (key.fog) {
+		out += "uniform vec4 uFogParams;\n";   // start, end, near, far
+		out += "uniform vec4 uFogColour;\n";
+	}
 	out += "uniform vec4 uTevPrev;\n";
 	out += "uniform vec4 uTevReg0;\n";
 	out += "uniform vec4 uTevReg1;\n";
@@ -397,6 +403,26 @@ std::string pc_tev_build_fragment_source(const PcTevShaderKey& key)
 		                     : key.alphaTestOp == 1 ? "||"
 		                     : key.alphaTestOp == 2 ? "!=" : "==";
 		out += "\tif (!(" + test0 + " " + combiner + " " + test1 + ")) discard;\n";
+	}
+
+	if (key.fog) {
+		// The GameCube's fog unit ran after the TEV stages and before the
+		// blend, on colour only -- alpha is left alone so a fogged transparent
+		// surface stays as transparent as it was.
+		//
+		// uFogParams is (start, end, near, far). gl_FragCoord.z is the window
+		// depth, which is not linear, so it is turned back into a distance
+		// along the view axis before being measured against start and end;
+		// interpolating the window value instead would put the fog wall in the
+		// wrong place, bunched up close to the camera.
+		out += "\tfloat fogNdc = gl_FragCoord.z * 2.0 - 1.0;\n";
+		out += "\tfloat fogNear = uFogParams.z;\n";
+		out += "\tfloat fogFar = uFogParams.w;\n";
+		out += "\tfloat fogDenom = fogFar + fogNear - fogNdc * (fogFar - fogNear);\n";
+		out += "\tfloat fogZ = (abs(fogDenom) < 1e-6) ? fogFar : (2.0 * fogNear * fogFar) / fogDenom;\n";
+		out += "\tfloat fogSpan = uFogParams.y - uFogParams.x;\n";
+		out += "\tfloat fogAmount = (abs(fogSpan) < 1e-6) ? 0.0 : clamp((fogZ - uFogParams.x) / fogSpan, 0.0, 1.0);\n";
+		out += "\tprev.rgb = mix(prev.rgb, uFogColour.rgb, fogAmount);\n";
 	}
 
 	out += "\tfragColor = prev;\n";

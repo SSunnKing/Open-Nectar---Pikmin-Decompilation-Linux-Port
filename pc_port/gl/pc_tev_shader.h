@@ -75,6 +75,11 @@ struct PcTevShaderKey {
 	uint8_t useMaterialRgb = 0;
 	uint8_t useMaterialAlpha = 0;
 	uint8_t useMaterialRgb1 = 0;
+	// Linear fog, as the GameCube's fog unit applied it: after the TEV stages
+	// and before the blend, on colour only. Part of the key rather than a
+	// uniform so a draw with fog off carries none of its cost -- the scene and
+	// the HUD are drawn with different settings, not different materials.
+	uint8_t fog = 0;
 };
 
 bool operator==(const PcTevShaderKey& a, const PcTevShaderKey& b);

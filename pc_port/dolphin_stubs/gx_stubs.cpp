@@ -232,7 +232,10 @@ void GXSetDither(GXBool dither)             { (void)dither; }
 void GXSetDstAlpha(GXBool enable, u8 alpha) { (void)enable; (void)alpha; }
 void GXSetPixelFmt(GXPixelFmt pix_fmt, GXZFmt16 z_fmt) { (void)pix_fmt; (void)z_fmt; }
 void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor color) {
-    (void)type; (void)startz; (void)endz; (void)nearz; (void)farz; (void)color;
+    // The game sets fog per stage, with its own colour and distances, and this
+    // used to throw all of it away. GX_FOG_NONE is how fog is switched off.
+    pc_gfx_set_fog(type != GX_FOG_NONE, startz, endz, nearz, farz,
+                   color.r, color.g, color.b);
 }
 void GXSetFogRangeAdj(GXBool enable, u16 center, GXFogAdjTable* table) {
     (void)enable; (void)center; (void)table;

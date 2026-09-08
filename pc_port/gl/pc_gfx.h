@@ -128,6 +128,11 @@ size_t pc_gfx_get_specialised_program_count(void);
  */
 unsigned int pc_gfx_get_depth_texture(void);
 
+/// Linear fog, as GXSetFog describes it. Distances are in view space; the
+/// colour components are 0-255.
+void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float farZ,
+                    unsigned char r, unsigned char g, unsigned char b);
+
 /// Sets the post-process effect set. With nothing enabled the pass is skipped
 /// entirely and the scene blits straight to the window.
 struct PcPostEffects;
