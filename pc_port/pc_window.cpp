@@ -554,16 +554,16 @@ void pc_window_poll_events(PADStatus* pad) {
         int ly = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_LEFTY);
         if (sStickInvert & 1) lx = -lx;
         if (sStickInvert & 2) ly = -ly;
-        if (abs(lx) > axisDeadZone) stickX = (s8)(lx / 256);
-        if (abs(ly) > axisDeadZone) stickY = (s8)(-ly / 256); // SDL Y-down to GC Y-up
+        if (abs(lx) > axisDeadZone) stickX = pc_pad_axis_from_sdl(lx);
+        if (abs(ly) > axisDeadZone) stickY = pc_pad_axis_from_sdl(-ly); // SDL Y-down to GC Y-up
 
         // Right Stick (C-Stick)
         int rx = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_RIGHTX);
         int ry = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_RIGHTY);
         if (sCStickInvert & 1) rx = -rx;
         if (sCStickInvert & 2) ry = -ry;
-        if (abs(rx) > axisDeadZone) substickX = (s8)(rx / 256);
-        if (abs(ry) > axisDeadZone) substickY = (s8)(-ry / 256);
+        if (abs(rx) > axisDeadZone) substickX = pc_pad_axis_from_sdl(rx);
+        if (abs(ry) > axisDeadZone) substickY = pc_pad_axis_from_sdl(-ry);
 
         // Optional digital bindings for stick directions are merged after the
         // analog axes, so every action exposed by the remapping UI is effective.

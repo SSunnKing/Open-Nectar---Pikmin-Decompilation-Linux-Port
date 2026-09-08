@@ -127,4 +127,13 @@ extern "C" void pc_window_clear_mouse_cursor_delta(void);
  */
 int pc_window_take_wheel_steps(void);
 
+/**
+ * @brief Converts one SDL axis reading to the pad's signed-byte range.
+ *
+ * Separate and public so it can be tested without a controller attached: the
+ * interesting case is the very end of a stick's travel, which is where it used
+ * to overflow.
+ */
+s8 pc_pad_axis_from_sdl(int sdlAxisValue);
+
 #endif // PC_WINDOW_H

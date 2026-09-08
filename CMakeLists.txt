@@ -149,6 +149,8 @@ endif()
 set(PC_PORT_SOURCES
     pc_port/pc_main.cpp
     pc_port/pc_window.cpp
+    pc_port/pc_pad_axis.cpp
+    pc_port/pc_menu_repeat.cpp
     pc_port/gl/pc_gfx.cpp
     pc_port/gl/pc_tev_shader.cpp
     pc_port/timing/pc_frame_scheduler.cpp
@@ -488,6 +490,18 @@ add_test(NAME pc_envelope_test COMMAND pc_envelope_test)
 add_executable(pc_aram_test pc_port/audio/pc_aram_test.cpp pc_port/audio/pc_aram.cpp)
 target_compile_options(pc_aram_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_aram_test COMMAND pc_aram_test)
+
+# Pad axis conversion (no controller needed)
+add_executable(pc_pad_axis_test pc_port/pc_pad_axis_test.cpp pc_port/pc_pad_axis.cpp)
+target_include_directories(pc_pad_axis_test PRIVATE ${SDL2_INCLUDE_DIRS} pc_port)
+target_compile_options(pc_pad_axis_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_pad_axis_test COMMAND pc_pad_axis_test)
+
+# Menu input repeat (no controller needed)
+add_executable(pc_menu_repeat_test pc_port/pc_menu_repeat_test.cpp pc_port/pc_menu_repeat.cpp)
+target_include_directories(pc_menu_repeat_test PRIVATE pc_port)
+target_compile_options(pc_menu_repeat_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_menu_repeat_test COMMAND pc_menu_repeat_test)
 
 # Host software DSP test (not linked into main game)
 add_executable(pc_dsp_host_test
