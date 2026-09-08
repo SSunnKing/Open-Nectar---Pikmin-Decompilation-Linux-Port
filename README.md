@@ -17,6 +17,9 @@ This project builds upon the decompilation by [projectPiki/pikmin](https://githu
 - Controller, keyboard and mouse support
 
 **In development:**
+- Pre-rendered cutscenes (the opening and the ending) play their audio but
+  show no picture — the HVQM4 video decoder is not built into the port yet.
+  The in-game cinematics, which are rendered by the engine, do play
 - Some minor graphical differences
 - Ports to other operating systems
 
@@ -231,27 +234,30 @@ This port includes significant improvements over the original GameCube game, des
 
 ### Keyboard and mouse
 
-**Keyboard:**
+**Keyboard** (defaults; all of it remappable from the F1 menu):
+
 | Action | Key |
 |--------|-----|
 | Movement (left stick) | W A S D |
-| Pikmin formation (C-stick) | T F G H (left/down/right) |
+| Pikmin formation (C-stick) | T (up) F (left) G (down) H (right) |
 | D-Pad | Arrow keys |
-| A (Confirm/Attack) | J or Space |
-| B (Cancel/Whistle) | K |
-| X (Dismiss) | L |
-| Y (Group) | I |
-| Z (Change camera) | U |
-| L (Rotate camera) | Q / E |
-| Start (Pause) | Enter |
-| Settings menu | F1 |
+| A — throw / confirm | Space |
+| B — whistle / cancel | Left Shift |
+| X — dismiss | X |
+| Y — group | Y |
+| Z — change camera | Z |
+| L — rotate camera left | Q |
+| R — rotate camera right | E |
+| Start — pause | Enter |
+| Port settings menu | F1 |
 | Switch control mode | F2 |
-| Screenshot | F12 |
+| Photo mode | F3 |
 
 **Mouse:**
 - In pointer mode, the mouse directly controls the game cursor
-- Left click: Olimar throws Pikmin
-- Right click: Whistle
+- Left click: A — throw
+- Right click: B — whistle
+- Middle click: Z — change camera
 - Mouse wheel: picks the Pikmin colour to throw, or zooms the camera (see below)
 - Mouse offers precision impossible with an analog stick
 
@@ -277,7 +283,7 @@ Press **F1** at any time to open the configuration menu:
 - **Mouse wheel**: chooses what the wheel does, one or the other:
   - `Pikmin Colour`: cycles which colour to throw next, through the colours you actually have with you. With one colour it does nothing, with two it alternates, with three it cycles. If the chosen colour is out of reach, the captain still grabs the nearest Pikmin
   - `Camera Zoom`: pulls the camera between 0.45× and 2.50× of its normal distance
-- **Pikmin limit**: how many Pikmin may be on the field at once, from 50 up to 999. The original is 100. The Onion, the field and the matrix pool are all sized from this number, so it applies when a stage loads rather than mid-day. Tested to 945 Pikmin on screen; high values do cost frame rate, and how much depends on your machine
+- **Pikmin limit**: how many Pikmin may be on the field at once, from 50 up to 999. The original is 100. The Onion, the field, the matrix pool and the shape cache are all sized from this number, so it applies when a stage loads rather than mid-day. Tested to 945 Pikmin on screen; high values do cost frame rate, and how much depends on your machine
 - **Day length**: 5 to 30 minutes of play per in-game day, 10 being the original. This stretches the game's own clock, so nothing moves faster or slower — sunset simply arrives sooner or later
 
 **Permadeath** is not in this menu, because it belongs to a save file rather than to the port. You choose it once, when you create the file, and the file screen marks the files that carry it. Lose Olimar and the run ends and that save is erased — through the game's own delete, so the slot ends up exactly as a manually deleted one does. A copy of a permadeath file is a permadeath file.
