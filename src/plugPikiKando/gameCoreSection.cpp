@@ -3,11 +3,13 @@
 #include <SDL.h>
 #include <cstdlib>
 #include <cstdio>
+#include <cmath>
 #endif
 #if defined(PIKI_PC_PORT)
 #include "settings/pc_settings.h"
 #if defined(PIKI_PC_PORT)
 #include "pc_photo_mode.h"
+#include "gl/pc_gfx.h"
 #endif
 #endif
 
@@ -1794,6 +1796,40 @@ void GameCoreSection::updateAI()
 			pcam->makeMatrix();
 			pcam->makeCamera();
 		}
+	}
+
+	// Where depth of field focuses: on the captain, every frame.
+	//
+	// The distance handed over is measured along the camera's forward axis,
+	// not the straight line to him. The shader compares it against the depth
+	// buffer, and that buffer holds view depth -- the distance to the plane
+	// through the camera, not to the camera itself. Using the straight line
+	// would put the focus slightly too far away, and increasingly so the
+	// further the captain sits from the centre of the screen.
+	{
+		PcamCamera* pcam = cameraMgr ? cameraMgr->mCamera : nullptr;
+		Navi* navi       = naviMgr ? naviMgr->getNavi() : nullptr;
+		f32 focus        = 0.0f;
+		if (pcam && navi) {
+			Vector3f eye, look;
+			pcam->getViewpoint().output(eye);
+			pcam->getWatchpoint().output(look);
+			Vector3f forward(look.x - eye.x, look.y - eye.y, look.z - eye.z);
+			const f32 len = std::sqrt(forward.x * forward.x + forward.y * forward.y
+			                          + forward.z * forward.z);
+			if (len > 1e-4f) {
+				forward.x /= len;
+				forward.y /= len;
+				forward.z /= len;
+				const Vector3f& p = navi->mSRT.t;
+				focus = (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y
+				      + (p.z - eye.z) * forward.z;
+			}
+		}
+		// A captain behind the camera gives a negative projection, which is not
+		// a focus distance at all. Zero stands the effect down for the frame
+		// rather than blurring the whole screen around a nonsense plane.
+		pc_gfx_set_dof_focus(focus > 0.0f ? focus : 0.0f);
 	}
 #endif
 

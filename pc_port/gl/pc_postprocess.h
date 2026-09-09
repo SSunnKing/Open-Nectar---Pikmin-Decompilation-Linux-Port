@@ -44,6 +44,31 @@ struct PcPostEffects {
 	float bloomThreshold = 0.75f;  // luma above which a pixel contributes
 	float bloomIntensity = 0.0f;   // 0 adds nothing, so the pass is skipped
 
+	// Depth of field, focused on the captain.
+	//
+	// The focus distance is NOT here. It changes every frame as the camera
+	// moves, and this struct is compared field by field to decide whether the
+	// shader has to be rebuilt -- a per-frame float in it would recompile the
+	// post-process program on every frame of the game. It is pushed separately
+	// through pc_gfx_set_dof_focus().
+	//
+	// Everything here is a setting, constant until the player changes it.
+	bool dof = false;
+	// How much of the blurred image is allowed through at maximum circle of
+	// confusion. 0 blurs nothing, so the passes are skipped.
+	float dofStrength = 0.0f;
+	// The sharp band and the falloff, as fractions of the focus distance
+	// rather than absolute world units. Pikmin's camera sits at very different
+	// distances between the close follow view and the far one, and a fixed
+	// band in world units would be most of the screen in one and a sliver in
+	// the other. Proportional keeps the look the same at every zoom.
+	float dofSharpFraction   = 0.25f;
+	float dofFalloffFraction = 1.0f;
+	// How many times the separable blur runs. Widening the five-tap kernel
+	// instead would undersample it and band; running it again is what actually
+	// produces a wider blur.
+	int dofIterations = 1;
+
 	// Colour grading. Cheap, needs only the scene colour, and it is the effect
 	// that proves the whole path works end to end.
 	bool colourGrading = false;
@@ -57,6 +82,10 @@ struct PcPostEffects {
 		    && ssaoRadius == o.ssaoRadius && ssaoIntensity == o.ssaoIntensity
 		    && bloom == o.bloom
 		    && bloomThreshold == o.bloomThreshold && bloomIntensity == o.bloomIntensity
+		    && dof == o.dof && dofStrength == o.dofStrength
+		    && dofSharpFraction == o.dofSharpFraction
+		    && dofFalloffFraction == o.dofFalloffFraction
+		    && dofIterations == o.dofIterations
 		    && colourGrading == o.colourGrading && gamma == o.gamma
 		    && brightness == o.brightness && saturation == o.saturation;
 	}
@@ -108,6 +137,24 @@ std::string pc_post_build_ssao_shader();
 /// Gaussian this will not average across a silhouette, which is what kept
 /// foliage shimmering.
 std::string pc_post_build_ao_blur_shader();
+
+/// True when depth of field will actually blur something.
+bool pc_post_dof_active(const PcPostEffects& fx);
+
+/// Downsamples the scene and computes the circle of confusion in one pass,
+/// writing colour premultiplied by it, with the coverage in alpha.
+///
+/// The premultiplication is the whole point. A plain blur of the scene mixes
+/// the sharp captain into the pixels behind him, and those pixels then show
+/// that colour as a halo around his silhouette. Weighting each texel by how
+/// blurred it is meant to be keeps a sharp subject from contributing to the
+/// blur that surrounds it.
+std::string pc_post_build_dof_coc_shader();
+
+/// One half of the separable blur for depth of field. Unlike the Gaussian used
+/// by bloom this carries alpha through, because that is where the coverage
+/// from the circle-of-confusion pass lives.
+std::string pc_post_build_dof_blur_shader();
 
 /// One half of a separable Gaussian blur. uBlurStep carries the direction and
 /// the texel size together, so the same program serves both axes.

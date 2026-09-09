@@ -162,6 +162,14 @@ void pc_gfx_get_texture_stats(size_t* live, size_t* liveBytes, size_t* peakBytes
 struct PcPostEffects;
 void pc_gfx_set_post_effects(const PcPostEffects& effects);
 
+/// Where the depth-of-field pass should focus, in view units along the camera's
+/// forward axis. The game pushes it once a frame from the captain's position;
+/// zero means there is nothing to focus on and the effect stands down.
+///
+/// Deliberately not part of PcPostEffects: that struct decides when the
+/// post-process shader is rebuilt, and this value changes every frame.
+void pc_gfx_set_dof_focus(float viewDistance);
+
 /**
  * @brief The scene colour target, at internal render resolution.
  *

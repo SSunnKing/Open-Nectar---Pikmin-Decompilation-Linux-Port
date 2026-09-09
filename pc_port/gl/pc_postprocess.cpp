@@ -15,10 +15,18 @@ bool pc_post_ssao_active(const PcPostEffects& fx)
 	return fx.ssao && fx.ssaoIntensity > 0.0f && fx.ssaoRadius > 0.0f;
 }
 
+bool pc_post_dof_active(const PcPostEffects& fx)
+{
+	// Zero strength composites the sharp image over itself, at the price of
+	// three extra passes to produce something identical to the input.
+	return fx.dof && fx.dofStrength > 0.0f && fx.dofIterations > 0;
+}
+
 bool pc_post_any_enabled(const PcPostEffects& fx)
 {
 	if (fx.fxaa) return true;
 	if (pc_post_ssao_active(fx)) return true;
+	if (pc_post_dof_active(fx)) return true;
 	if (pc_post_bloom_active(fx)) return true;
 	if (!fx.colourGrading) return false;
 	// Switched on but set to neutral values is the same picture, so skip the
@@ -28,8 +36,51 @@ bool pc_post_any_enabled(const PcPostEffects& fx)
 
 bool pc_post_needs_depth(const PcPostEffects& fx)
 {
-	// Ambient occlusion is the only one so far. Depth of field will join it.
-	return pc_post_ssao_active(fx);
+	// Ambient occlusion and depth of field. Both reconstruct view depth with
+	// the GameCube range, and both have to be dropped outright when the driver
+	// gave us a renderbuffer instead of a depth texture.
+	return pc_post_ssao_active(fx) || pc_post_dof_active(fx);
+}
+
+// The GameCube depth range, in one place.
+//
+// C_MTXPerspective puts the far plane at ndc 0 rather than +1, so only half the
+// depth range is used and OpenGL's linearisation formula is not slightly wrong
+// here, it is useless: over a 1..15000 view it reports about two units at the
+// far plane, and every pixel in the world measures as touching the camera. That
+// left the fog invisible once already.
+//
+// Three effects now depend on getting it right -- fog, ambient occlusion and
+// depth of field -- so it is emitted from here rather than written out again.
+// Expects uProjInfo.zw to hold the near and far planes, and a sampler uDepth.
+static std::string pc_post_view_depth_glsl()
+{
+	std::string src;
+	src += "float viewDepth(vec2 uv) {\n";
+	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
+	src += "    float n = uProjInfo.z;\n";
+	src += "    float f = uProjInfo.w;\n";
+	src += "    float denom = n - ndc * (f - n);\n";
+	src += "    return (abs(denom) < 1e-6) ? f : (n * f) / denom;\n";
+	src += "}\n";
+	return src;
+}
+
+// The circle of confusion, from the focus the game pushed in.
+//
+// uDofFocus is (focus distance, sharp fraction, falloff fraction, strength).
+// The band and the falloff are fractions of the focus distance so that the
+// look survives the camera moving between its near and far positions.
+static std::string pc_post_coc_glsl()
+{
+	std::string src;
+	src += "float cocAt(vec2 uv) {\n";
+	src += "    float d = viewDepth(uv);\n";
+	src += "    float sharp = uDofFocus.x * uDofFocus.y;\n";
+	src += "    float falloff = max(uDofFocus.x * uDofFocus.z, 1e-3);\n";
+	src += "    return clamp((abs(d - uDofFocus.x) - sharp) / falloff, 0.0, 1.0);\n";
+	src += "}\n";
+	return src;
 }
 
 std::string pc_post_build_ssao_shader()
@@ -52,17 +103,7 @@ std::string pc_post_build_ssao_shader()
 	src += "uniform vec4 uAOParams;\n";
 	src += "uniform vec2 uTexel;\n";
 
-	// The depth range is the GameCube's, not OpenGL's: C_MTXPerspective puts
-	// the far plane at ndc 0 rather than +1. Getting this wrong does not look
-	// subtly off, it makes the whole world measure as touching the camera --
-	// the same mistake that left the fog invisible.
-	src += "float viewDepth(vec2 uv) {\n";
-	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
-	src += "    float n = uProjInfo.z;\n";
-	src += "    float f = uProjInfo.w;\n";
-	src += "    float denom = n - ndc * (f - n);\n";
-	src += "    return (abs(denom) < 1e-6) ? f : (n * f) / denom;\n";
-	src += "}\n";
+	src += pc_post_view_depth_glsl();
 
 	src += "vec3 viewPos(vec2 uv) {\n";
 	src += "    float z = viewDepth(uv);\n";
@@ -212,6 +253,60 @@ std::string pc_post_build_brightpass_shader()
 	return src;
 }
 
+std::string pc_post_build_dof_coc_shader()
+{
+	// Downsample and circle of confusion in one pass. Two jobs in one draw
+	// because they read the same texel: splitting them would double the
+	// bandwidth to produce the same answer.
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uScene;\n";
+	src += "uniform sampler2D uDepth;\n";
+	src += "uniform vec4 uProjInfo;\n";
+	src += "uniform vec4 uDofFocus;\n";
+	src += pc_post_view_depth_glsl();
+	src += pc_post_coc_glsl();
+	src += "void main() {\n";
+	src += "    float coc = cocAt(vUV);\n";
+	// Premultiplied by coverage, with the coverage kept in alpha. A sharp
+	// pixel contributes nothing to the blur around it, which is what stops the
+	// captain from bleeding a halo of himself into the background behind him.
+	// The composite divides by the alpha to get back a colour.
+	src += "    oColour = vec4(texture(uScene, vUV).rgb * coc, coc);\n";
+	src += "}\n";
+	return src;
+}
+
+std::string pc_post_build_dof_blur_shader()
+{
+	// The same separable Gaussian bloom uses, but four channels wide. Bloom's
+	// version ends with vec4(c, 1.0) and would throw the coverage away on the
+	// first axis, leaving the second to divide by a constant 1.0 -- which is
+	// exactly the halo the premultiplication exists to prevent.
+	std::string src;
+	src += "#version 330 core\n";
+	src += "in vec2 vUV;\n";
+	src += "out vec4 oColour;\n";
+	src += "uniform sampler2D uSource;\n";
+	src += "uniform vec2 uBlurStep;\n";
+	src += "void main() {\n";
+	src += "    const float w0 = 0.227027;\n";
+	src += "    const float w1 = 0.316216;\n";
+	src += "    const float w2 = 0.070270;\n";
+	src += "    const float o1 = 1.384615;\n";
+	src += "    const float o2 = 3.230769;\n";
+	src += "    vec4 c = texture(uSource, vUV) * w0;\n";
+	src += "    c += texture(uSource, vUV + uBlurStep * o1) * w1;\n";
+	src += "    c += texture(uSource, vUV - uBlurStep * o1) * w1;\n";
+	src += "    c += texture(uSource, vUV + uBlurStep * o2) * w2;\n";
+	src += "    c += texture(uSource, vUV - uBlurStep * o2) * w2;\n";
+	src += "    oColour = c;\n";
+	src += "}\n";
+	return src;
+}
+
 std::string pc_post_build_blur_shader()
 {
 	// Separable Gaussian: the same program is run once across and once down,
@@ -275,6 +370,11 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 	if (pc_post_ssao_active(fx)) {
 		src += "uniform sampler2D uAO;\n";
 	}
+	if (pc_post_dof_active(fx)) {
+		src += "uniform sampler2D uDof;\n";
+		src += "uniform vec4 uProjInfo;\n";
+		src += "uniform vec4 uDofFocus;\n";
+	}
 	if (pc_post_bloom_active(fx)) {
 		src += "uniform sampler2D uBloom;\n";
 		src += "uniform float uBloomIntensity;\n";
@@ -325,6 +425,16 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 		src += "}\n";
 	}
 
+	if (pc_post_dof_active(fx)) {
+		// The coverage is recomputed here at full resolution rather than read
+		// back from the half-resolution buffer. That buffer's alpha has been
+		// blurred, so at a silhouette it says how much of the neighbourhood is
+		// out of focus, not whether this pixel is -- and using it would soften
+		// the edge of every sharp object by half a low-resolution texel.
+		src += pc_post_view_depth_glsl();
+		src += pc_post_coc_glsl();
+	}
+
 	src += "void main() {\n";
 	if (fx.fxaa) {
 		// Antialiasing first, grading afterwards: grading is a per-pixel tone
@@ -334,6 +444,26 @@ std::string pc_post_build_fragment_shader(const PcPostEffects& fx)
 		src += "    vec3 c = fxaaFilter(vUV, uTexelSize.xy);\n";
 	} else {
 		src += "    vec3 c = texture(uScene, vUV).rgb;\n";
+	}
+
+	if (pc_post_dof_active(fx)) {
+		// Before occlusion and bloom, because the blurred texture was built
+		// from the scene colour and nothing else. Mixing it in further down
+		// would replace the pixels that had just received their occlusion and
+		// their bloom with a version that never got either.
+		//
+		// The consequence is that occlusion is applied to an already blurred
+		// pixel, so its detail stays sharp inside a blurred region. It is a
+		// low-frequency darkening and it does not read as an edge; the
+		// alternative is a G-buffer, which the port does not have.
+		src += "    float coc = cocAt(vUV);\n";
+		src += "    vec4 blurred = texture(uDof, vUV);\n";
+		// Undo the premultiplication. The guard matters: where everything in
+		// the neighbourhood was in focus the coverage is zero, and the mix
+		// below discards this value anyway -- but a division by zero is a NaN,
+		// and mix() with a NaN is a NaN however small its weight.
+		src += "    vec3 farColour = blurred.rgb / max(blurred.a, 1e-4);\n";
+		src += "    c = mix(c, farColour, coc * uDofFocus.w);\n";
 	}
 
 	if (pc_post_ssao_active(fx) && fx.ssaoDebug) {

@@ -347,6 +347,98 @@ int main()
 		check(contains(ao, "i = -3; i <= 3"), "the occlusion blur is wide enough for the noise");
 	}
 
+	// Depth of field.
+	{
+		PcPostEffects off;
+		check(!pc_post_dof_active(off), "depth of field is off by default");
+
+		PcPostEffects fx;
+		fx.dof = true;
+		check(!pc_post_dof_active(fx),
+		      "switched on at zero strength is not active: it would cost three passes to reproduce the input");
+		fx.dofStrength = 0.7f;
+		check(pc_post_dof_active(fx), "strength above zero makes it active");
+		fx.dofIterations = 0;
+		check(!pc_post_dof_active(fx), "no blur passes means nothing to composite");
+		fx.dofIterations = 2;
+
+		check(pc_post_any_enabled(fx), "depth of field alone is worth a pass");
+		// It samples depth, so it must be dropped when the driver refused a
+		// depth texture -- the same rule that governs occlusion.
+		check(pc_post_needs_depth(fx), "depth of field needs the depth buffer");
+
+		const std::string src = pc_post_build_fragment_shader(fx);
+		check(contains(src, "uniform sampler2D uDof"), "the composite declares the blurred sampler");
+		check(contains(src, "uniform vec4 uDofFocus"), "the composite takes the focus");
+		check(contains(src, "n - ndc * (f - n)"),
+		      "depth of field linearises with the GameCube depth range");
+		// The premultiplication is undone with a floor on the divisor. Without
+		// it a fully sharp neighbourhood divides by zero, and mix() with a NaN
+		// is a NaN however small the weight.
+		check(contains(src, "max(blurred.a, 1e-4)"), "the composite guards the divide");
+
+		const std::string bare = pc_post_build_fragment_shader(PcPostEffects());
+		check(!contains(bare, "uDof"), "no depth of field means no sampler");
+		check(!contains(bare, "cocAt"), "no depth of field means no coverage function");
+	}
+
+	// Order in the composite: the blurred texture holds the scene colour and
+	// nothing else, so it has to be mixed in before the effects that add to
+	// that colour. Mixing it after bloom would replace a pixel that had just
+	// received its bloom with a version that never got any.
+	{
+		PcPostEffects fx;
+		fx.dof = true; fx.dofStrength = 0.7f;
+		fx.bloom = true; fx.bloomIntensity = 0.5f;
+		fx.ssao = true; fx.ssaoIntensity = 0.8f;
+		const std::string src = pc_post_build_fragment_shader(fx);
+		const size_t dofAt   = src.find("farColour, coc");
+		const size_t aoAt    = src.find("texture(uAO, vUV).r;");
+		const size_t bloomAt = src.find("uBloom, vUV");
+		check(dofAt != std::string::npos && aoAt != std::string::npos
+		          && bloomAt != std::string::npos,
+		      "all three effects reached the composite");
+		check(dofAt < aoAt && dofAt < bloomAt, "depth of field composites before occlusion and bloom");
+	}
+
+	// The coverage pass premultiplies. This is the whole reason it exists
+	// rather than blurring the scene directly: an in-focus captain must not
+	// contribute his colour to the blur of the background behind him, or he
+	// wears a halo of himself.
+	{
+		const std::string coc = pc_post_build_dof_coc_shader();
+		check(coc.rfind("#version", 0) == 0, "the coverage pass begins with its version");
+		check(contains(coc, "texture(uScene, vUV).rgb * coc"), "colour is weighted by coverage");
+		check(contains(coc, "vec4(texture(uScene, vUV).rgb * coc, coc)"),
+		      "coverage travels in alpha");
+
+		// And the blur that follows has to carry that alpha. Bloom's Gaussian
+		// ends with vec4(c, 1.0), which would throw the coverage away on the
+		// first axis and leave the composite dividing by a constant.
+		const std::string blur = pc_post_build_dof_blur_shader();
+		check(contains(blur, "vec4 c = texture(uSource, vUV) * w0"),
+		      "the depth-of-field blur filters four channels");
+		check(contains(blur, "oColour = c;"), "the depth-of-field blur keeps alpha");
+		check(contains(pc_post_build_blur_shader(), "vec4(c, 1.0)"),
+		      "the bloom blur still discards alpha, which is why this one exists");
+	}
+
+	// Recompilation is driven by equality here too: every one of these changes
+	// the generated shader or the passes around it.
+	{
+		PcPostEffects a, b;
+		b = a; b.dof = true;
+		check(a != b, "the depth-of-field switch is part of the comparison");
+		b = a; b.dofStrength = 0.5f;
+		check(a != b, "strength is part of the comparison");
+		b = a; b.dofSharpFraction = 0.1f;
+		check(a != b, "the sharp band is part of the comparison");
+		b = a; b.dofFalloffFraction = 0.1f;
+		check(a != b, "the falloff is part of the comparison");
+		b = a; b.dofIterations = 3;
+		check(a != b, "the blur pass count is part of the comparison");
+	}
+
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");
 	return failures == 0 ? 0 : 1;
 }

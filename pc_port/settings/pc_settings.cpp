@@ -97,6 +97,7 @@ struct PcConfig {
     int fog = 1;            // the game's own fog, on by default
     int bloom = 0;          // 0 off, 1 subtle, 2 normal, 3 strong
     int ssao = 0;           // 0 off, 1 subtle, 2 normal, 3 strong
+    int dof = 0;            // 0 off, 1 subtle, 2 normal, 3 strong
     int anisotropy = 0;     // 0 off, else 2/4/8/16 samples
     int colourGrading = 0;
     float gamma       = 1.0f;
@@ -129,6 +130,7 @@ struct PcConfig {
         fog           = 1;
         bloom         = 0;
         ssao          = 0;
+        dof           = 0;
         anisotropy    = 0;
         colourGrading = 0;
         gamma         = 1.0f;
@@ -243,7 +245,7 @@ constexpr int kAdvancedRowCount = 4;
 // reference machine is a GTX 1050 -- so nothing here may be mandatory.
 bool sInGraphicsSubmenu = false;
 int sGraphicsSelection = 0;
-constexpr int kGraphicsRowCount = 9;
+constexpr int kGraphicsRowCount = 10;
 
 // Colour grading stops. Neutral is in every list, and the pass is skipped
 // entirely when all three sit there.
@@ -438,6 +440,32 @@ void applyGraphics(const PcConfig& config) {
     fx.bloom           = bloomStep != 0;
     fx.bloomIntensity  = kBloomIntensity[bloomStep];
     fx.bloomThreshold  = kBloomThreshold[bloomStep];
+    // Depth of field, focused on the captain. The blur is deliberately much
+    // wider than a camera's would be: this is the miniature look of the Link's
+    // Awakening remake, where the shallow focus is what makes a world read as
+    // a diorama, not an attempt at a real lens.
+    //
+    // Strength is capped below 1 even at Strong. Mixing the blurred image in
+    // completely erases the geometry it came from, and a Pikmin that has walked
+    // out of focus still has to be findable on screen.
+    static const float kDofStrength[4]  = { 0.0f, 0.55f, 0.75f, 0.92f };
+    // The sharp band, as a fraction of the distance to the captain. Wide
+    // enough at every step that the Pikmin around him stay readable -- they
+    // spread far further from him than a real depth of field would forgive.
+    static const float kDofSharp[4]     = { 0.30f, 0.34f, 0.28f, 0.22f };
+    // How fast it falls off past that band. Shorter means a more abrupt
+    // separation, which is what sells the diorama.
+    static const float kDofFalloff[4]   = { 1.00f, 1.10f, 0.80f, 0.55f };
+    // Blur passes. Each one widens the kernel; the cost is two half-resolution
+    // draws, which is why the strong step is worth measuring on the GTX 1050.
+    static const int kDofIterations[4]  = { 1, 1, 2, 3 };
+    const int dofStep = (config.dof >= 0 && config.dof <= 3) ? config.dof : 0;
+    fx.dof                = dofStep != 0;
+    fx.dofStrength        = kDofStrength[dofStep];
+    fx.dofSharpFraction   = kDofSharp[dofStep];
+    fx.dofFalloffFraction = kDofFalloff[dofStep];
+    fx.dofIterations      = kDofIterations[dofStep];
+
     fx.colourGrading = config.colourGrading != 0;
     fx.gamma         = config.gamma;
     fx.brightness    = config.brightness;
@@ -537,6 +565,7 @@ void saveConfig() {
     out << "fog = " << sConfig.fog << "\n";
     out << "bloom = " << sConfig.bloom << "\n";
     out << "ssao = " << sConfig.ssao << "\n";
+    out << "dof = " << sConfig.dof << "\n";
     out << "anisotropy = " << sConfig.anisotropy << "\n";
     out << "colourGrading = " << sConfig.colourGrading << "\n";
     out << "gamma = " << sConfig.gamma << "\n";
@@ -638,6 +667,10 @@ void loadConfig() {
         else if (key == "anisotropy") {
             const int v = atoi(val.c_str());
             sConfig.anisotropy = (v == 2 || v == 4 || v == 8 || v == 16) ? v : 0;
+        }
+        else if (key == "dof") {
+            sConfig.dof = atoi(val.c_str());
+            if (sConfig.dof < 0 || sConfig.dof > 3) sConfig.dof = 0;
         }
         else if (key == "ssao") {
             sConfig.ssao = atoi(val.c_str());
@@ -1113,6 +1146,9 @@ void pollMenuInput() {
             if (left) sPending.ssao = (sPending.ssao + 3) % 4;
             else if (right) sPending.ssao = (sPending.ssao + 1) % 4;
         } else if (sGraphicsSelection == 4) {
+            if (left) sPending.dof = (sPending.dof + 3) % 4;
+            else if (right) sPending.dof = (sPending.dof + 1) % 4;
+        } else if (sGraphicsSelection == 5) {
             // 0, 2, 4, 8, 16. Anything the driver will not give is clamped
             // where it is applied rather than hidden from the menu, so the
             // setting reads the same on every machine.
@@ -1124,13 +1160,13 @@ void pollMenuInput() {
             if (left) idx = (idx + 4) % 5;
             else if (right) idx = (idx + 1) % 5;
             sPending.anisotropy = kAniso[idx];
-        } else if (sGraphicsSelection == 5) {
-            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
         } else if (sGraphicsSelection == 6) {
-            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
+            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
         } else if (sGraphicsSelection == 7) {
-            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
         } else if (sGraphicsSelection == 8) {
+            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+        } else if (sGraphicsSelection == 9) {
             if (left || right) sPending.saturation = step(sPending.saturation, kSaturationStops, kSaturationStopCount, left);
         }
         // Applied as you move, so the effect can be judged against the scene
@@ -2173,6 +2209,7 @@ void pc_settings_draw(void) {
             "Fog",
             "Bloom",
             "Ambient Occlusion",
+            "Depth of Field",
             "Texture Filtering",
             "Colour Grading",
             "Gamma",
@@ -2204,17 +2241,21 @@ void pc_settings_draw(void) {
                 const int a = (sPending.ssao >= 0 && sPending.ssao <= 3) ? sPending.ssao : 0;
                 snprintf(value, sizeof(value), "%s", aoNames[a]);
             } else if (i == 4) {
+                const char* dofNames[4] = { "Off", "Subtle", "Normal", "Strong" };
+                const int d = (sPending.dof >= 0 && sPending.dof <= 3) ? sPending.dof : 0;
+                snprintf(value, sizeof(value), "%s", dofNames[d]);
+            } else if (i == 5) {
                 if (sPending.anisotropy <= 1) snprintf(value, sizeof(value), "Trilinear");
                 else snprintf(value, sizeof(value), "Anisotropic %dx", sPending.anisotropy);
-            } else if (i == 5) {
+            } else if (i == 6) {
                 snprintf(value, sizeof(value), "%s", gradingOn ? "On" : "Off");
             } else if (!gradingOn) {
                 // The three sliders do nothing while grading is off. Saying so
                 // beats letting someone move them and conclude it is broken.
                 snprintf(value, sizeof(value), "--");
-            } else if (i == 6) {
-                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
             } else if (i == 7) {
+                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
+            } else if (i == 8) {
                 snprintf(value, sizeof(value), sPending.brightness == 0.0f ? "%+.2f  (neutral)" : "%+.2f", sPending.brightness);
             } else {
                 snprintf(value, sizeof(value), sPending.saturation == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.saturation);
