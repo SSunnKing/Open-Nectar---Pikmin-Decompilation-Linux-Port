@@ -8,6 +8,7 @@
 #include "settings/pc_settings.h"
 #if defined(PIKI_PC_PORT)
 #include "pc_photo_mode.h"
+#include "pc_ambient_particles.h"
 #endif
 #endif
 
@@ -1767,6 +1768,25 @@ void GameCoreSection::updateAI()
 			f32 pitch = 0.0f, yaw = 0.0f;
 			pc_photo_mode_angles_from_forward(dir.x, dir.y, dir.z, &pitch, &yaw);
 			pc_photo_mode_enter(eye.x, eye.y, eye.z, pitch, yaw);
+		}
+	}
+
+	// Ambient motes. Not while photo mode has the world frozen: the effects
+	// would pile up in mid-air without ever ageing, which is neither what the
+	// player asked for nor a good photograph.
+	if (!pc_photo_mode_active() && effectMgr && cameraMgr && cameraMgr->mCamera) {
+		Vector3f watch;
+		cameraMgr->mCamera->getWatchpoint().output(watch);
+		pc_ambient_set_focus(watch.x, watch.y, watch.z);
+
+		float spawnAt[8 * 3];
+		const int spawned = pc_ambient_tick(gsys->getFrameTime(), 8, spawnAt);
+		for (int i = 0; i < spawned; i++) {
+			Vector3f at(spawnAt[i * 3 + 0], spawnAt[i * 3 + 1], spawnAt[i * 3 + 2]);
+			// One of the game's own effects, spawned for no reason other than
+			// atmosphere. create() returns null when the generator pool is
+			// full, and the game's own effects have the better claim on it.
+			effectMgr->create(EffectMgr::EFF_SD_Sparkle, at, nullptr, nullptr);
 		}
 	}
 
