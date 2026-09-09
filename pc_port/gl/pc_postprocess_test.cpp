@@ -439,6 +439,45 @@ int main()
 		check(a != b, "the blur pass count is part of the comparison");
 	}
 
+	// A depth the projection never wrote is not geometry.
+	//
+	// The GameCube projection puts the far plane at ndc 0, so it only ever
+	// writes raw depths up to 0.5. Above that is the value the buffer was
+	// cleared to. Run through the linearisation it yields a NEGATIVE distance,
+	// not a large one, so every "is this the sky" test passes it through and it
+	// gets treated as geometry against the lens. That turned the title screen
+	// black the moment the pass started reading depth the interface had not
+	// already overwritten.
+	{
+		const std::string ssao = pc_post_build_ssao_shader();
+		check(contains(ssao, "if (raw > 0.5) return uProjInfo.w;"),
+		      "an untouched depth reads as the far plane, not as a negative distance");
+
+		PcPostEffects fx;
+		fx.dof = true; fx.dofStrength = 0.7f;
+		check(contains(pc_post_build_fragment_shader(fx), "if (raw > 0.5) return uProjInfo.w;"),
+		      "depth of field gets the same guard, from the same shared helper");
+	}
+
+	// The reconstructed normal must not be able to become a NaN.
+	//
+	// Constant depth across a neighbourhood -- a cleared buffer, or a flat
+	// surface square to the camera -- gives parallel differences, a zero cross
+	// product, and normalize(vec3(0)) is a NaN. Comparisons against a NaN are
+	// all false and clamp() of one is up to the driver; on the reference GPU it
+	// came out zero, and the composite multiplies the scene by that.
+	{
+		const std::string ssao = pc_post_build_ssao_shader();
+		check(!contains(ssao, "normalize(cross(dx, dy))"),
+		      "the normal is not normalised without checking its length");
+		check(contains(ssao, "float crossLen = length(cross_dxdy);"),
+		      "the cross product's length is measured");
+		// Written as !(x > eps) rather than (x <= eps) on purpose: a NaN fails
+		// every comparison, so only the negated form catches one.
+		check(contains(ssao, "if (!(crossLen > 1e-12)) { oColour = vec4(1.0); return; }"),
+		      "a degenerate normal yields no occlusion instead of total occlusion");
+	}
+
 	if (failures == 0) std::printf("pc_postprocess_test: all checks passed\n");
 	return failures == 0 ? 0 : 1;
 }

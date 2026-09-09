@@ -57,7 +57,17 @@ static std::string pc_post_view_depth_glsl()
 {
 	std::string src;
 	src += "float viewDepth(vec2 uv) {\n";
-	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
+	src += "    float raw = texture(uDepth, uv).r;\n";
+	// The other half of the same trap. Because the far plane lands at ndc 0,
+	// the projection only ever writes raw depths up to 0.5, and anything above
+	// that is the value the buffer was cleared to: nothing was drawn there.
+	// Fed through the formula it does not produce a large distance, it produces
+	// a negative one -- about -1 over a 1..15000 view -- which passes every
+	// "is this the sky" test and is then treated as geometry a millimetre from
+	// the lens. That is what turned the title screen black once the pass
+	// started reading depth that had not been overwritten by the interface.
+	src += "    if (raw > 0.5) return uProjInfo.w;\n";
+	src += "    float ndc = raw * 2.0 - 1.0;\n";
 	src += "    float n = uProjInfo.z;\n";
 	src += "    float f = uProjInfo.w;\n";
 	src += "    float denom = n - ndc * (f - n);\n";
@@ -143,7 +153,16 @@ std::string pc_post_build_ssao_shader()
 	src += "    vec3 Pd = viewPos(vUV - vec2(0.0, uTexel.y));\n";
 	src += "    vec3 dx = (abs(Pr.z - P.z) < abs(P.z - Pl.z)) ? (Pr - P) : (P - Pl);\n";
 	src += "    vec3 dy = (abs(Pu.z - P.z) < abs(P.z - Pd.z)) ? (Pu - P) : (P - Pd);\n";
-	src += "    vec3 N = normalize(cross(dx, dy));\n";
+	// A region of constant depth -- a cleared buffer, a flat wall exactly
+	// facing the camera -- gives two parallel differences whose cross product
+	// is zero, and normalize(vec3(0)) is a NaN. Every comparison against a NaN
+	// is false and clamp() of one is whatever the driver feels like, which on
+	// this hardware is zero: the occlusion buffer came out black and the
+	// composite multiplied the screen by it.
+	src += "    vec3 cross_dxdy = cross(dx, dy);\n";
+	src += "    float crossLen = length(cross_dxdy);\n";
+	src += "    if (!(crossLen > 1e-12)) { oColour = vec4(1.0); return; }\n";
+	src += "    vec3 N = cross_dxdy / crossLen;\n";
 	// The sign follows the winding of the difference, so force it rather than
 	// trusting it.
 	src += "    if (N.z < 0.0) N = -N;\n";
@@ -196,13 +215,9 @@ std::string pc_post_build_ao_blur_shader()
 	src += "uniform vec2 uBlurStep;\n";
 	src += "uniform vec4 uProjInfo;\n";
 
-	src += "float viewDepth(vec2 uv) {\n";
-	src += "    float ndc = texture(uDepth, uv).r * 2.0 - 1.0;\n";
-	src += "    float n = uProjInfo.z;\n";
-	src += "    float f = uProjInfo.w;\n";
-	src += "    float denom = n - ndc * (f - n);\n";
-	src += "    return (abs(denom) < 1e-6) ? f : (n * f) / denom;\n";
-	src += "}\n";
+	// The shared helper, not a fourth hand-written copy. This one had its own,
+	// which is how it kept the bug after the others were fixed.
+	src += pc_post_view_depth_glsl();
 
 	src += "void main() {\n";
 	src += "    float centre = viewDepth(vUV);\n";

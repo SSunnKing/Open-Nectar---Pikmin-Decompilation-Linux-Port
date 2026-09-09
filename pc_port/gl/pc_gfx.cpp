@@ -2055,6 +2055,12 @@ static int sDofWidth = 0, sDofHeight = 0;
 // with no captain in the world -- and the pass is skipped entirely rather than
 // guessing a distance.
 static float sDofFocusDistance = 0.0f;
+// What the last pass's sub-chains actually managed, as opposed to what the
+// settings asked for. "Switched on" and "built this frame" are different
+// things, and the composite multiplies by the occlusion buffer either way.
+static bool sLastAoReady = false;
+static bool sLastBloomReady = false;
+static bool sLastDofReady = false;
 
 // The perspective projection's terms, kept for the post-process pass.
 //
@@ -2418,6 +2424,26 @@ static bool bloom_ensure_targets()
 // Half-resolution ping-pong pair for depth of field. RGBA8 like the bloom pair,
 // but the alpha channel is load-bearing here: it carries the circle of
 // confusion through the blur.
+// One white pixel, made once. The neutral value for anything the composite
+// multiplies by.
+static GLuint post_white_texture()
+{
+    static GLuint tex = 0;
+    if (!tex) {
+        const unsigned char white[4] = { 255, 255, 255, 255 };
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        sBoundTextures[0] = 0;
+    }
+    return tex;
+}
+
 static bool dof_ensure_targets()
 {
     const int w = std::max(1, sRenderWidth / 2);
@@ -2667,6 +2693,22 @@ static GLuint post_apply()
     // Any of these failing means no post-processing, never a stopped frame.
     if (!post_ensure_target() || !post_ensure_program()) return sNativeFramebuffer;
 
+    // Every pass below draws a full-screen triangle, and none of them wants the
+    // game's pipeline state. This has to happen BEFORE the chains, not just
+    // before the composite: they are draws too.
+    //
+    // It used to sit after them, which was invisible while the pass ran at the
+    // end of the frame -- by then the game had left the scissor at full screen.
+    // Run in the middle of the frame it is fatal: the title screen's scissor
+    // rejected the occlusion pass's fragments, so the buffer kept the zero it
+    // was allocated with, and the composite multiplied the whole picture by it.
+    // The screen went black with the occlusion pass reporting success, because
+    // it had issued its draw and the draw had been thrown away.
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
     // Bloom runs its own chain first, at half resolution, leaving its result in
     // sBloomTex[0] for the main pass to add in. A failure here is not fatal:
     // the composite simply reads a texture that contributes nothing.
@@ -2674,6 +2716,7 @@ static GLuint post_apply()
     if (pc_post_ssao_active(sPostEffects)) {
         aoReady = ao_build();
     }
+    sLastAoReady = aoReady;
 
     // Depth of field needs somewhere to focus. Without a captain in the world
     // -- the title screen, a cutscene -- there is no honest answer, so the
@@ -2688,13 +2731,11 @@ static GLuint post_apply()
     if (pc_post_bloom_active(sPostEffects)) {
         bloomReady = bloom_build();
     }
+    sLastBloomReady = bloomReady;
+    sLastDofReady = dofReady;
 
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sPostFramebuffer);
     glViewport(0, 0, sRenderWidth, sRenderHeight);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);
 
     glUseProgram_ptr(sPostProgram);
     if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
@@ -2726,9 +2767,16 @@ static GLuint post_apply()
         glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uDofFocus"),
                         1.0f, 1.0f, 1.0f, 0.0f);
     }
-    if (aoReady && glActiveTexture_ptr) {
+    if (pc_post_ssao_active(sPostEffects) && glActiveTexture_ptr) {
+        // The shader was generated with "c *= texture(uAO, vUV).r" in it and
+        // will run that whether or not the chain built this frame. Bloom's
+        // equivalent is defused by zeroing its intensity; occlusion has no
+        // intensity uniform to zero, so it gets a one-pixel white texture,
+        // which multiplies by one. Without it a failed build does not mean
+        // "no occlusion", it means a black screen -- sampling an unbound unit
+        // returns zero.
         glActiveTexture_ptr(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, sAoTex[0]);
+        glBindTexture(GL_TEXTURE_2D, aoReady ? sAoTex[0] : post_white_texture());
         if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uAO"), 3);
         glActiveTexture_ptr(GL_TEXTURE0);
     }
@@ -2799,6 +2847,17 @@ static void gl_program_cache_invalidate();
 
 static void post_apply_before_interface()
 {
+    // Escape hatch back to the old behaviour, for telling a fault caused by
+    // this pass apart from one that merely shows up at the same time.
+    static bool checked = false;
+    static bool disabled = false;
+    if (!checked) {
+        checked = true;
+        disabled = getenv("PIKMIN_POST_LATE") != nullptr;
+        if (disabled) printf("[PC Port] PIKMIN_POST_LATE: post-processing at the end of the frame\n");
+    }
+    if (disabled) return;
+
     if (sPostRanThisFrame) return;
     if (!sNativeFramebufferReady || !glBindFramebuffer_ptr || !glBlitFramebuffer_ptr) return;
     if (!pc_post_any_enabled(sPostEffects)) return;
@@ -2817,8 +2876,62 @@ static void post_apply_before_interface()
     const GLboolean hadBlend   = glIsEnabled(GL_BLEND);
     const GLboolean hadCull    = glIsEnabled(GL_CULL_FACE);
 
+    // What the pass was handed and what it produced, once a second, with
+    // PIKMIN_POST_DEBUG=1. A black title screen has two possible causes that
+    // look identical on screen -- the pass output black, or something drawn
+    // afterwards wiped it -- and the only way to tell them apart is to look at
+    // the pixel on both sides of the pass.
+    static bool postDbgChecked = false;
+    static bool postDbg = false;
+    static int postDbgGate = 0;
+    if (!postDbgChecked) {
+        postDbgChecked = true;
+        postDbg = getenv("PIKMIN_POST_DEBUG") != nullptr;
+    }
+    const bool report = postDbg && (++postDbgGate % 60 == 0);
+    unsigned char before[4] = { 0, 0, 0, 0 };
+    if (report) {
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+        glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, before);
+    }
+
     const GLuint produced = post_apply();
     sPostRanThisFrame = true;
+
+    if (report) {
+        unsigned char after[4] = { 0, 0, 0, 0 };
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, produced);
+        glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, after);
+        // The occlusion buffer itself: 255 is "nothing occluded", 0 is "the
+        // composite is about to multiply the whole screen by zero".
+        unsigned char ao[4] = { 0, 0, 0, 0 };
+        if (sLastAoReady && sAoTex[0]) {
+            glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[0]);
+            glReadPixels(sAoWidth / 2, sAoHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, ao);
+        }
+        // The depth at the same pixel, raw, and the terms the occlusion pass was
+        // handed. An occlusion of exactly zero at intensity 0.5 is arithmetically
+        // impossible -- the term is capped at the intensity -- so either the
+        // depth is not what the shader assumes or the uniforms are not what this
+        // code thinks it sent.
+        float rawDepth = -1.0f;
+        if (sDepthIsTexture) {
+            glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+            glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1,
+                         GL_DEPTH_COMPONENT, GL_FLOAT, &rawDepth);
+        }
+        printf("[PC Port] POST: rawDepth=%.5f projInfo=(%.4f, %.4f, %.1f, %.1f) aoIntensity=%.2f aoRadius=%.1f\n",
+               rawDepth, sViewInvP00, sViewInvP11, sViewNear, sViewFar,
+               sPostEffects.ssaoIntensity, sPostEffects.ssaoRadius);
+        printf("[PC Port] POST: scene=(%d,%d,%d) -> result=(%d,%d,%d) | aoOn=%d aoBuilt=%d aoValue=%d "
+               "bloomOn=%d bloomBuilt=%d dofOn=%d dofBuilt=%d focus=%.1f\n",
+               before[0], before[1], before[2], after[0], after[1], after[2],
+               pc_post_ssao_active(sPostEffects) ? 1 : 0, sLastAoReady ? 1 : 0, ao[0],
+               pc_post_bloom_active(sPostEffects) ? 1 : 0, sLastBloomReady ? 1 : 0,
+               pc_post_dof_active(sPostEffects) ? 1 : 0, sLastDofReady ? 1 : 0,
+               sDofFocusDistance);
+        fflush(stdout);
+    }
 
     if (produced != sNativeFramebuffer) {
         // Back into the framebuffer the game is still drawing into. Colour
@@ -2829,6 +2942,14 @@ static void post_apply_before_interface()
         glBlitFramebuffer_ptr(0, 0, sRenderWidth, sRenderHeight,
                               0, 0, sRenderWidth, sRenderHeight,
                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    if (report) {
+        unsigned char back[4] = { 0, 0, 0, 0 };
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+        glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, back);
+        printf("[PC Port] POST: after blit back, scene=(%d,%d,%d)\n", back[0], back[1], back[2]);
+        fflush(stdout);
     }
 
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
