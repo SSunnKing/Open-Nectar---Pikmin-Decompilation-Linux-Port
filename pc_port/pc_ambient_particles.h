@@ -4,21 +4,35 @@
 /*
  * Ambient particles: motes drifting through the air around the player.
  *
- * This is not a new renderer. The game already has a particle system with 335
- * catalogued effects, and spawning one at a position is a call it makes all the
- * time. What is missing is anything that spawns them for no reason -- every
- * existing effect is attached to an event.
+ * The first attempt released whole effects from the game's catalogue, and it
+ * looked exactly like what it was -- gameplay feedback going off for no reason.
+ * Every one of those 335 effects was authored to be noticed.
  *
- * So this module owns the decision, not the drawing: how many motes to release
- * this tick and where to put them. The caller, which is the part that can reach
- * the effect manager, does the spawning. That split keeps the timing and the
- * placement testable without a stage loaded, and it means a mistake here cannot
- * do anything worse than ask for the wrong number.
+ * These are individual particles instead, through the simple-particle path in
+ * zen::simplePtclManager: a texture, a lifetime, a velocity and an acceleration.
+ * That path is alive and updated every frame; only the inline wrapper in
+ * particleManager was marked unused, which is what made it look missing.
+ *
+ * The module decides what to release and how it should move. The caller does
+ * the spawning, since it is the part that can reach the effect manager. That
+ * keeps the timing, the placement and the motion testable with no stage loaded.
  */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/// One mote, fully described. Velocities and accelerations are per update, and
+/// the lifetime is in updates, because that is how the particle manager
+/// integrates them.
+struct PcAmbientMote {
+	float x, y, z;
+	float vx, vy, vz;
+	float ax, ay, az;
+	float size;
+	float rotSpeed;
+	short lifeFrames;
+};
 
 /// 0 off, 1 sparse, 2 normal, 3 dense.
 void pc_ambient_set_density(int density);
@@ -31,14 +45,13 @@ void pc_ambient_set_focus(float x, float y, float z);
 /**
  * @brief Decides what to release this tick.
  *
- * Writes up to maxPositions triples of x,y,z into outPositions and returns how
- * many were written. Returns zero when the mod is off, which is the common case
- * and costs nothing.
+ * Writes up to maxMotes descriptions into outMotes and returns how many were
+ * written. Returns zero when the mod is off, which is the common case.
  *
  * @param deltaSeconds Frame time. Spawning is per second rather than per frame
- *                     so the effect does not thicken with the frame rate.
+ *                     so the air does not thicken with the frame rate.
  */
-int pc_ambient_tick(float deltaSeconds, int maxPositions, float* outPositions);
+int pc_ambient_tick(float deltaSeconds, int maxMotes, struct PcAmbientMote* outMotes);
 
 /// Drops the accumulated spawn budget. Called when a stage ends, so a long
 /// loading screen does not release a whole cloud on the first frame after it.

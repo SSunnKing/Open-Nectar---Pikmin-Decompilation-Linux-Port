@@ -1779,14 +1779,19 @@ void GameCoreSection::updateAI()
 		cameraMgr->mCamera->getWatchpoint().output(watch);
 		pc_ambient_set_focus(watch.x, watch.y, watch.z);
 
-		float spawnAt[8 * 3];
-		const int spawned = pc_ambient_tick(gsys->getFrameTime(), 8, spawnAt);
+		PcAmbientMote motes[8];
+		const int spawned = pc_ambient_tick(gsys->getFrameTime(), 8, motes);
 		for (int i = 0; i < spawned; i++) {
-			Vector3f at(spawnAt[i * 3 + 0], spawnAt[i * 3 + 1], spawnAt[i * 3 + 2]);
-			// One of the game's own effects, spawned for no reason other than
-			// atmosphere. create() returns null when the generator pool is
-			// full, and the game's own effects have the better claim on it.
-			effectMgr->create(EffectMgr::EFF_SD_Sparkle, at, nullptr, nullptr);
+			const PcAmbientMote& m = motes[i];
+			Vector3f at(m.x, m.y, m.z);
+			Vector3f vel(m.vx, m.vy, m.vz);
+			Vector3f accel(m.ax, m.ay, m.az);
+			// Individual particles rather than whole effects. Every effect in
+			// the catalogue was authored to be noticed, which is the opposite
+			// of what atmosphere wants. This one fades out over its own life,
+			// which the manager does for free.
+			effectMgr->create(EffectMgr::SIMPLE_Horoki, at, m.lifeFrames, vel, accel,
+			                  m.size, m.rotSpeed, nullptr);
 		}
 	}
 
