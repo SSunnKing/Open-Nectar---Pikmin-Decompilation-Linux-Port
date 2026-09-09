@@ -46,6 +46,7 @@ __declspec(dllexport) int           AmdPowerXpressRequestHighPerformance = 1;
 #endif
 
 #include "pc_window.h"
+#include "pc_gpu_preference.h"
 #include "settings/pc_settings.h"
 #include "settings/pc_settings_p2d.h"
 
@@ -60,6 +61,11 @@ int main(int argc, char* argv[])
     // Linux, which is why its absence went unnoticed there, but Windows needs
     // it to set up the instance handle and command line.
     SDL_SetMainReady();
+
+    // Before SDL_Init, and before anything can touch GL: on Linux the vendor
+    // is selected by libglvnd the first time it is asked, and by the time a
+    // context exists the choice has already been made. No-op elsewhere.
+    pc_gpu_preference_apply();
 
 #if PIKI_USE_JAUDIO
     if (argc == 2 && std::strcmp(argv[1], "--audio-self-test") == 0)

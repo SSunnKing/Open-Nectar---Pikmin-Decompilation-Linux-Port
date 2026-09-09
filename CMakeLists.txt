@@ -153,6 +153,7 @@ set(PC_PORT_SOURCES
     pc_port/pc_menu_repeat.cpp
     pc_port/pc_photo_mode.cpp
     pc_port/pc_permadeath.cpp
+    pc_port/pc_gpu_preference.cpp
     pc_port/gl/pc_gfx.cpp
     pc_port/gl/pc_tev_shader.cpp
     pc_port/gl/pc_postprocess.cpp
@@ -513,6 +514,12 @@ target_include_directories(pc_photo_mode_test PRIVATE ${SDL2_INCLUDE_DIRS} pc_po
 target_link_libraries(pc_photo_mode_test PRIVATE ${SDL2_LIBRARIES})
 target_compile_options(pc_photo_mode_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
 add_test(NAME pc_photo_mode_test COMMAND pc_photo_mode_test)
+
+# Which GPU to ask for on a switchable-graphics laptop (no GPU needed)
+add_executable(pc_gpu_preference_test pc_port/pc_gpu_preference_test.cpp pc_port/pc_gpu_preference.cpp)
+target_include_directories(pc_gpu_preference_test PRIVATE pc_port)
+target_compile_options(pc_gpu_preference_test PRIVATE ${NATIVE_COMPILE_OPTIONS})
+add_test(NAME pc_gpu_preference_test COMMAND pc_gpu_preference_test)
 
 # Menu input repeat (no controller needed)
 add_executable(pc_menu_repeat_test pc_port/pc_menu_repeat_test.cpp pc_port/pc_menu_repeat.cpp)
