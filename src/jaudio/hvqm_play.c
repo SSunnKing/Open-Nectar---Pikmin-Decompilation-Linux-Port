@@ -70,6 +70,17 @@ static inline u32 hvqmBE32(u32 value)
 #define HVQM_CLEAR_PICTURE(ptr) (*(int*)(ptr) = 0)
 #endif
 
+#ifdef PIKI_PC_PORT
+static int hvqmAudioRecords;
+static u32 hvqmAudioBytes;
+// Why the decode loop gives up on a pass. It stops making progress while the
+// picture is frozen, and there are only two ways out of the loop that do not
+// advance anything: no free picture buffer to decode into, or no room in the
+// audio stream to send to. Which one it is decides the fix.
+static u32 hvqmStallNoPicBuffer;
+static u32 hvqmStallStreamFull;
+#endif
+
 static volatile BOOL dvd_loadfinish;
 static u32 dvdcount;
 static int arcoffset;
@@ -513,6 +524,45 @@ BOOL Jac_HVQM_Update(void)
 			rec_header.mRecordType = hvqmBE16(rec_header.mRecordType);
 			rec_header.mFrameFlags = hvqmBE16(rec_header.mFrameFlags);
 			rec_header.mDataSize   = hvqmBE32(rec_header.mDataSize);
+			// Every record as it is parsed, for the first few. A one-byte audio
+			// record appeared in the trace, which cannot occur in a file being
+			// walked correctly: it means the read position drifted and headers
+			// are now being read out of the middle of data. This says where.
+			{
+				// 24 was too few: the first group has 31 records and the
+				// derail showed up after the trace had already stopped.
+				// Condition-triggered, not capped. Every record in this file
+				// starts on a 4-byte boundary, so the moment the read position
+				// is not aligned the walk has drifted -- and the last few
+				// records before it are what caused it. Chasing this with "log
+				// the first N records" kept missing it, because how far the
+				// decoder gets before drifting varies from run to run.
+				static struct { int offset; u32 type; u32 size; } recent[4];
+				static int recentAt = 0;
+				static bool driftReported = false;
+				recent[recentAt & 3].offset = arcoffset;
+				recent[recentAt & 3].type   = rec_header.mRecordType;
+				recent[recentAt & 3].size   = rec_header.mDataSize;
+				recentAt++;
+				if (!driftReported && (arcoffset & 3) != 0) {
+					driftReported = true;
+					OSReport("[PC Port] H4M: DRIFT -- header read at %d, not 4-byte aligned\n", arcoffset);
+					for (int back = 4; back >= 1; back--) {
+						const int slot = (recentAt - back) & 3;
+						OSReport("[PC Port] H4M:   previous: offset=%d type=%u size=%u\n",
+						         recent[slot].offset, recent[slot].type, recent[slot].size);
+					}
+					OSReport("[PC Port] H4M:   gopFrame=%u gopSubframe=%d gopHeader[2]=%u picFrame=%u\n",
+					         gop_frame, gop_subframe, gop_header[2], PIC_FRAME);
+				}
+				static int recordsTraced = 0;
+				if (recordsTraced < 0) {
+					recordsTraced++;
+					OSReport("[PC Port] H4M: record %2d type=%u flags=0x%04x size=%u at offset %d\n",
+					         recordsTraced, rec_header.mRecordType, rec_header.mFrameFlags,
+					         rec_header.mDataSize, arcoffset);
+				}
+			}
 #endif
 			arcoffset += 8;
 		}
@@ -525,6 +575,20 @@ BOOL Jac_HVQM_Update(void)
 		case 0:
 		{
 			if (Jac_CheckStreamFree(rec_header.mDataSize) == 0) {
+#ifdef PIKI_PC_PORT
+				// The record the loop is actually stuck on, printed once and
+				// then rarely. Chasing this with a cap on the record trace kept
+				// missing it: the derail happens further in each run, because
+				// how far the decoder gets before stalling depends on timing.
+				// This does not care how far in it is.
+				if (hvqmStallStreamFull == 0 || (hvqmStallStreamFull % 4000000) == 0) {
+					OSReport("[PC Port] H4M: stalled sending audio: size=%u type=%u flags=%#06x "
+					         "offset=%d free=%d\n",
+					         rec_header.mDataSize, rec_header.mRecordType, rec_header.mFrameFlags,
+					         arcoffset, Jac_GetStreamRemain());
+				}
+				hvqmStallStreamFull++;
+#endif
 				record_ok = 0;
 			} else {
 				if (__VirtualLoad(arcoffset, rec_header.mDataSize, data) == 0) {
@@ -535,6 +599,10 @@ BOOL Jac_HVQM_Update(void)
 				u32 remainBefore = Jac_GetStreamRemain();
 #endif
 				Jac_SendStreamData(data, rec_header.mDataSize);
+#ifdef PIKI_PC_PORT
+				hvqmAudioRecords++;
+				hvqmAudioBytes += rec_header.mDataSize;
+#endif
 				record_ok = 1;
 				arcoffset += rec_header.mDataSize;
 #if defined(VERSION_GPIP01)
@@ -548,6 +616,10 @@ BOOL Jac_HVQM_Update(void)
 			if (playback_first_wait && PIC_FRAME == PIC_BUFFERS) {
 				if (StreamSyncCheckReady(0)) {
 					StreamSyncPlayAudio(1.0f, 0, 0x3fff, 0x3fff);
+#ifdef PIKI_PC_PORT
+					OSReport("[PC Port] H4M: audio started after %d records, %u bytes\n",
+					         hvqmAudioRecords, hvqmAudioBytes);
+#endif
 					playback_first_wait = 0;
 				} else {
 					record_ok = 0;
@@ -580,6 +652,9 @@ BOOL Jac_HVQM_Update(void)
 			case 2:
 			{
 				if (CheckDraw(v_header + gop_baseframe) == 0) {
+#ifdef PIKI_PC_PORT
+					hvqmStallNoPicBuffer++;
+#endif
 					record_ok = 0;
 					goto end;
 				}
@@ -593,6 +668,31 @@ BOOL Jac_HVQM_Update(void)
 			int start_time = OSGetTime();
 			u32 dec        = Decode1(data, v_header + gop_baseframe, rec_header.mFrameFlags & 0xff);
 			time_delta     = OSGetTime() - start_time;
+#ifdef PIKI_PC_PORT
+			// Decode1 returns -1 when the picture buffer it wants is occupied,
+			// and dec is unsigned, so "dec <= 1" is false and the frame is not
+			// counted -- but arcoffset was advanced two lines above, so the
+			// record is consumed anyway. One lost frame makes gop_subframe fall
+			// one short of gop_header[2], the group's end is never recognised,
+			// its 20-byte header is not skipped, and every read after that is
+			// garbage. Measured: the walk derailed at 3883956, exactly 0x14
+			// before the next real record, with gopSubframe=29 against 30.
+			//
+			// CheckDraw tested the same buffer moments earlier and said it was
+			// free. It is the main thread that takes it in between, from
+			// Jac_GetPicture -- a race that the console's cooperative threads
+			// left almost no room for.
+			//
+			// So put the record back and retry it. The data is already loaded,
+			// so vh_state stays at 2 and the retry costs only the CheckDraw.
+			if (dec == (u32)-1) {
+				arcoffset -= rec_header.mDataSize;
+				record_ok = 0;
+				vh_state  = 2;
+				hvqmStallNoPicBuffer++;
+				goto end;
+			}
+#endif
 			if (dec <= 1) {
 				PIC_FRAME++;
 				gop_subframe++;
@@ -665,6 +765,20 @@ int Jac_GetPicture(void* data, int* x, int* y)
 {
 	int offset = 0;
 	int index  = -1;
+#ifdef PIKI_PC_PORT
+	// The frame this returns is the audio clock, and it is what decides which
+	// picture is shown. A picture that never changes means this number never
+	// changes, so print it next to the state that feeds it.
+	{
+		static int reportGate = 0;
+		if ((++reportGate % 120) == 0) {
+			OSReport("[PC Port] H4M: audioFrame=%d picFrame=%u firstWait=%d gopFrame=%u "
+			         "audioRecords=%d audioBytes=%u stallPic=%u stallStream=%u\n",
+			         StreamGetCurrentFrame(0, 2), PIC_FRAME, playback_first_wait, gop_frame,
+			         hvqmAudioRecords, hvqmAudioBytes, hvqmStallNoPicBuffer, hvqmStallStreamFull);
+		}
+	}
+#endif
 	*x         = file_header.mInfo.width;
 	*y         = file_header.mInfo.height;
 
