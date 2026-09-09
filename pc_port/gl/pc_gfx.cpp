@@ -902,6 +902,14 @@ static void resolve_tev_konst(u8 stage, float out[4]) {
 
 // Map of GXTexObj pointers to OpenGL Texture IDs
 static std::unordered_map<uintptr_t, GLuint> sTextureCache;
+// What the cache is costing. Every GX texture is expanded to RGBA8 -- the
+// console's formats are 4 and 8 bits per pixel, so this is four to eight times
+// the original -- and nothing ever gave one back until now.
+static std::unordered_map<uintptr_t, size_t> sTextureBytes;
+static size_t sTextureBytesLive = 0;
+static size_t sTextureBytesPeak = 0;
+static size_t sTexturesCreated = 0;
+static size_t sTexturesReleased = 0;
 
 struct PcTextureSignature {
     const void* image = nullptr;
@@ -3042,6 +3050,57 @@ void pc_gfx_set_tev_swap_mode_table(GXTevSwapSel table, GXTevColorChan red, GXTe
 // none to choose from.
 static void apply_texture_filtering(bool gameRequestedMipmaps);
 
+// Replaces whatever this key was costing. An upload into an existing texture
+// swaps the old figure rather than adding to it.
+static void note_texture_bytes(uintptr_t key, size_t bytes)
+{
+    // A mip chain adds a third again on top of the base level.
+    const size_t withMips = bytes + bytes / 3;
+    auto it = sTextureBytes.find(key);
+    if (it != sTextureBytes.end()) {
+        sTextureBytesLive -= it->second;
+        it->second = withMips;
+    } else {
+        sTextureBytes[key] = withMips;
+    }
+    sTextureBytesLive += withMips;
+    if (sTextureBytesLive > sTextureBytesPeak) sTextureBytesPeak = sTextureBytesLive;
+}
+
+void pc_gfx_release_texture(void* gxTexObj)
+{
+    if (!gxTexObj) return;
+    const uintptr_t key = reinterpret_cast<uintptr_t>(gxTexObj);
+    auto it = sTextureCache.find(key);
+    if (it == sTextureCache.end()) return;
+
+    pc_gfx_flush_batch();  // the batch may still reference this texture
+    GLuint id = it->second;
+    for (int unit = 0; unit < 8; ++unit) {
+        if (sBoundTextures[unit] == id) sBoundTextures[unit] = 0;
+    }
+    glDeleteTextures(1, &id);
+    sTextureCache.erase(it);
+    sTextureSignatures.erase(key);
+
+    auto bytesIt = sTextureBytes.find(key);
+    if (bytesIt != sTextureBytes.end()) {
+        sTextureBytesLive -= bytesIt->second;
+        sTextureBytes.erase(bytesIt);
+    }
+    sTexturesReleased++;
+}
+
+void pc_gfx_get_texture_stats(size_t* live, size_t* liveBytes, size_t* peakBytes,
+                              size_t* created, size_t* released)
+{
+    if (live) *live = sTextureCache.size();
+    if (liveBytes) *liveBytes = sTextureBytesLive;
+    if (peakBytes) *peakBytes = sTextureBytesPeak;
+    if (created) *created = sTexturesCreated;
+    if (released) *released = sTexturesReleased;
+}
+
 // Every texture already uploaded keeps the filter state it was given, so
 // changing this from the menu did nothing to the scene in front of you -- the
 // stage's textures were uploaded long before. Re-applying to the whole cache is
@@ -3143,6 +3202,7 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
     } else {
         glGenTextures(1, &texId);
         sTextureCache[key] = texId;
+        sTexturesCreated++;
     }
 
     pc_gfx_flush_batch();  // about to rebind and rewrite texture unit 0
@@ -3281,6 +3341,7 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
     }
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    note_texture_bytes(key, size_t(width) * size_t(height) * 4);
     // After the upload: the mip chain is built from the data, so it cannot be
     // asked for before there is any.
     apply_texture_filtering(mipmap != GX_FALSE);
@@ -3368,6 +3429,7 @@ static bool upload_ci_texture(GXTexObj* obj, const PcCiTexture& ci) {
     if (textureIt == sTextureCache.end()) {
         glGenTextures(1, &texId);
         sTextureCache[key] = texId;
+        sTexturesCreated++;
     } else {
         texId = textureIt->second;
     }
@@ -3378,6 +3440,7 @@ static bool upload_ci_texture(GXTexObj* obj, const PcCiTexture& ci) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, ci.wrapS == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, ci.wrapT == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ci.width, ci.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    note_texture_bytes(key, size_t(ci.width) * size_t(ci.height) * 4);
     // Palettised textures carry no LOD levels through this path, so they are
     // filtered flat -- but they still take the wrap and magnification state.
     apply_texture_filtering(false);

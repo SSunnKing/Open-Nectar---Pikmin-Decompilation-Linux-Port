@@ -142,6 +142,21 @@ void pc_gfx_set_fog_allowed(int allowed);
 /// mip levels -- without a chain to choose among there is nothing for it to do.
 void pc_gfx_set_anisotropy(int samples);
 
+/**
+ * @brief Frees the GL texture belonging to one GX texture object.
+ *
+ * Nothing ever did. The cache is keyed by the GXTexObj address, and because
+ * the port's heap resets do not actually free memory, a reloaded stage builds
+ * its texture objects at fresh addresses -- so every reload added a full set of
+ * GL textures and kept the previous one. Called when a heap is reset, which is
+ * where the game already says which of its objects are dying.
+ */
+void pc_gfx_release_texture(void* gxTexObj);
+
+/// Live texture count, bytes held, peak bytes, and lifetime created/released.
+void pc_gfx_get_texture_stats(size_t* live, size_t* liveBytes, size_t* peakBytes,
+                              size_t* created, size_t* released);
+
 /// Sets the post-process effect set. With nothing enabled the pass is skipped
 /// entirely and the scene blits straight to the window.
 struct PcPostEffects;

@@ -13,6 +13,9 @@
 #include "sysNew.h"
 #include "system.h"
 #include <stddef.h>
+#if defined(PIKI_PC_PORT)
+#include "gl/pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -122,6 +125,19 @@ void StdSystem::invalidateObjsForHeap(int heapIdx)
 	for (GfxobjInfo* c = mGfxobjInfo.mNext; c != &mGfxobjInfo;) {
 		next = c->mNext;
 		if (c->mOwnerHeap == heapIdx) {
+#if defined(PIKI_PC_PORT)
+			// Give the GL texture back as well as the registry entry. Dropping
+			// only the entry is what made every stage reload add a fresh set of
+			// textures on top of the previous one: heap resets do not free the
+			// memory here, so the reloaded objects land at new addresses, and
+			// the cache is keyed by address.
+			if (c->mId.mId == '_tex') {
+				TexobjInfo* texInfo = static_cast<TexobjInfo*>(c);
+				if (texInfo->mTexture && texInfo->mTexture->mTexObj) {
+					pc_gfx_release_texture(texInfo->mTexture->mTexObj);
+				}
+			}
+#endif
 			c->remove();
 		}
 		c = next;

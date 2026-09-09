@@ -376,12 +376,19 @@ void System::run(BaseApp* app)
             pc_audio_report_levels();
             int matrixPeak = 0, matrixMax = 0, shapePeak = 0, shapeMax = 0;
             pc_gfx_get_pool_peaks(&matrixPeak, &matrixMax, &shapePeak, &shapeMax);
+            size_t texLive = 0, texBytes = 0, texPeak = 0, texMade = 0, texFreed = 0;
+            pc_gfx_get_texture_stats(&texLive, &texBytes, &texPeak, &texMade, &texFreed);
             printf("[PC Port] FPS: %.1f, DeltaTime: %.4fms, clamp: %d, TEV programs: %zu%s, "
                    "matrices: %d/%d, shapes: %d/%d\n",
                    getFrameRate(), mDeltaTime * 1000.0, mFrameRate,
                    pc_gfx_get_specialised_program_count(),
                    pc_gfx_get_shader_specialisation() ? "" : " (ubershader)",
                    matrixPeak, matrixMax, shapePeak, shapeMax);
+            // Texture memory on its own line: it is the port's largest single
+            // consumer and, until heap resets started giving it back, it only
+            // ever grew.
+            printf("[PC Port] Textures: %zu live, %zu MB (peak %zu MB), %zu made / %zu freed\n",
+                   texLive, texBytes >> 20, texPeak >> 20, texMade, texFreed);
             // The budget is always the 60 Hz one: the question this answers is
             // whether a tick would fit there, not whether it fits the 30 Hz
             // period it is currently running at.
