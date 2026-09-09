@@ -1199,6 +1199,7 @@ volatile int sDspSyncCount;
 MixCallback sMixCallback = nullptr;
 u8 sMixMode              = MixMode_Mono;
 DACCallback sDacCallback = nullptr;
+std::atomic<u32> sDacSyncCounter { 0 };
 u8 sBgmVolume            = 8;
 u8 sSeVolume             = 8;
 u32 sAiStreamSampleRate  = AI_SAMPLERATE_48KHZ;
@@ -1539,6 +1540,15 @@ void renderJAudioFrame(std::array<s16, kFrameSamples * 2>& pcm)
 		sDspSyncCount = static_cast<int>(kSubframes - subframe - 1);
 	}
 	++JAC_VFRAME_COUNTER;
+	// One tick per rendered audio frame, which is what Jac_GetCurrentSCounter
+	// reports. On the console it came from the DSP; here the host renderer is
+	// the thing that advances, so it keeps the count.
+	//
+	// Atomic because Jac_HVQM_Init spins on it from another thread, waiting for
+	// one audio frame to pass. A spin on a plain variable is compiled under LTO
+	// as a single load outside the loop -- a hang, not a wait. That has caught
+	// this project once before.
+	sDacSyncCounter.fetch_add(1, std::memory_order_relaxed);
 	StreamMain();
 	applyExternalMix(pcm.data(), kFrameSamples);
 	if (sDacCallback != nullptr) {
@@ -1844,6 +1854,13 @@ void SetAudioThreadPriority() {}
 void Jac_GetDacRate() {}
 
 } // extern "C"
+
+// Outside the extern "C" block above on purpose: jaudio/dspbuf.h declares this
+// one without C linkage, and the H4M player is compiled against that header.
+// Defined here rather than in dolphin_stubs/dspbuf.cpp because with the native
+// engine the host renderer is what advances -- it is the thing that knows an
+// audio frame has gone by.
+u32 Jac_GetCurrentSCounter() { return sDacSyncCounter.load(std::memory_order_relaxed); }
 
 /*
  * dspproc.h intentionally uses C++ linkage.  These symbols replace mailbox

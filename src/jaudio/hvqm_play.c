@@ -11,6 +11,51 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef PIKI_PC_PORT
+// The port's synchronous loader, declared the same way virload.c declares it.
+//
+// The original queues a task onto jaudio's DVD thread and spins on a status
+// word until it lands. That thread does not exist here, so the spin never ends:
+// the game froze on the title screen the moment an attract movie started, with
+// the file open and nothing after it in the log.
+s32 DVDT_LoadtoDRAMHost(u32 owner, immut char* name, void* dst, u32 src, u32 length, u32* status,
+                        Jac_DVDCallback callback);
+#endif
+
+#ifdef PIKI_PC_PORT
+// The file is GameCube data and every multi-byte field in it is big-endian.
+// The rest of the port converts in the Stream layer, but this player reads
+// structures straight out of the buffer the DVD code filled, so nothing has
+// touched them. Left alone, the very first thing the picture size said was
+// 32770x57345 -- which is 0x8002 by 0xE001, the bytes of 640x480 reversed.
+//
+// Same endianness test the Stream layer uses; one program should not hold two
+// opinions about the byte order of the machine it is running on.
+#if defined(_WIN32) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#define HVQM_SWAP_NEEDED 1
+#else
+#define HVQM_SWAP_NEEDED 0
+#endif
+
+static inline u16 hvqmBE16(u16 value)
+{
+#if HVQM_SWAP_NEEDED
+	return __builtin_bswap16(value);
+#else
+	return value;
+#endif
+}
+
+static inline u32 hvqmBE32(u32 value)
+{
+#if HVQM_SWAP_NEEDED
+	return __builtin_bswap32(value);
+#else
+	return value;
+#endif
+}
+#endif
+
 static volatile BOOL dvd_loadfinish;
 static u32 dvdcount;
 static int arcoffset;
@@ -109,7 +154,14 @@ static void __ReLoad()
 		dvd_active += 1;
 
 		int num_bufs = 3;
+#ifdef PIKI_PC_PORT
+		// Synchronous here too. The callback still runs -- the host loader
+		// calls it before returning -- so the state machine around this sees
+		// exactly what it expects, just sooner.
+		DVDT_LoadtoDRAMHost(dvdcount, filename, dvd_buf[dvdcount % num_bufs], dvdcount << 0x13, dvdload_size, NULL, __LoadFin);
+#else
 		DVDT_LoadtoDRAM(dvdcount, filename, (uintptr_t)dvd_buf[dvdcount % num_bufs], dvdcount << 0x13, dvdload_size, NULL, __LoadFin);
+#endif
 		OSRestoreInterrupts(inter);
 	}
 }
@@ -235,8 +287,12 @@ void Jac_HVQM_Init(immut char* movieFilePath, u8* data, u32 bufferSize)
 	dvdfile_size   = DVDT_CheckFile(movieFilePath);
 	dvdfile_size -= 0x80000;
 	volatile u32 status;
+#ifdef PIKI_PC_PORT
+	DVDT_LoadtoDRAMHost(dvdcount, movieFilePath, dvd_buf[dvdcount % 3], 0, 0x80000, (u32*)&status, NULL);
+#else
 	DVDT_LoadtoDRAM(dvdcount, movieFilePath, (uintptr_t)dvd_buf[dvdcount % 3], 0, 0x80000, (u32*)&status, 0);
 	while (status == 0) { }
+#endif
 
 	dvd_ctrl[0].mFileOffset = 0;
 	dvd_ctrl[0].mState      = 2;
@@ -246,6 +302,15 @@ void Jac_HVQM_Init(immut char* movieFilePath, u8* data, u32 bufferSize)
 	__ReLoad();
 
 	file_header = *(HVQM_FileHeader*)dvd_buf[0];
+#ifdef PIKI_PC_PORT
+	// Only the fields anything reads. The rest of the structure is marked
+	// unused in the decompilation and swapping it would just be noise.
+	file_header.mTotalFrames = hvqmBE32(file_header.mTotalFrames);
+	file_header.mFileSize    = hvqmBE32(file_header.mFileSize);
+	file_header.mSampleRate  = hvqmBE32(file_header.mSampleRate);
+	file_header.mInfo.width  = hvqmBE16(file_header.mInfo.width);
+	file_header.mInfo.height = hvqmBE16(file_header.mInfo.height);
+#endif
 
 	arcoffset += 0x44;
 	gop_baseframe = 0;
@@ -336,7 +401,26 @@ void Jac_HVQM_Init(immut char* movieFilePath, u8* data, u32 bufferSize)
 
 		InitPic();
 		int start = Jac_GetCurrentSCounter();
+#if defined(PIKI_PC_PORT)
+		// The console waited here for the DSP to tick over once. The host
+		// renderer ticks the same counter, but if audio is not running -- a
+		// device that failed to open, a build with the old mixer -- it never
+		// will, and an unbounded spin in setup code is a frozen game with no
+		// message. Bounded, and it says which of the two happened.
+		{
+			int spins = 0;
+			while (start == (int)Jac_GetCurrentSCounter()) {
+				if (++spins > 200000000) {
+					OSReport("[PC Port] H4M: audio counter never advanced; carrying on without the wait\n");
+					break;
+				}
+			}
+			OSReport("[PC Port] H4M: init done, %d picture buffers, %d frames\n",
+			         PIC_BUFFERS, file_header.mTotalFrames);
+		}
+#else
 		while (start == Jac_GetCurrentSCounter()) { }
+#endif
 	}
 
 	return;
@@ -398,6 +482,11 @@ BOOL Jac_HVQM_Update(void)
 			if (__VirtualLoad(arcoffset, sizeof(gop_header), (u8*)gop_header) == 0) {
 				return FALSE;
 			}
+#ifdef PIKI_PC_PORT
+			for (u32 word = 0; word < sizeof(gop_header) / sizeof(gop_header[0]); word++) {
+				gop_header[word] = hvqmBE32(gop_header[word]);
+			}
+#endif
 			arcoffset += 0x14;
 			gop_subframe++;
 		}
@@ -406,6 +495,11 @@ BOOL Jac_HVQM_Update(void)
 			if (__VirtualLoad(arcoffset, sizeof(rec_header), (u8*)&rec_header) == 0) {
 				return 0;
 			}
+#ifdef PIKI_PC_PORT
+			rec_header.mRecordType = hvqmBE16(rec_header.mRecordType);
+			rec_header.mFrameFlags = hvqmBE16(rec_header.mFrameFlags);
+			rec_header.mDataSize   = hvqmBE32(rec_header.mDataSize);
+#endif
 			arcoffset += 8;
 		}
 
@@ -454,6 +548,9 @@ BOOL Jac_HVQM_Update(void)
 					record_ok = 0;
 					goto end;
 				}
+#ifdef PIKI_PC_PORT
+				v_header = (int)hvqmBE32((u32)v_header);
+#endif
 				vh_state += 1;
 				// fallthrough
 			}

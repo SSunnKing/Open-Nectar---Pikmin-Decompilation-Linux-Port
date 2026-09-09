@@ -160,6 +160,21 @@ struct MovSampleSetupSection : public Node {
 			"../MovieData/cntA_S.h4m", "../MovieData/cntB_S.h4m", "../MovieData/cntC_S.h4m",
 			"../MovieData/cntD_S.h4m", "../MovieData/sr_S.h4m",   "../MovieData/srhp_S.h4m",
 		};
+#if defined(PIKI_PC_PORT)
+	// H4M playback is not finished. It reads the file and decodes headers
+	// correctly now, but something after that stalls the frame, and a game
+	// that freezes when you leave it sitting on the title screen is worse
+	// than one with no attract movies. Off unless PIKMIN_H4M=1 asks for it.
+	//
+	// With it off the section behaves exactly as it did before any of this
+	// existed: no pictures, so update() returns to the titles at once.
+	mH4mEnabled = getenv("PIKMIN_H4M") != nullptr;
+	if (!mH4mEnabled) {
+		printf("[PC Port] H4M: playback disabled (set PIKMIN_H4M=1 to try it)\n");
+		fflush(stdout);
+		return;
+	}
+#endif
 #if PIKI_USE_JAUDIO
 		int movieBufferSize = 0xe00000;
 		u8* movieBuffer     = new (PIKI_ALIGNED(0x20)) u8[movieBufferSize];
@@ -189,9 +204,36 @@ struct MovSampleSetupSection : public Node {
 		int pictureStatus = 0;
 		u8* pictureData   = nullptr;
 		int pictureWidth, pictureHeight;
+#if defined(PIKI_PC_PORT)
+		if (!mH4mEnabled) {
+			pictureStatus = -1; // straight back to the titles
+		} else
+#endif
 		if (gsys->mDvdErrorCode < DvdError::ReadingDisc) { // AKA: DvdError::None (no issue)
 			pictureStatus = Jac_StreamMovieGetPicture(&pictureData, &pictureWidth, &pictureHeight);
 		}
+
+#if defined(PIKI_PC_PORT)
+		// First picture, then one line a second. The H4M path has never run in
+		// this port, so a failure has to be able to say which half failed: no
+		// pictures at all is the decoder or the file, pictures of the wrong
+		// size is the header, pictures that stop after one is the streaming.
+		{
+			static int frames = 0;
+			static bool announced = false;
+			if (!announced && pictureData && pictureStatus) {
+				announced = true;
+				printf("[PC Port] H4M: first picture %dx%d (status %d)\n",
+				       pictureWidth, pictureHeight, pictureStatus);
+				fflush(stdout);
+			}
+			if (++frames % 60 == 0) {
+				printf("[PC Port] H4M: status=%d picture=%s %dx%d\n", pictureStatus,
+				       pictureData ? "yes" : "none", pictureWidth, pictureHeight);
+				fflush(stdout);
+			}
+		}
+#endif
 
 		if (pictureData && pictureStatus) {
 #if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
@@ -208,8 +250,13 @@ struct MovSampleSetupSection : public Node {
 		}
 
 		if (shouldExit || pictureStatus == -1) {
-			Jac_StreamMovieStop();
-			OSCancelThread(&playbackThread);
+#if defined(PIKI_PC_PORT)
+			if (mH4mEnabled)
+#endif
+			{
+				Jac_StreamMovieStop();
+				OSCancelThread(&playbackThread);
+			}
 
 			if (flowCont.mEndingType != ENDING_None) {
 				Jac_SceneExit(SCENE_Exit, 0);
@@ -335,6 +382,9 @@ struct MovSampleSetupSection : public Node {
 	int _40;                 // _40
 	int _44;                 // _44
 	u8* mYuvFrameBuffers[2]; // _48
+#if defined(PIKI_PC_PORT)
+	bool mH4mEnabled;
+#endif
 };
 
 /**

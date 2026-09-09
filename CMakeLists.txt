@@ -230,6 +230,13 @@ if(PIKMIN_NATIVE_JAUDIO)
         src/jaudio/heapctrl.c
         src/jaudio/interface.c
         src/jaudio/interleave.c
+        # H4M video. The decoder is complete -- no TRAP_UNIMPLEMENTED anywhere
+        # in hvqm4dec.c -- and hvqm_play.c's three are all in jaudio's own
+        # decode thread, which this game never uses: movSample.cpp drives
+        # Jac_HVQM_Update from a thread of its own, and that function is whole.
+        src/hvqm4dec/hvqm4dec.c
+        src/jaudio/hvqm_play.c
+        src/jaudio/app_inter.c
         src/jaudio/ja_calc.c
         src/jaudio/jammain_2.c
         src/jaudio/jamosc.c
@@ -297,7 +304,7 @@ file(GLOB PLUGPIKI_YAMASHITA_SOURCES "src/plugPikiYamashita/*.cpp")
 #   src/base/        — PPCArch (replaced by misc_stubs)
 #   src/db/          — Debug (replaced by misc_stubs)
 #   src/hio/         — Host I/O (replaced by misc_stubs)
-#   src/hvqm4dec/    — Video decoder (not needed yet)
+#   src/hvqm4dec/    — Video decoder (built with PIKMIN_NATIVE_JAUDIO)
 #   src/MSL_C/       — MetroWerks Standard Library (use system libc)
 #   src/Runtime/     — CodeWarrior Runtime (use system runtime)
 #   src/TRK_MINNOW_DOLPHIN/ — Debugger (not needed)

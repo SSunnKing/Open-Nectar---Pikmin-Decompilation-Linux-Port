@@ -1,5 +1,15 @@
 #include "hvqm4.h"
 #include <stddef.h>
+#include <string.h>
+
+// Same test the Stream layer uses, kept identical on purpose: two different
+// answers to "is this machine little-endian" in one program is a bug waiting
+// for a platform that disagrees.
+#if defined(_WIN32) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#define PIKI_STREAM_LITTLE_ENDIAN 1
+#else
+#define PIKI_STREAM_LITTLE_ENDIAN 0
+#endif
 
 /*
  * Initial code attempts + comments + function arguments/naming guides taken from
@@ -127,6 +137,28 @@ static void setCode(BitBuffer* const str, u8* top)
 }
 
 /**
+ * @brief Takes the next 32-bit word from the bitstream and advances past it.
+ *
+ * Replaces "*((u32*)str->ptr)++", which the original compiler accepted -- the
+ * cast counted as an lvalue there -- and which no compiler in use today does.
+ *
+ * It also byte-swaps. The rest of the port converts GameCube data in the Stream
+ * layer, but this decoder reads the file straight out of the buffer the DVD
+ * code filled, so nothing has swapped it. Read little-endian, every Huffman
+ * code comes out of the wrong end of the word and the picture is noise.
+ */
+static inline u32 hvqmReadWord(BitBuffer* str)
+{
+	u32 word;
+	memcpy(&word, str->ptr, sizeof(word));
+	str->ptr += sizeof(word);
+#if PIKI_STREAM_LITTLE_ENDIAN
+	word = __builtin_bswap32(word);
+#endif
+	return word;
+}
+
+/**
  * @TODO: Documentation
  */
 static inline int getBit(BitBuffer* str)
@@ -135,7 +167,7 @@ static inline int getBit(BitBuffer* str)
 	int bit;
 
 	if ((bit = str->shift) < 0) {
-		value = str->word = *((u32*)str->ptr)++;
+		value = str->word = hvqmReadWord(str);
 		bit               = 31;
 	} else {
 		value = str->word;
@@ -160,7 +192,7 @@ static inline s16 getByte(BitBuffer* str)
 	} else {
 		value = str->word;
 		value <<= 7 - bit;
-		str->word = *((u32*)str->ptr)++;
+		str->word = hvqmReadWord(str);
 		value |= str->word >> (bit + 25);
 		bit += 24;
 	}
@@ -1001,10 +1033,10 @@ static inline s32 GetMCAotBasis(VideoState* ws, u8 basisOut[16], s32* pscl, u8* 
 	}
 }
 
-static inline s32 GetAotSum(VideoState* ws, long sum[16], u8 nbasis, u8* nestTop, int nestWidth, int p)
+static inline s32 GetAotSum(VideoState* ws, s32 sum[16], u8 nbasis, u8* nestTop, int nestWidth, int p)
 {
-	long prev_scl;
-	long scl;
+	s32 prev_scl;
+	s32 scl;
 	u8 bas[16];
 
 	sum[0] = sum[1] = sum[2] = sum[3] = sum[4] = sum[5] = sum[6] = sum[7] = sum[8] = sum[9] = sum[10] = sum[11] = sum[12] = sum[13]
@@ -1072,9 +1104,9 @@ static inline s32 GetMCAotSum(VideoState* ws, s32 sum[16], u8 nbasis, u8* nestTo
  */
 static void IntraAotBlock(VideoState* ws, u8* blk, int blkWidth, u8 dcv, u8 nbasis, int p)
 {
-	long sum[16];
+	s32 sum[16];
 	int avr;
-	long mns;
+	s32 mns;
 
 	if (nbasis == 6) {
 		OrgBlock(ws, blk, blkWidth, p);

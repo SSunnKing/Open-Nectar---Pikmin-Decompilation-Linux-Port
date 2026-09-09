@@ -1165,7 +1165,12 @@ void Jac_UnPauseOrimaSe() { apply_gameplay_audio_pause(); }
 
 #endif // !PIKI_USE_JAUDIO
 
-// H4M video decoding is not implemented by this Linux port.
+#if !PIKI_USE_JAUDIO
+// H4M video needs the original audio engine underneath it: the file carries
+// video and audio interleaved, and the audio half goes out through jaudio's
+// stream path. With the old mixer there is nothing to hand it to, so the
+// player is told there are no pictures and gives up cleanly. The real
+// implementation is src/jaudio/app_inter.c, built with PIKMIN_NATIVE_JAUDIO.
 extern "C" {
 void Jac_StreamMovieUpdate() {}
 void Jac_StreamMovieInit(const char*, u8*, int) {}
@@ -1177,3 +1182,4 @@ int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut
 }
 void Jac_StreamMovieStop() {}
 }
+#endif

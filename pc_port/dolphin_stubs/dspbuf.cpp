@@ -10,11 +10,17 @@
 #include "jaudio/playercall.h"
 #include "jaudio/rate.h"
 #include <stddef.h>
+#include <atomic>
 
 static u8 write_buffer      = 0;
 static u8 read_buffer       = 0;
 static u8 dspstatus         = 0;
-static u32 dac_sync_counter = 0;
+// Atomic because it is written by the audio thread and polled by another.
+// Jac_HVQM_Init spins on it -- "read it until it changes" -- and with LTO a
+// spin on a plain variable is compiled as a load hoisted out of the loop, which
+// is to say an infinite one. That has already cost this project a hang once;
+// this is the same shape.
+static std::atomic<u32> dac_sync_counter { 0 };
 
 static s16* dsp_buf[DSPBUF_NUM];
 
@@ -23,7 +29,7 @@ static s16* dsp_buf[DSPBUF_NUM];
  */
 u32 Jac_GetCurrentSCounter()
 {
-	return dac_sync_counter;
+	return dac_sync_counter.load(std::memory_order_relaxed);
 }
 
 /**
@@ -121,7 +127,7 @@ s16* DspbufProcess(DSPBUF_EVENTS event)
  */
 void UpdateDSP()
 {
-	dac_sync_counter++;
+	dac_sync_counter.fetch_add(1, std::memory_order_relaxed);
 	Probe_Start(3, "SFR-UPDATE");
 	DSP_InvalChannelAll();
 	DspPlayerCallback();
