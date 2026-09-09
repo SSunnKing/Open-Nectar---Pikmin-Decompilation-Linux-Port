@@ -29,6 +29,22 @@ int pc_jaudio_integration_test();
  */
 #include <SDL.h>
 
+#ifdef _WIN32
+// Laptops with switchable graphics start a process on the integrated GPU unless
+// the executable asks otherwise. Both vendors read that request the same way:
+// the driver DLL looks up an exported symbol in the process image at load time,
+// before any context exists, so this cannot be done from code that runs later.
+//
+// These have to live in the object that is linked straight into the executable
+// -- pc_main.cpp is, see PC_PORT_SOURCES -- because an export from a static
+// library reaches the .exe export table only if something already pulled the
+// object in. Nothing references either variable, so nothing would.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement                  = 1;
+__declspec(dllexport) int           AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 #include "pc_window.h"
 #include "settings/pc_settings.h"
 #include "settings/pc_settings_p2d.h"

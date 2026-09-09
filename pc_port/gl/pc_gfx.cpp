@@ -1532,10 +1532,19 @@ void pc_gfx_init(void) {
 
     const GLubyte* glVersion = glGetString(GL_VERSION);
     const GLubyte* glslVersion = glGetString(GL_SHADING_LANGUAGE_VERSION);
+    const GLubyte* glVendor = glGetString(GL_VENDOR);
+    const GLubyte* glRenderer = glGetString(GL_RENDERER);
     gl_error_checkpoint("context creation");
     printf("[PC Port] OpenGL context: %s; GLSL: %s\n",
            glVersion ? reinterpret_cast<const char*>(glVersion) : "unknown",
            glslVersion ? reinterpret_cast<const char*>(glslVersion) : "unknown");
+    // Which GPU actually got the context. On a switchable-graphics laptop this
+    // is the only way to tell the dedicated card from the integrated one
+    // without leaving the game, and the answer decides whether a report about
+    // frame rate is about the port or about the wrong adapter.
+    printf("[PC Port] GPU: %s -- %s\n",
+           glVendor ? reinterpret_cast<const char*>(glVendor) : "unknown",
+           glRenderer ? reinterpret_cast<const char*>(glRenderer) : "unknown");
     if (const char* value = std::getenv("PIKMIN_TEV_SPECIALIZE")) {
         sSpecialiseShaders = value[0] != '0';
     }
