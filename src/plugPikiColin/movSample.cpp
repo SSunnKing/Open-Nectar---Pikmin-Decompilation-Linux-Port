@@ -1,4 +1,5 @@
 #include <chrono>
+#include <thread>
 #include "Controller.h"
 #include "DebugLog.h"
 #include "Dolphin/gx.h"
@@ -150,6 +151,11 @@ static void* playbackFunc(void*)
 	while (!finishPlayback) {
 		Jac_StreamMovieUpdate();
 		++spins;
+		// Hand the core back. On the console this loop was paced by waiting for
+		// the DVD; here the reads are synchronous and it was measured spinning
+		// at some 75 million passes a second, which is a whole core spent
+		// asking "is there anything to do yet".
+		std::this_thread::yield();
 		const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 		if (std::chrono::duration_cast<std::chrono::seconds>(now - lastBeat).count() >= 2) {
 			lastBeat = now;

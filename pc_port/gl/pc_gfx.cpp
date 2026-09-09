@@ -3835,8 +3835,29 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
                             u8 packed = source[tileOffset + index];
 							a = (packed >> 4) * 17; r = g = b = (packed & 0x0f) * 17;
                         } else if (format == GX_TF_IA8) {
-							a = source[tileOffset + index * 2];
-							r = g = b = source[tileOffset + index * 2 + 1];
+                            // Which byte holds the intensity and which the
+                            // alpha. The port has always taken alpha first;
+                            // the hardware format documents intensity in the
+                            // high byte, which is the first one in this
+                            // big-endian data. The H4M player packs the movie's
+                            // two chroma planes into an IA8 texture and pulls
+                            // them back out with TEV swap tables, so getting
+                            // this the wrong way round swaps U and V and the
+                            // colours come out wrong -- which is what it does.
+                            //
+                            // Confirmed on screen: with intensity first the
+                            // movie's colours are right, and the rest of the
+                            // game -- logo, fonts, HUD, all of which use IA8 --
+                            // is unchanged. PIKMIN_IA8_ALPHA_FIRST=1 restores
+                            // the old order for comparison.
+                            static const bool alphaFirst = getenv("PIKMIN_IA8_ALPHA_FIRST") != nullptr;
+                            if (!alphaFirst) {
+                                r = g = b = source[tileOffset + index * 2];
+                                a = source[tileOffset + index * 2 + 1];
+                            } else {
+                                a = source[tileOffset + index * 2];
+                                r = g = b = source[tileOffset + index * 2 + 1];
+                            }
                         } else if (format == GX_TF_RGB565 || format == GX_TF_RGB5A3) {
                             u16 value = (source[tileOffset + index * 2] << 8) | source[tileOffset + index * 2 + 1];
                             if (format == GX_TF_RGB565) {
