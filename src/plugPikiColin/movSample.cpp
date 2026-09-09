@@ -135,6 +135,17 @@ void convHVQM4TexY8UV8(int stride, int height, u8* src, u8* dst)
 /**
  * @todo: Documentation
  */
+#if defined(PIKI_PC_PORT)
+// Per-frame movie logging, off unless PIKMIN_H4M_DEBUG=1. The traces earned
+// their place -- every fault in this player was found with them -- but a line
+// per frame does not belong in a normal run.
+static bool hvqmDebugLogging()
+{
+	static const bool enabled = getenv("PIKMIN_H4M_DEBUG") != nullptr;
+	return enabled;
+}
+#endif
+
 static void* playbackFunc(void*)
 {
 #if defined(PIKI_PC_PORT)
@@ -156,6 +167,7 @@ static void* playbackFunc(void*)
 		// at some 75 million passes a second, which is a whole core spent
 		// asking "is there anything to do yet".
 		std::this_thread::yield();
+		if (!hvqmDebugLogging()) continue;
 		const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 		if (std::chrono::duration_cast<std::chrono::seconds>(now - lastBeat).count() >= 2) {
 			lastBeat = now;
@@ -163,8 +175,10 @@ static void* playbackFunc(void*)
 			fflush(stdout);
 		}
 	}
-	printf("[PC Port] H4M: decode thread finished after %llu passes\n", spins);
-	fflush(stdout);
+	if (hvqmDebugLogging()) {
+		printf("[PC Port] H4M: decode thread finished after %llu passes\n", spins);
+		fflush(stdout);
+	}
 	return nullptr;
 #else
 	while (!finishPlayback) {
@@ -194,16 +208,12 @@ struct MovSampleSetupSection : public Node {
 			"../MovieData/cntD_S.h4m", "../MovieData/sr_S.h4m",   "../MovieData/srhp_S.h4m",
 		};
 #if defined(PIKI_PC_PORT)
-	// H4M playback is not finished. It reads the file and decodes headers
-	// correctly now, but something after that stalls the frame, and a game
-	// that freezes when you leave it sitting on the title screen is worse
-	// than one with no attract movies. Off unless PIKMIN_H4M=1 asks for it.
-	//
-	// With it off the section behaves exactly as it did before any of this
-	// existed: no pictures, so update() returns to the titles at once.
-	mH4mEnabled = getenv("PIKMIN_H4M") != nullptr;
+	// The attract movies play. PIKMIN_NO_H4M=1 turns them off again, which
+	// restores exactly the old behaviour: no pictures, so update() returns to
+	// the titles at once.
+	mH4mEnabled = getenv("PIKMIN_NO_H4M") == nullptr;
 	if (!mH4mEnabled) {
-		printf("[PC Port] H4M: playback disabled (set PIKMIN_H4M=1 to try it)\n");
+		printf("[PC Port] H4M: playback disabled by PIKMIN_NO_H4M\n");
 		fflush(stdout);
 		return;
 	}
@@ -212,7 +222,7 @@ struct MovSampleSetupSection : public Node {
 		int movieBufferSize = 0xe00000;
 		u8* movieBuffer     = new (PIKI_ALIGNED(0x20)) u8[movieBufferSize];
 		Jac_StreamMovieInit(movieNames[gameflow.mCurrIntroMovieID], movieBuffer, movieBufferSize);
-		printf("[PC Port] H4M: movie init returned\n"); fflush(stdout);
+		if (hvqmDebugLogging()) { printf("[PC Port] H4M: movie init returned\n"); fflush(stdout); }
 		ImgW                = 640;
 		ImgH                = 480;
 		int yuvBufferSize   = 0x70800;
@@ -224,12 +234,12 @@ struct MovSampleSetupSection : public Node {
 			memset(frameBuffer, 0x10, ImgW * ImgH);
 			memset(chromaBuffer, 0x80, (ImgW / 2) * (ImgH / 2) * 2);
 		}
-		printf("[PC Port] H4M: buffers ready, starting decode thread\n"); fflush(stdout);
+		if (hvqmDebugLogging()) { printf("[PC Port] H4M: buffers ready, starting decode thread\n"); fflush(stdout); }
 		OSCreateThread(&playbackThread, &playbackFunc, 0, playbackThreadStack + sizeof(playbackThreadStack), sizeof(playbackThreadStack),
 		               0x14, OS_THREAD_ATTR_DETACH);
 		finishPlayback = false;
 		OSResumeThread(&playbackThread);
-		printf("[PC Port] H4M: decode thread resumed, leaving setup\n"); fflush(stdout);
+		if (hvqmDebugLogging()) { printf("[PC Port] H4M: decode thread resumed, leaving setup\n"); fflush(stdout); }
 #endif
 	}
 
@@ -263,7 +273,7 @@ struct MovSampleSetupSection : public Node {
 				       pictureWidth, pictureHeight, pictureStatus);
 				fflush(stdout);
 			}
-			if (++frames % 60 == 0) {
+			if (hvqmDebugLogging() && (++frames % 60) == 0) {
 				printf("[PC Port] H4M: status=%d picture=%s %dx%d\n", pictureStatus,
 				       pictureData ? "yes" : "none", pictureWidth, pictureHeight);
 				fflush(stdout);

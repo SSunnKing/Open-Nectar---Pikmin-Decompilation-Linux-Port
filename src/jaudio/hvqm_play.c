@@ -10,6 +10,7 @@
 #include "jaudio/syncstream.h"
 #include <stddef.h>
 #include <string.h>
+#include <stdlib.h>
 
 #ifdef PIKI_PC_PORT
 // The port's synchronous loader, declared the same way virload.c declares it.
@@ -440,8 +441,11 @@ void Jac_HVQM_Init(immut char* movieFilePath, u8* data, u32 bufferSize)
 					break;
 				}
 			}
-			OSReport("[PC Port] H4M: init done, %d picture buffers, %d frames\n",
-			         PIC_BUFFERS, file_header.mTotalFrames);
+			if (getenv("PIKMIN_H4M_DEBUG") != NULL) {
+				OSReport("[PC Port] H4M: %d picture buffers, %u groups, %ux%u\n",
+				         PIC_BUFFERS, file_header.mTotalFrames,
+				         file_header.mInfo.width, file_header.mInfo.height);
+			}
 		}
 #else
 		while (start == Jac_GetCurrentSCounter()) { }
@@ -581,7 +585,8 @@ BOOL Jac_HVQM_Update(void)
 				// missing it: the derail happens further in each run, because
 				// how far the decoder gets before stalling depends on timing.
 				// This does not care how far in it is.
-				if (hvqmStallStreamFull == 0 || (hvqmStallStreamFull % 4000000) == 0) {
+				if (getenv("PIKMIN_H4M_DEBUG") != NULL
+				    && (hvqmStallStreamFull == 0 || (hvqmStallStreamFull % 4000000) == 0)) {
 					OSReport("[PC Port] H4M: stalled sending audio: size=%u type=%u flags=%#06x "
 					         "offset=%d free=%d\n",
 					         rec_header.mDataSize, rec_header.mRecordType, rec_header.mFrameFlags,
@@ -617,8 +622,10 @@ BOOL Jac_HVQM_Update(void)
 				if (StreamSyncCheckReady(0)) {
 					StreamSyncPlayAudio(1.0f, 0, 0x3fff, 0x3fff);
 #ifdef PIKI_PC_PORT
-					OSReport("[PC Port] H4M: audio started after %d records, %u bytes\n",
-					         hvqmAudioRecords, hvqmAudioBytes);
+					if (getenv("PIKMIN_H4M_DEBUG") != NULL) {
+						OSReport("[PC Port] H4M: audio started after %d records, %u bytes\n",
+						         hvqmAudioRecords, hvqmAudioBytes);
+					}
 #endif
 					playback_first_wait = 0;
 				} else {
@@ -770,8 +777,9 @@ int Jac_GetPicture(void* data, int* x, int* y)
 	// picture is shown. A picture that never changes means this number never
 	// changes, so print it next to the state that feeds it.
 	{
+		static const int debugOn = (getenv("PIKMIN_H4M_DEBUG") != NULL);
 		static int reportGate = 0;
-		if ((++reportGate % 120) == 0) {
+		if (debugOn && (++reportGate % 120) == 0) {
 			OSReport("[PC Port] H4M: audioFrame=%d picFrame=%u firstWait=%d gopFrame=%u "
 			         "audioRecords=%d audioBytes=%u stallPic=%u stallStream=%u\n",
 			         StreamGetCurrentFrame(0, 2), PIC_FRAME, playback_first_wait, gop_frame,

@@ -22,17 +22,15 @@ void Jac_Pause(void)
 void Jac_StreamMovieInit(immut char* filepath, u8* movieWorkBuffer, int movieWorkSize)
 {
 	if (Jac_GetCurrentScene() == SCENE_Title && !demo_fade_flag) {
+#if defined(PIKI_PC_PORT)
+		Jac_PcMovieMuteBgm(TRUE, 50);
+#else
 		Jac_EasyCrossFade(1, 50);
+#endif
 		demo_fade_flag = TRUE;
 	}
 	Jac_HVQM_Init(filepath, movieWorkBuffer, movieWorkSize);
-#if defined(PIKI_PC_PORT)
-	OSReport("[PC Port] H4M: decoder init returned, setting stream level\n");
-#endif
 	Jac_UpdateStreamLevel();
-#if defined(PIKI_PC_PORT)
-	OSReport("[PC Port] H4M: stream level set\n");
-#endif
 }
 
 /**
@@ -42,7 +40,11 @@ void Jac_StreamMovieStop(void)
 {
 	Jac_HVQM_ForceStop();
 	if (Jac_GetCurrentScene() == SCENE_Title && demo_fade_flag) {
+#if defined(PIKI_PC_PORT)
+		Jac_PcMovieMuteBgm(FALSE, 100);
+#else
 		Jac_EasyCrossFade(0, 100);
+#endif
 		demo_fade_flag = FALSE;
 	}
 }
@@ -65,7 +67,11 @@ int Jac_StreamMovieGetPicture(void* pictureBuffer, int* widthOut, int* heightOut
 	picture = Jac_GetPicture(pictureBuffer, widthOut, heightOut);
 	if (picture == -1) {
 		if (Jac_GetCurrentScene() == SCENE_Title && demo_fade_flag) {
+#if defined(PIKI_PC_PORT)
+			Jac_PcMovieMuteBgm(FALSE, 100);
+#else
 			Jac_EasyCrossFade(0, 100);
+#endif
 			demo_fade_flag = FALSE;
 		}
 	}

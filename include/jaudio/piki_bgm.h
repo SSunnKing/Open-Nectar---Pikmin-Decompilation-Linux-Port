@@ -46,6 +46,12 @@ void Jac_BgmFrameWork(void);
 void Jac_MoveBgmTrackVol(BgmControl_* bgmControl);
 void Jac_ChangeBgmTrackVol(BgmControl_* bgmControl);
 void Jac_GameVolume(u8 bgmLevel, u8 seLevel);
+#if defined(PIKI_PC_PORT)
+/// Silences the music while a movie plays, and restores it afterwards. See the
+/// definition for why the movie cannot use Jac_EasyCrossFade here.
+void Jac_PcMovieMuteBgm(BOOL silence, u32 fadeFrames);
+#endif
+
 void Jac_EasyCrossFade(u8 crossfadeMode, u32 fadeFrames);
 void Jac_DemoFade(u8 fadeType, u32 fadeFrames, f32 volumeScale);
 void Jac_EnterBossMode(void);

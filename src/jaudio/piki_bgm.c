@@ -537,6 +537,33 @@ void Jac_GameVolume(u8 bgmLevel, u8 seLevel)
 /**
  * @TODO: Documentation
  */
+#if defined(PIKI_PC_PORT)
+/**
+ * @brief Silences the music for a movie, and brings it back afterwards.
+ *
+ * The player asks for this with Jac_EasyCrossFade(1, 50) -- "enter boss mode".
+ * On the console that raised the boss layer and dropped the normal one to zero,
+ * and on a screen with no boss layer the net effect was silence, which is what
+ * the movie wants. This port guards that call: a stage with no boss layer must
+ * not be silenced when boss proximity asks for one, which is right for
+ * gameplay and wrong here -- the title music played straight over the movie.
+ *
+ * Two legitimate intentions collide in one function, so the movie gets its own
+ * entry point rather than a special case inside the other one.
+ */
+void Jac_PcMovieMuteBgm(BOOL silence, u32 fadeFrames)
+{
+	for (int layer = 0; layer < 2; layer++) {
+		// Only the layer that is playing comes back: raising a layer that was
+		// never started is what the guard above exists to prevent.
+		bgm[layer].gameVolume = (silence || !bgm[layer].isActive || layer != last_crossmode)
+		                            ? 0.0f
+		                            : game_bgm_volume;
+		bgm[layer].crossfade = fadeFrames;
+	}
+}
+#endif
+
 void Jac_EasyCrossFade(u8 crossfadeMode, u32 fadeFrames)
 {
 	u8* REF_type = &crossfadeMode;
