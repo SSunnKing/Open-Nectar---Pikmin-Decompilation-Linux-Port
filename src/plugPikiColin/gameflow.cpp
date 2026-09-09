@@ -637,7 +637,24 @@ void GameFlow::softReset()
 		// set up the application heap stack to the max size we can
 		int max      = heap->getMaxFree();
 		int type     = heap->setAllocType(AYU_STACK_GROW_UP);
+#if defined(PIKI_PC_PORT)
+		// On the console this came out of the Ovl arena, so the reset above
+		// reclaimed the previous one by moving a cursor. Here every allocation
+		// goes to the C heap and that reset frees nothing, so each section
+		// change abandoned the whole app stack -- and getMaxFree reports the
+		// simulated 256 MB arena, which made each one about 245 MB.
+		//
+		// Freeing it here is safe for the same reason the game re-initialises
+		// it here: the reset immediately above has already declared everything
+		// in the old app heap dead.
+		static u8* sPreviousAppStack = nullptr;
+		delete[] sPreviousAppStack;
+		sPreviousAppStack = nullptr;
+#endif
 		u8* appStack = new u8[heap->getMaxFree()];
+#if defined(PIKI_PC_PORT)
+		sPreviousAppStack = appStack;
+#endif
 		heap->setAllocType(type);
 		gsys->mHeaps[SYSHEAP_App].init("app", AYU_STACK_GROW_UP, appStack, max);
 		app->useHeap(SYSHEAP_App);

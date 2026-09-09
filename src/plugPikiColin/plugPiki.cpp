@@ -46,7 +46,19 @@ void PlugPikiApp::hardReset()
 
 	// allocate space for overlay heap from the system heap
 	int oldAlloc = sysHeap->setAllocType(AYU_STACK_GROW_UP);
+#if defined(PIKI_PC_PORT)
+	// Same shape as the app stack in GameFlow::softReset: on the console this
+	// came out of the sys arena and was reclaimed by a cursor, while here it is
+	// a C-heap block that nothing gives back. A hard reset would otherwise
+	// abandon the whole overlay heap, which is most of the simulated arena.
+	static u8* sPreviousOverlayHeap = nullptr;
+	delete[] sPreviousOverlayHeap;
+	sPreviousOverlayHeap = nullptr;
+#endif
 	u8* buf      = new u8[sysHeap->getMaxFree()];
+#if defined(PIKI_PC_PORT)
+	sPreviousOverlayHeap = buf;
+#endif
 	sysHeap->setAllocType(oldAlloc);
 
 	// set up overlay heap using all remaining free space from system heap

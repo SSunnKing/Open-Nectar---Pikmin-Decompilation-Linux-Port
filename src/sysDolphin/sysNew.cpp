@@ -55,6 +55,25 @@ static size_t sTotalAllocations = 0;
 static size_t sTotalFrees = 0;
 static size_t sUnknownFrees = 0;
 static bool sDumpRegistered = false;
+// Where the bytes are, by block size. 810 MB across twelve thousand blocks is
+// not a game object leak; it is a small number of very large ones, and the
+// totals alone cannot say which.
+static const size_t SIZE_CLASS_COUNT = 8;
+static size_t sClassBytes[SIZE_CLASS_COUNT] = {};
+static size_t sClassCount[SIZE_CLASS_COUNT] = {};
+static size_t sLargestBlock = 0;
+
+static size_t sizeClassOf(size_t bytes)
+{
+    if (bytes < 1024) return 0;
+    if (bytes < 16 * 1024) return 1;
+    if (bytes < 64 * 1024) return 2;
+    if (bytes < 256 * 1024) return 3;
+    if (bytes < 1024 * 1024) return 4;
+    if (bytes < 8 * 1024 * 1024) return 5;
+    if (bytes < 64 * 1024 * 1024) return 6;
+    return 7;
+}
 
 static size_t allocationBucket(const void* ptr)
 {
@@ -67,6 +86,15 @@ static size_t allocationBucket(const void* ptr)
 void piki_pc_dump_alloc_stats(void)
 {
 	std::lock_guard<std::mutex> lock(sAllocMutex);
+	static const char* kClassNames[SIZE_CLASS_COUNT] = {
+		"<1K", "1K-16K", "16K-64K", "64K-256K", "256K-1M", "1M-8M", "8M-64M", ">64M"
+	};
+	fprintf(stderr, "[PC Alloc] largest single block %zu bytes\n", sLargestBlock);
+	for (size_t i = 0; i < SIZE_CLASS_COUNT; ++i) {
+		if (sClassCount[i] == 0) continue;
+		fprintf(stderr, "[PC Alloc]   %-8s %zu live, %zu MB\n",
+		        kClassNames[i], sClassCount[i], sClassBytes[i] >> 20);
+	}
 	fprintf(stderr,
 	        "[PC Alloc] live=%zu bytes=%zu peak=%zu/%zu total=%zu frees=%zu unknown-frees=%zu\n",
 	        sLiveAllocations, sLiveBytes, sPeakAllocations, sPeakBytes,
@@ -107,6 +135,13 @@ void* piki_pc_alloc(size_t size)
 		sBootBuckets[bucket] = header;
 		sLiveAllocations++;
 		sLiveBytes += size;
+		{
+			const size_t cls = sizeClassOf(size);
+			sClassBytes[cls] += size;
+			sClassCount[cls]++;
+			if (size > sLargestBlock) sLargestBlock = size;
+
+		}
 		sTotalAllocations++;
 		if (sLiveAllocations > sPeakAllocations) sPeakAllocations = sLiveAllocations;
 		if (sLiveBytes > sPeakBytes) sPeakBytes = sLiveBytes;
@@ -134,6 +169,11 @@ void piki_pc_free(void* ptr)
 			header->mMagic = 0;
 			sLiveAllocations--;
 			sLiveBytes -= header->mSize;
+			{
+				const size_t cls = sizeClassOf(header->mSize);
+				sClassBytes[cls] -= header->mSize;
+				sClassCount[cls]--;
+			}
 			sTotalFrees++;
 			std::free(header);
 			return;
