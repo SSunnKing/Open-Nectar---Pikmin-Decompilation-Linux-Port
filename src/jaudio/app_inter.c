@@ -1,4 +1,5 @@
 #include "jaudio/app_inter.h"
+#include "Dolphin/os.h"
 
 #include "jaudio/hvqm_play.h"
 #include "jaudio/piki_bgm.h"
@@ -25,7 +26,13 @@ void Jac_StreamMovieInit(immut char* filepath, u8* movieWorkBuffer, int movieWor
 		demo_fade_flag = TRUE;
 	}
 	Jac_HVQM_Init(filepath, movieWorkBuffer, movieWorkSize);
+#if defined(PIKI_PC_PORT)
+	OSReport("[PC Port] H4M: decoder init returned, setting stream level\n");
+#endif
 	Jac_UpdateStreamLevel();
+#if defined(PIKI_PC_PORT)
+	OSReport("[PC Port] H4M: stream level set\n");
+#endif
 }
 
 /**

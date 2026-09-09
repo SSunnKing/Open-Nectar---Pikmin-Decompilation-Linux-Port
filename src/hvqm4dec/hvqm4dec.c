@@ -36,8 +36,39 @@ static u32 readTree_scale;
 #define CHROMA_IDX 1
 
 #define read8(buf, offset)  (*(u8*)((u8*)(buf) + (offset)))
-#define read16(buf, offset) (*(u16*)((u8*)(buf) + (offset)))
-#define read32(buf, offset) (*(u32*)((u8*)(buf) + (offset)))
+// Every multi-byte field the decoder reads out of the stream goes through
+// these, and every one of them is big-endian: this is GameCube data being read
+// straight from the file, with nothing in between to convert it.
+//
+// Unconverted, read32 returned offsets in the billions. They are added to a
+// pointer -- "body + read32(code, 0x10)" -- so the first frame of the first
+// movie segfaulted in HVQM4DecodeIpic.
+//
+// memcpy rather than a cast: these offsets are not guaranteed to be aligned,
+// and an unaligned load is undefined behaviour the compiler is free to assume
+// away. It costs nothing; the compiler turns it back into a single load.
+static inline u16 hvqmRead16(immut void* buf, u32 offset)
+{
+	u16 value;
+	memcpy(&value, (immut u8*)buf + offset, sizeof(value));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	value = __builtin_bswap16(value);
+#endif
+	return value;
+}
+
+static inline u32 hvqmRead32(immut void* buf, u32 offset)
+{
+	u32 value;
+	memcpy(&value, (immut u8*)buf + offset, sizeof(value));
+#if PIKI_STREAM_LITTLE_ENDIAN
+	value = __builtin_bswap32(value);
+#endif
+	return value;
+}
+
+#define read16(buf, offset) hvqmRead16((buf), (offset))
+#define read32(buf, offset) hvqmRead32((buf), (offset))
 
 static inline u8 saturate(int x)
 {

@@ -1,3 +1,4 @@
+#include <chrono>
 #include "Controller.h"
 #include "DebugLog.h"
 #include "Dolphin/gx.h"
@@ -135,10 +136,36 @@ void convHVQM4TexY8UV8(int stride, int height, u8* src, u8* dst)
  */
 static void* playbackFunc(void*)
 {
+#if defined(PIKI_PC_PORT)
+	// A heartbeat from this thread, and one from the main thread in update().
+	// The game stops drawing when playback starts, and "stopped" has two very
+	// different causes -- the decode thread wedged, or the main thread blocked
+	// behind it -- which look identical from outside.
+	// The loop runs as fast as the CPU allows -- on the console it was paced by
+	// waiting for the DVD, and here the reads are synchronous, so it spins.
+	// A pass count is therefore meaningless as a heartbeat and drowns the log;
+	// once every couple of seconds is enough to tell alive from wedged.
+	unsigned long long spins = 0;
+	std::chrono::steady_clock::time_point lastBeat = std::chrono::steady_clock::now();
+	while (!finishPlayback) {
+		Jac_StreamMovieUpdate();
+		++spins;
+		const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+		if (std::chrono::duration_cast<std::chrono::seconds>(now - lastBeat).count() >= 2) {
+			lastBeat = now;
+			printf("[PC Port] H4M: decode thread alive, %llu passes\n", spins);
+			fflush(stdout);
+		}
+	}
+	printf("[PC Port] H4M: decode thread finished after %llu passes\n", spins);
+	fflush(stdout);
+	return nullptr;
+#else
 	while (!finishPlayback) {
 		Jac_StreamMovieUpdate();
 	}
 	return nullptr;
+#endif
 }
 
 /**
@@ -179,6 +206,7 @@ struct MovSampleSetupSection : public Node {
 		int movieBufferSize = 0xe00000;
 		u8* movieBuffer     = new (PIKI_ALIGNED(0x20)) u8[movieBufferSize];
 		Jac_StreamMovieInit(movieNames[gameflow.mCurrIntroMovieID], movieBuffer, movieBufferSize);
+		printf("[PC Port] H4M: movie init returned\n"); fflush(stdout);
 		ImgW                = 640;
 		ImgH                = 480;
 		int yuvBufferSize   = 0x70800;
@@ -190,10 +218,12 @@ struct MovSampleSetupSection : public Node {
 			memset(frameBuffer, 0x10, ImgW * ImgH);
 			memset(chromaBuffer, 0x80, (ImgW / 2) * (ImgH / 2) * 2);
 		}
+		printf("[PC Port] H4M: buffers ready, starting decode thread\n"); fflush(stdout);
 		OSCreateThread(&playbackThread, &playbackFunc, 0, playbackThreadStack + sizeof(playbackThreadStack), sizeof(playbackThreadStack),
 		               0x14, OS_THREAD_ATTR_DETACH);
 		finishPlayback = false;
 		OSResumeThread(&playbackThread);
+		printf("[PC Port] H4M: decode thread resumed, leaving setup\n"); fflush(stdout);
 #endif
 	}
 

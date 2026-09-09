@@ -56,6 +56,20 @@ static inline u32 hvqmBE32(u32 value)
 }
 #endif
 
+#ifdef PIKI_PC_PORT
+// "No picture this time", written so that it clears the whole pointer.
+//
+// The original is "*(int*)data = 0", which on a 32-bit console cleared all of
+// it. Here it clears the low half and leaves the high half of whatever
+// Jac_GetPicture stored there a few lines earlier, producing an address like
+// 0x7fff00000000: not null, so the caller's "if (pictureData)" passes, and the
+// first read segfaults. That is what killed the game on the first frame of the
+// first movie.
+#define HVQM_CLEAR_PICTURE(ptr) (*(void**)(ptr) = NULL)
+#else
+#define HVQM_CLEAR_PICTURE(ptr) (*(int*)(ptr) = 0)
+#endif
+
 static volatile BOOL dvd_loadfinish;
 static u32 dvdcount;
 static int arcoffset;
@@ -655,14 +669,14 @@ int Jac_GetPicture(void* data, int* x, int* y)
 	*y         = file_header.mInfo.height;
 
 	if (playback_first_wait) {
-		*(int*)data = 0;
+		HVQM_CLEAR_PICTURE(data);
 		return 1;
 	}
 
 	int frame = StreamGetCurrentFrame(0, 2);
 	if (frame == -1) {
 		hvqm_forcestop();
-		*(int*)data = 0;
+		HVQM_CLEAR_PICTURE(data);
 		return -1;
 	}
 
@@ -697,7 +711,7 @@ int Jac_GetPicture(void* data, int* x, int* y)
 				pic_ctrl[index].mBufferState = 0;
 			}
 			if (frame < 3) {
-				*(int*)data = 0;
+				HVQM_CLEAR_PICTURE(data);
 			}
 			return frame + 1;
 		}
@@ -708,7 +722,7 @@ int Jac_GetPicture(void* data, int* x, int* y)
 	if (index != -1) {
 		*(void**)data = pic_ctrl[index].mPicBuffer;
 		if (frame < 3) {
-			*(int*)data = 0;
+			HVQM_CLEAR_PICTURE(data);
 		}
 		return offset + 1;
 	}
@@ -716,7 +730,7 @@ int Jac_GetPicture(void* data, int* x, int* y)
 	if (gop_frame == file_header.mTotalFrames) {
 		StreamSyncStopAudio(0);
 	}
-	*(int*)data = 0;
+	HVQM_CLEAR_PICTURE(data);
 	return 0;
 }
 
