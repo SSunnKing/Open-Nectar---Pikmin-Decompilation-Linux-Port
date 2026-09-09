@@ -1963,13 +1963,17 @@ void pc_settings_draw(void) {
     snprintf(valueBuf[5], sizeof(valueBuf[5]), "%s", sPending.vsync ? "On" : "Off");
     snprintf(valueBuf[6], sizeof(valueBuf[6]), "%s", fpsModeBuf);
 
-    // Only the first seven rows have computed setting values; the remaining
-    // four open submenus. This table must stay the same length as the run of
-    // non-action rows in `Row` -- indexing past it would print adjacent memory.
-    const char* rowValues[ROW_RESET] = {
-        valueBuf[0], valueBuf[1], valueBuf[2], valueBuf[3], valueBuf[4],
-        valueBuf[5], valueBuf[6], "Open >", "Open >", "Open >", "Open >",
+    // The rows before ROW_CONTROLS carry a computed value; from there to
+    // ROW_RESET they open a submenu and all read "Open >".
+    //
+    // This used to be a table with one entry per row, and it had one "Open >"
+    // too few: a submenu row was added without extending it, so the last one --
+    // Mods -- read a value-initialised null and drew "(null)" beside itself.
+    // Derived from the row index instead, it cannot fall out of step again.
+    auto rowValue = [&](int row) -> const char* {
+        return (row < ROW_CONTROLS) ? valueBuf[row] : "Open >";
     };
+    static_assert(ROW_CONTROLS == 7, "valueBuf covers exactly the rows before ROW_CONTROLS");
 
     const int rowH = pc_settings_p2d_active() ? 20 : 18;
     const int labelRight = px1 + panelW / 2 - 12;
@@ -1997,7 +2001,7 @@ void pc_settings_draw(void) {
             Colour shadow = selected ? Colour(62, 25, 0, 255) : Colour(0, 10, 18, 255);
             drawTextOutline(labelRight - menuTextWidth(labels[i]), y, "%s",
                             main, shadow, labels[i]);
-            drawTextOutline(valueLeft, y, "%s", main, shadow, rowValues[i]);
+            drawTextOutline(valueLeft, y, "%s", main, shadow, rowValue(i));
             if (selected) {
                 drawTextOutline(px1 + 29, y, ">", Colour(255, 232, 130, 255),
                                 Colour(45, 18, 0, 255));
