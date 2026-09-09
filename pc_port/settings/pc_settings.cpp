@@ -97,6 +97,7 @@ struct PcConfig {
     int fog = 1;            // the game's own fog, on by default
     int bloom = 0;          // 0 off, 1 subtle, 2 normal, 3 strong
     int ssao = 0;           // 0 off, 1 subtle, 2 normal, 3 strong
+    int anisotropy = 0;     // 0 off, else 2/4/8/16 samples
     int colourGrading = 0;
     float gamma       = 1.0f;
     float brightness  = 0.0f;
@@ -128,6 +129,7 @@ struct PcConfig {
         fog           = 1;
         bloom         = 0;
         ssao          = 0;
+        anisotropy    = 0;
         colourGrading = 0;
         gamma         = 1.0f;
         brightness    = 0.0f;
@@ -241,7 +243,7 @@ constexpr int kAdvancedRowCount = 4;
 // reference machine is a GTX 1050 -- so nothing here may be mandatory.
 bool sInGraphicsSubmenu = false;
 int sGraphicsSelection = 0;
-constexpr int kGraphicsRowCount = 8;
+constexpr int kGraphicsRowCount = 9;
 
 // Colour grading stops. Neutral is in every list, and the pass is skipped
 // entirely when all three sit there.
@@ -415,6 +417,7 @@ void applyVideo() {
 void applyGraphics(const PcConfig& config) {
     PcPostEffects fx;
     pc_gfx_set_fog_allowed(config.fog);
+    pc_gfx_set_anisotropy(config.anisotropy);
     fx.fxaa          = config.antialiasing != 0;
     // Presets rather than sliders: bloom looks wrong across most of the range
     // a slider would offer, and three named steps are easier to choose between
@@ -534,6 +537,7 @@ void saveConfig() {
     out << "fog = " << sConfig.fog << "\n";
     out << "bloom = " << sConfig.bloom << "\n";
     out << "ssao = " << sConfig.ssao << "\n";
+    out << "anisotropy = " << sConfig.anisotropy << "\n";
     out << "colourGrading = " << sConfig.colourGrading << "\n";
     out << "gamma = " << sConfig.gamma << "\n";
     out << "brightness = " << sConfig.brightness << "\n";
@@ -630,6 +634,10 @@ void loadConfig() {
         else if (key == "pikiLimit") {
             sConfig.pikiLimit = atoi(val.c_str());
             if (sConfig.pikiLimit < 50 || sConfig.pikiLimit > 999) sConfig.pikiLimit = 100;
+        }
+        else if (key == "anisotropy") {
+            const int v = atoi(val.c_str());
+            sConfig.anisotropy = (v == 2 || v == 4 || v == 8 || v == 16) ? v : 0;
         }
         else if (key == "ssao") {
             sConfig.ssao = atoi(val.c_str());
@@ -1105,12 +1113,24 @@ void pollMenuInput() {
             if (left) sPending.ssao = (sPending.ssao + 3) % 4;
             else if (right) sPending.ssao = (sPending.ssao + 1) % 4;
         } else if (sGraphicsSelection == 4) {
-            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
+            // 0, 2, 4, 8, 16. Anything the driver will not give is clamped
+            // where it is applied rather than hidden from the menu, so the
+            // setting reads the same on every machine.
+            static const int kAniso[5] = { 0, 2, 4, 8, 16 };
+            int idx = 0;
+            for (int i = 0; i < 5; i++) {
+                if (kAniso[i] == sPending.anisotropy) { idx = i; break; }
+            }
+            if (left) idx = (idx + 4) % 5;
+            else if (right) idx = (idx + 1) % 5;
+            sPending.anisotropy = kAniso[idx];
         } else if (sGraphicsSelection == 5) {
-            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
+            if (left || right) sPending.colourGrading = sPending.colourGrading ? 0 : 1;
         } else if (sGraphicsSelection == 6) {
-            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+            if (left || right) sPending.gamma = step(sPending.gamma, kGammaStops, kGammaStopCount, left);
         } else if (sGraphicsSelection == 7) {
+            if (left || right) sPending.brightness = step(sPending.brightness, kBrightnessStops, kBrightnessStopCount, left);
+        } else if (sGraphicsSelection == 8) {
             if (left || right) sPending.saturation = step(sPending.saturation, kSaturationStops, kSaturationStopCount, left);
         }
         // Applied as you move, so the effect can be judged against the scene
@@ -2153,6 +2173,7 @@ void pc_settings_draw(void) {
             "Fog",
             "Bloom",
             "Ambient Occlusion",
+            "Texture Filtering",
             "Colour Grading",
             "Gamma",
             "Brightness",
@@ -2183,14 +2204,17 @@ void pc_settings_draw(void) {
                 const int a = (sPending.ssao >= 0 && sPending.ssao <= 3) ? sPending.ssao : 0;
                 snprintf(value, sizeof(value), "%s", aoNames[a]);
             } else if (i == 4) {
+                if (sPending.anisotropy <= 1) snprintf(value, sizeof(value), "Trilinear");
+                else snprintf(value, sizeof(value), "Anisotropic %dx", sPending.anisotropy);
+            } else if (i == 5) {
                 snprintf(value, sizeof(value), "%s", gradingOn ? "On" : "Off");
             } else if (!gradingOn) {
                 // The three sliders do nothing while grading is off. Saying so
                 // beats letting someone move them and conclude it is broken.
                 snprintf(value, sizeof(value), "--");
-            } else if (i == 5) {
-                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
             } else if (i == 6) {
+                snprintf(value, sizeof(value), sPending.gamma == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.gamma);
+            } else if (i == 7) {
                 snprintf(value, sizeof(value), sPending.brightness == 0.0f ? "%+.2f  (neutral)" : "%+.2f", sPending.brightness);
             } else {
                 snprintf(value, sizeof(value), sPending.saturation == 1.0f ? "%.2f  (neutral)" : "%.2f", sPending.saturation);

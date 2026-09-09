@@ -137,6 +137,11 @@ void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float fa
 /// whether the request is honoured, so a toggle lands on the next frame.
 void pc_gfx_set_fog_allowed(int allowed);
 
+/// Anisotropic filtering sample count: 0 or 1 off, otherwise 2, 4, 8, 16.
+/// Clamped to what the driver reports, and only applied to textures that carry
+/// mip levels -- without a chain to choose among there is nothing for it to do.
+void pc_gfx_set_anisotropy(int samples);
+
 /// Sets the post-process effect set. With nothing enabled the pass is skipped
 /// entirely and the scene blits straight to the window.
 struct PcPostEffects;

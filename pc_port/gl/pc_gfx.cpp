@@ -56,6 +56,21 @@ typedef void (APIENTRYP PCGLGETQUERYOBJECTUI64VPROC) (GLuint id, GLenum pname, G
 // declared by the system header, which is why they were called directly.
 static PFNGLACTIVETEXTUREPROC glActiveTexture_ptr = nullptr;
 static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays_ptr = nullptr;
+static PFNGLGENERATEMIPMAPPROC glGenerateMipmap_ptr = nullptr;
+
+// Not in the port's glext.h: anisotropic filtering is an extension everywhere
+// except in core GL 4.6, and the port targets 3.3.
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
+static int sAnisotropyRequested = 0;
+static float sAnisotropyMax = 1.0f;
+static bool sAnisotropySupported = false;
+static bool sFilteringReported = false;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray_ptr = nullptr;
 static PFNGLBLENDEQUATIONPROC glBlendEquation_ptr = nullptr;
 static PFNGLGENBUFFERSPROC glGenBuffers_ptr = nullptr;
@@ -111,6 +126,18 @@ static PCGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v_ptr = nullptr;
 static void load_gl_functions() {
     glActiveTexture_ptr = (PFNGLACTIVETEXTUREPROC)SDL_GL_GetProcAddress("glActiveTexture");
     glGenVertexArrays_ptr = (PFNGLGENVERTEXARRAYSPROC)SDL_GL_GetProcAddress("glGenVertexArrays");
+    glGenerateMipmap_ptr = (PFNGLGENERATEMIPMAPPROC)SDL_GL_GetProcAddress("glGenerateMipmap");
+    // Asked once. The maximum is a driver property, and requesting more than it
+    // offers is an error rather than a request that gets clamped for us.
+    if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic")
+        || SDL_GL_ExtensionSupported("GL_ARB_texture_filter_anisotropic")) {
+        GLfloat maxAniso = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAniso);
+        if (maxAniso > 1.0f) {
+            sAnisotropySupported = true;
+            sAnisotropyMax = maxAniso;
+        }
+    }
     glBindVertexArray_ptr = (PFNGLBINDVERTEXARRAYPROC)SDL_GL_GetProcAddress("glBindVertexArray");
     glBlendEquation_ptr = (PFNGLBLENDEQUATIONPROC)SDL_GL_GetProcAddress("glBlendEquation");
     glGenBuffers_ptr = (PFNGLGENBUFFERSPROC)SDL_GL_GetProcAddress("glGenBuffers");
@@ -3002,8 +3029,100 @@ void pc_gfx_set_tev_swap_mode_table(GXTevSwapSel table, GXTevColorChan red, GXTe
 }
 
 // ── Texture Decoding & Binding ──
+// Texture filtering.
+//
+// Every texture was uploaded with a single level and GL_LINEAR, and the mipmap
+// flag the game passes -- it sets it whenever a texture carries LOD levels of
+// its own -- was discarded. Without a mip chain a receding surface samples one
+// texel per pixel from a texture far denser than the screen, which is not
+// blurring but aliasing: the ground sparkles as the camera moves.
+//
+// Anisotropic filtering is meaningless on its own here for the same reason. It
+// chooses among mip levels along the direction of anisotropy, and there were
+// none to choose from.
+static void apply_texture_filtering(bool gameRequestedMipmaps);
+
+// Every texture already uploaded keeps the filter state it was given, so
+// changing this from the menu did nothing to the scene in front of you -- the
+// stage's textures were uploaded long before. Re-applying to the whole cache is
+// what makes the setting answer immediately, which is also the only way anyone
+// can judge it: nobody restarts the game twice to compare a filter.
+void pc_gfx_set_anisotropy(int samples)
+{
+    if (samples == sAnisotropyRequested) return;
+    sAnisotropyRequested = samples;
+    if (!glActiveTexture_ptr) return;
+
+    pc_gfx_flush_batch();  // about to rebind texture unit 0 under the batch
+    glActiveTexture_ptr(GL_TEXTURE0);
+    int touched = 0;
+    for (const auto& entry : sTextureCache) {
+        glBindTexture(GL_TEXTURE_2D, entry.second);
+        // Level zero is still there, so the chain can be rebuilt in place
+        // without re-decoding anything.
+        apply_texture_filtering(false);
+        touched++;
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+    printf("[PC Port] Texture filtering changed to %dx, %d textures updated\n",
+           sAnisotropyRequested, touched);
+    fflush(stdout);
+}
+
+// Applies the filter state to whatever is bound. Mipmapping is honoured per
+// texture rather than forced: a texture with no LOD levels of its own is one
+// the game means to sample flat, and the HUD is full of them.
+static void apply_texture_filtering(bool gameRequestedMipmaps)
+{
+    // The game asks for mipmaps only where a material carries LOD levels of its
+    // own, which turns out to be almost nowhere -- so honouring the flag alone
+    // produced a setting with nothing to act on.
+    //
+    // Turning the setting up therefore builds the chain regardless. That is
+    // what a player means by raising texture filtering, and it is safe for the
+    // interface: a mip chain only changes a surface under minification, and the
+    // HUD is drawn at its own size, where level zero is chosen anyway.
+    const bool wantsMipmaps = gameRequestedMipmaps || sAnisotropyRequested > 1;
+
+    if (wantsMipmaps && glGenerateMipmap_ptr) {
+        glGenerateMipmap_ptr(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        // Once, the first time a texture actually carries LOD levels. Without
+        // this line in the log the setting has nothing to act on, and that is
+        // not visible any other way.
+        static bool toldMipmapped = false;
+        if (!toldMipmapped) {
+            toldMipmapped = true;
+            printf("[PC Port] First mipmapped texture built\n");
+            fflush(stdout);
+        }
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    if (sAnisotropySupported) {
+        // Asking for more than the driver offers is an error, not a request.
+        float level = float(sAnisotropyRequested);
+        if (level < 1.0f) level = 1.0f;
+        if (level > sAnisotropyMax) level = sAnisotropyMax;
+        // Only where there is a mip chain to choose among. Elsewhere it costs
+        // samples and changes nothing.
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                        wantsMipmaps ? level : 1.0f);
+    }
+
+    if (!sFilteringReported) {
+        sFilteringReported = true;
+        printf("[PC Port] Texture filtering: anisotropy %s (max %.0fx), mipmaps %s\n",
+               sAnisotropySupported ? "available" : "unavailable", sAnisotropyMax,
+               glGenerateMipmap_ptr ? "available" : "unavailable");
+        fflush(stdout);
+    }
+}
+
 void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrapS, GXTexWrapMode wrapT, GXBool mipmap) {
-    (void)mipmap;
     if (!obj || !imagePtr || width == 0 || height == 0) return;
 
     uintptr_t key = (uintptr_t)obj;
@@ -3030,8 +3149,6 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
     glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texId);
     sBoundTextures[0] = texId;
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 
@@ -3164,6 +3281,9 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
     }
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    // After the upload: the mip chain is built from the data, so it cannot be
+    // asked for before there is any.
+    apply_texture_filtering(mipmap != GX_FALSE);
     ++sPerfTextureUploads;
     sTextureSignatures[key] = signature;
 }
@@ -3255,11 +3375,12 @@ static bool upload_ci_texture(GXTexObj* obj, const PcCiTexture& ci) {
     glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texId);
     sBoundTextures[0] = texId;
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, ci.wrapS == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, ci.wrapT == GX_REPEAT ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ci.width, ci.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    // Palettised textures carry no LOD levels through this path, so they are
+    // filtered flat -- but they still take the wrap and magnification state.
+    apply_texture_filtering(false);
     ++sPerfTextureUploads;
     return true;
 }
