@@ -530,6 +530,17 @@ static int sAspectRatioMode = ASPECT_AUTO;
 static float sCurrentAspectRatio = 4.0f / 3.0f; // Current active aspect ratio
 static GLuint sBoundTextures[8] = {};
 static uint64_t sPerfDraws = 0;
+
+// Instrumentation for the projection sequence. Enabled with PIKMIN_PROJ_DEBUG=1.
+// The most recent perspective's terms, held until the world is known to have
+// finished so the right ones can be committed. See pc_gfx_set_projection.
+static float sPendingInvP00 = 1.0f, sPendingInvP11 = 1.0f;
+static float sPendingNear = 1.0f, sPendingFar = 15000.0f;
+static bool sPendingValid = false;
+static uint64_t sDrawsAtFrameStart = 0;
+static bool sProjDebug = false;
+static int sProjSeenThisFrame = 0;
+static uint64_t sDrawsAtProjection = 0;
 static uint64_t sPerfVertices = 0;
 static uint64_t sPerfDisplayLists = 0;
 static uint64_t sPerfDisplayListBytes = 0;
@@ -1804,6 +1815,25 @@ static void perf_gpu_scene_begin() {
 }
 
 void pc_gfx_begin_frame(void) {
+    // One frame's worth of projection changes every second. Printing every
+    // frame drowns the log and changes the timing of what it is measuring.
+    {
+        static bool checked = false;
+        static bool wanted = false;
+        static int gate = 0;
+        if (!checked) {
+            checked = true;
+            wanted = std::getenv("PIKMIN_PROJ_DEBUG") != nullptr;
+        }
+        sProjDebug = wanted && (++gate % 60 == 0);
+        if (sProjDebug) {
+            printf("[PC Port] ---- frame ----\n");
+        }
+        sProjSeenThisFrame = 0;
+        sDrawsAtProjection = sPerfDraws;
+    }
+    sPendingValid = false;
+    sDrawsAtFrameStart = sPerfDraws;
     using Clock = std::chrono::steady_clock;
     static const bool perfStats = std::getenv("PIKMIN_PERF_STATS") != nullptr;
     sPerfStatsEnabled = perfStats;
@@ -2007,6 +2037,25 @@ static GLuint sSsaoProgram = 0;
 static GLuint sAoBlurProgram = 0;
 static int sAoWidth = 0, sAoHeight = 0;
 
+// Depth of field: same shape again -- half resolution, ping-pong, separable
+// blur -- but the pair carries alpha, because coverage travels with the colour.
+static GLuint sDofFbo[2] = { 0, 0 };
+static GLuint sDofTex[2] = { 0, 0 };
+static GLuint sDofCocProgram = 0;
+static GLuint sDofBlurProgram = 0;
+static int sDofWidth = 0, sDofHeight = 0;
+
+// Where the lens is focused, in view units, pushed in by the game once a frame.
+//
+// Not part of PcPostEffects on purpose: that struct is compared field by field
+// to decide whether the post-process program needs rebuilding, and a value that
+// changes every frame would recompile the shader every frame.
+//
+// Zero means "nothing to focus on" -- the title screen, a cutscene, any moment
+// with no captain in the world -- and the pass is skipped entirely rather than
+// guessing a distance.
+static float sDofFocusDistance = 0.0f;
+
 // The perspective projection's terms, kept for the post-process pass.
 //
 // Captured here rather than read back at the end of the frame, because by then
@@ -2016,6 +2065,74 @@ static float sViewInvP00 = 1.0f, sViewInvP11 = 1.0f;
 static float sViewNear = 1.0f, sViewFar = 15000.0f;
 
 void pc_gfx_set_post_effects(const PcPostEffects& fx) { sPostEffects = fx; }
+
+void pc_gfx_set_dof_focus(float viewDistance)
+{
+    sDofFocusDistance = (viewDistance > 0.0f) ? viewDistance : 0.0f;
+}
+
+// Everything the depth-of-field pass decides from, once a second, with
+// PIKMIN_DOF_DEBUG=1. The whole screen coming out blurred says the coverage is
+// saturated, but not which of the three inputs is wrong: the focus the game
+// pushes, the projection terms, or the depth read back from the buffer. This
+// prints all three next to each other so the answer is read rather than
+// guessed at.
+static void dof_debug_report()
+{
+    static bool checked = false;
+    static bool enabled = false;
+    if (!checked) {
+        checked = true;
+        enabled = getenv("PIKMIN_DOF_DEBUG") != nullptr;
+    }
+    if (!enabled) return;
+
+    static int frames = 0;
+    if (++frames < 60) return;
+    frames = 0;
+
+    // Depth down a vertical line through the screen, raw and linearised.
+    //
+    // "Sharp at the top, blurred around the captain" is the blur running
+    // backwards, and there are only two ways to get that: the depth buffer
+    // read backwards, or a focus distance that does not match what the middle
+    // of the screen actually is. Three points and their raw values separate
+    // them -- distance has to grow from the bottom of the screen towards the
+    // horizon, and the raw values have to stay inside the half range the
+    // GameCube projection writes.
+    struct Probe { const char* name; int x, y; float raw, view; };
+    Probe probes[3] = {
+        { "bottom", sRenderWidth / 2, sRenderHeight / 6,     0.0f, -1.0f },
+        { "centre", sRenderWidth / 2, sRenderHeight / 2,     0.0f, -1.0f },
+        { "top",    sRenderWidth / 2, sRenderHeight * 5 / 6, 0.0f, -1.0f },
+    };
+    float centreDepth = -1.0f;
+    if (sDepthIsTexture && sNativeFramebuffer) {
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+        for (Probe& probe : probes) {
+            glReadPixels(probe.x, probe.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &probe.raw);
+            const float ndc = probe.raw * 2.0f - 1.0f;
+            const float denom = sViewNear - ndc * (sViewFar - sViewNear);
+            probe.view = (std::fabs(denom) < 1e-6f) ? sViewFar
+                                                    : (sViewNear * sViewFar) / denom;
+        }
+        centreDepth = probes[1].view;
+        printf("[PC Port] DOF probe: bottom raw=%.5f d=%.1f | centre raw=%.5f d=%.1f | top raw=%.5f d=%.1f\n",
+               probes[0].raw, probes[0].view, probes[1].raw, probes[1].view,
+               probes[2].raw, probes[2].view);
+    }
+
+    const float sharp = sDofFocusDistance * sPostEffects.dofSharpFraction;
+    const float falloff = sDofFocusDistance * sPostEffects.dofFalloffFraction;
+    const float coc = (falloff > 0.0f && centreDepth >= 0.0f)
+                          ? std::min(1.0f, std::max(0.0f,
+                                (std::fabs(centreDepth - sDofFocusDistance) - sharp) / falloff))
+                          : -1.0f;
+    printf("[PC Port] DOF: focus=%.1f centreDepth=%.1f centreCoC=%.2f "
+           "near=%.1f far=%.1f sharp=%.1f falloff=%.1f\n",
+           sDofFocusDistance, centreDepth, coc, sViewNear, sViewFar, sharp, falloff);
+    fflush(stdout);
+}
 
 static GLuint post_compile(GLenum type, const char* src, const char* what)
 {
@@ -2181,9 +2298,51 @@ static bool post_ensure_program()
     // Once per change of settings, not per frame. Says which effects the pass
     // is actually running, which is otherwise only visible by looking hard at
     // the picture.
-    printf("[PC Port] Post-process pass:%s%s%s%s\n",
+    if (pc_post_dof_active(sPostEffects) && !sDofCocProgram) {
+        const std::string src = pc_post_build_dof_coc_shader();
+        GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "dof coverage vertex shader");
+        GLuint fs = vs ? post_compile(GL_FRAGMENT_SHADER, src.c_str(), "dof coverage") : 0;
+        if (vs && fs) {
+            sDofCocProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sDofCocProgram, vs);
+            glAttachShader_ptr(sDofCocProgram, fs);
+            glLinkProgram_ptr(sDofCocProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) glGetProgramiv_ptr(sDofCocProgram, GL_LINK_STATUS, &ok);
+            if (ok != GL_TRUE) {
+                printf("[PC Port] dof coverage program failed to link; depth of field is off\n");
+                glDeleteProgram_ptr(sDofCocProgram);
+                sDofCocProgram = 0;
+            }
+        }
+        if (vs) glDeleteShader_ptr(vs);
+        if (fs) glDeleteShader_ptr(fs);
+    }
+    if (pc_post_dof_active(sPostEffects) && !sDofBlurProgram) {
+        const std::string src = pc_post_build_dof_blur_shader();
+        GLuint vs = post_compile(GL_VERTEX_SHADER, pc_post_vertex_shader(), "dof blur vertex shader");
+        GLuint fs = vs ? post_compile(GL_FRAGMENT_SHADER, src.c_str(), "dof blur") : 0;
+        if (vs && fs) {
+            sDofBlurProgram = glCreateProgram_ptr();
+            glAttachShader_ptr(sDofBlurProgram, vs);
+            glAttachShader_ptr(sDofBlurProgram, fs);
+            glLinkProgram_ptr(sDofBlurProgram);
+            GLint ok = 0;
+            if (glGetProgramiv_ptr) glGetProgramiv_ptr(sDofBlurProgram, GL_LINK_STATUS, &ok);
+            if (ok != GL_TRUE) {
+                printf("[PC Port] dof blur failed to link; depth of field is off\n");
+                glDeleteProgram_ptr(sDofBlurProgram);
+                sDofBlurProgram = 0;
+            }
+        }
+        if (vs) glDeleteShader_ptr(vs);
+        if (fs) glDeleteShader_ptr(fs);
+    }
+
+    printf("[PC Port] Post-process pass:%s%s%s%s%s\n",
            sPostEffects.fxaa ? " FXAA" : "",
            pc_post_ssao_active(sPostEffects) ? " SSAO" : "",
+           pc_post_dof_active(sPostEffects) ? " depth-of-field" : "",
            pc_post_bloom_active(sPostEffects) ? " bloom" : "",
            sPostEffects.colourGrading ? " colour-grading" : "");
     fflush(stdout);
@@ -2253,6 +2412,99 @@ static bool bloom_ensure_targets()
     sBoundTextures[0] = 0;
     sBloomWidth = w;
     sBloomHeight = h;
+    return true;
+}
+
+// Half-resolution ping-pong pair for depth of field. RGBA8 like the bloom pair,
+// but the alpha channel is load-bearing here: it carries the circle of
+// confusion through the blur.
+static bool dof_ensure_targets()
+{
+    const int w = std::max(1, sRenderWidth / 2);
+    const int h = std::max(1, sRenderHeight / 2);
+    if (!sDofFbo[0]) {
+        glGenFramebuffers_ptr(2, sDofFbo);
+        glGenTextures(2, sDofTex);
+        sDofWidth = sDofHeight = 0;
+    }
+    if (sDofWidth == w && sDofHeight == h) return true;
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, sDofTex[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sDofFbo[i]);
+        glFramebufferTexture2D_ptr(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sDofTex[i], 0);
+        if (glCheckFramebufferStatus_ptr(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            sBoundTextures[0] = 0;
+            return false;
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+    sDofWidth = w;
+    sDofHeight = h;
+    return true;
+}
+
+// Coverage pass, then the separable blur, however many times the setting asks
+// for. Leaves the result in sDofTex[0].
+static bool dof_build()
+{
+    if (!sDofCocProgram || !sDofBlurProgram) return false;
+    if (!dof_ensure_targets()) return false;
+
+    glViewport(0, 0, sDofWidth, sDofHeight);
+    glBindVertexArray_ptr(sPostVAO);
+
+    // Scene and depth -> [0], premultiplied by coverage.
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sDofFbo[0]);
+    glUseProgram_ptr(sDofCocProgram);
+    if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
+    if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sDofCocProgram, "uScene"), 0);
+    if (glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
+        if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sDofCocProgram, "uDepth"), 1);
+        glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (glUniform4f_ptr) {
+        glUniform4f_ptr(glGetUniformLocation_ptr(sDofCocProgram, "uProjInfo"),
+                        sViewInvP00, sViewInvP11, sViewNear, sViewFar);
+        glUniform4f_ptr(glGetUniformLocation_ptr(sDofCocProgram, "uDofFocus"),
+                        sDofFocusDistance, sPostEffects.dofSharpFraction,
+                        sPostEffects.dofFalloffFraction, sPostEffects.dofStrength);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Blur across and down, once per iteration. Running the same five-tap
+    // kernel again is what widens the blur: stretching its offsets instead
+    // would sample past its own weights and band.
+    glUseProgram_ptr(sDofBlurProgram);
+    const GLint blurSource = glGetUniformLocation_ptr(sDofBlurProgram, "uSource");
+    const GLint blurStep = glGetUniformLocation_ptr(sDofBlurProgram, "uBlurStep");
+    const int iterations = std::max(1, std::min(sPostEffects.dofIterations, 4));
+    for (int pass = 0; pass < iterations; pass++) {
+        for (int axis = 0; axis < 2; axis++) {
+            const int from = axis == 0 ? 0 : 1;
+            const int to   = axis == 0 ? 1 : 0;
+            glBindFramebuffer_ptr(GL_FRAMEBUFFER, sDofFbo[to]);
+            glBindTexture(GL_TEXTURE_2D, sDofTex[from]);
+            if (glUniform1i_ptr) glUniform1i_ptr(blurSource, 0);
+            if (glUniform2f_ptr && blurStep >= 0) {
+                glUniform2f_ptr(blurStep,
+                                axis == 0 ? 1.0f / float(sDofWidth) : 0.0f,
+                                axis == 0 ? 0.0f : 1.0f / float(sDofHeight));
+            }
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+    }
+
+    glBindVertexArray_ptr(0);
     return true;
 }
 
@@ -2423,6 +2675,15 @@ static GLuint post_apply()
         aoReady = ao_build();
     }
 
+    // Depth of field needs somewhere to focus. Without a captain in the world
+    // -- the title screen, a cutscene -- there is no honest answer, so the
+    // chain is skipped and the composite is told to blur nothing.
+    bool dofReady = false;
+    dof_debug_report();
+    if (pc_post_dof_active(sPostEffects) && sDofFocusDistance > 0.0f) {
+        dofReady = dof_build();
+    }
+
     bool bloomReady = false;
     if (pc_post_bloom_active(sPostEffects)) {
         bloomReady = bloom_build();
@@ -2446,6 +2707,24 @@ static GLuint post_apply()
         glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
         if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDepth"), 1);
         glActiveTexture_ptr(GL_TEXTURE0);
+    }
+    if (dofReady && glActiveTexture_ptr) {
+        glActiveTexture_ptr(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, sDofTex[0]);
+        if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDof"), 4);
+        glActiveTexture_ptr(GL_TEXTURE0);
+        if (glUniform4f_ptr) {
+            glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uProjInfo"),
+                            sViewInvP00, sViewInvP11, sViewNear, sViewFar);
+            glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uDofFocus"),
+                            sDofFocusDistance, sPostEffects.dofSharpFraction,
+                            sPostEffects.dofFalloffFraction, sPostEffects.dofStrength);
+        }
+    } else if (pc_post_dof_active(sPostEffects) && glUniform4f_ptr) {
+        // The shader carries the composite, so silence it with zero strength
+        // rather than mixing in a texture nothing filled this frame.
+        glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uDofFocus"),
+                        1.0f, 1.0f, 1.0f, 0.0f);
     }
     if (aoReady && glActiveTexture_ptr) {
         glActiveTexture_ptr(GL_TEXTURE3);
@@ -2491,6 +2770,85 @@ static GLuint post_apply()
     return sPostFramebuffer;
 }
 
+// Runs the post-process where the world ends, instead of at the end of the
+// frame, and puts the result back so the interface draws on top of it.
+//
+// The frame is world-then-interface, measured with PIKMIN_PROJ_DEBUG:
+//
+//   perspective, 336 draws   the world
+//   orthographic             the interface starts here, and never goes back
+//
+// Running at the end of the frame meant post-processing a picture that already
+// had the interface painted into it, and reading a depth buffer the interface
+// had already overwritten -- the counter at the bottom of the screen came out
+// as blurred as the ground behind it, and the depth under it was nonsense.
+//
+// The GL state is saved and put back exactly rather than invalidated. The
+// port's setters all carry redundancy guards -- viewport, scissor, blend,
+// depth, cull -- and a guard that has been lied to silently skips the call
+// that would have corrected it.
+static bool sPostRanThisFrame = false;
+
+// Defined after the TEV program cache it clears. Zeroing sCurrentProgram alone
+// is not enough: use_program_for_current_state() has a fast path that returns
+// without binding anything when the material key is unchanged and the current
+// program is not the ubershader -- which is exactly what a zeroed cache looks
+// like. It would have kept the post-process's own program bound for the
+// interface, or bound nothing at all.
+static void gl_program_cache_invalidate();
+
+static void post_apply_before_interface()
+{
+    if (sPostRanThisFrame) return;
+    if (!sNativeFramebufferReady || !glBindFramebuffer_ptr || !glBlitFramebuffer_ptr) return;
+    if (!pc_post_any_enabled(sPostEffects)) return;
+
+    // The port batches draws. Anything still pending belongs to the world, and
+    // running the pass first would leave it to be drawn over the top of a
+    // finished image.
+    pc_gfx_flush_batch();
+
+    GLint viewport[4] = { 0, 0, 0, 0 };
+    GLint scissor[4] = { 0, 0, 0, 0 };
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_SCISSOR_BOX, scissor);
+    const GLboolean hadScissor = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean hadDepth   = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean hadBlend   = glIsEnabled(GL_BLEND);
+    const GLboolean hadCull    = glIsEnabled(GL_CULL_FACE);
+
+    const GLuint produced = post_apply();
+    sPostRanThisFrame = true;
+
+    if (produced != sNativeFramebuffer) {
+        // Back into the framebuffer the game is still drawing into. Colour
+        // only: the depth buffer is untouched by the pass and the interface
+        // behind us may still want to test against it.
+        glBindFramebuffer_ptr(GL_READ_FRAMEBUFFER, produced);
+        glBindFramebuffer_ptr(GL_DRAW_FRAMEBUFFER, sNativeFramebuffer);
+        glBlitFramebuffer_ptr(0, 0, sRenderWidth, sRenderHeight,
+                              0, 0, sRenderWidth, sRenderHeight,
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
+    if (hadScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+    if (hadDepth)   glEnable(GL_DEPTH_TEST);   else glDisable(GL_DEPTH_TEST);
+    if (hadBlend)   glEnable(GL_BLEND);        else glDisable(GL_BLEND);
+    if (hadCull)    glEnable(GL_CULL_FACE);    else glDisable(GL_CULL_FACE);
+
+    // What cannot be put back has to be admitted to. The pass bound its own
+    // program and left textures on units 1 to 4; the caches that mirror those
+    // are cleared so the next draw programs them again rather than trusting a
+    // record of state that is no longer true.
+    if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
+    for (int i = 0; i < 8; i++) sBoundTextures[i] = 0;
+    gl_program_cache_invalidate();
+    invalidate_uniform_cache();
+}
+
 void pc_gfx_present(void) {
     pc_gfx_flush_batch();
 #ifdef GL_TIME_ELAPSED
@@ -2511,7 +2869,11 @@ void pc_gfx_present(void) {
         }
     }
 #endif
-    const GLuint sourceFramebuffer = post_apply();
+    // Normally the pass has already run, where the world ended. It still runs
+    // here when it did not -- a frame with no interface at all, which is what
+    // a cutscene is -- so nothing is lost in those.
+    const GLuint sourceFramebuffer = sPostRanThisFrame ? sNativeFramebuffer : post_apply();
+    sPostRanThisFrame = false;
     glBindFramebuffer_ptr(GL_READ_FRAMEBUFFER, sourceFramebuffer);
     glBindFramebuffer_ptr(GL_DRAW_FRAMEBUFFER, 0);
     // Game renders to the target aspect ratio. Display it centered in the window.
@@ -2545,6 +2907,34 @@ void pc_gfx_present(void) {
 }
 
 void pc_gfx_set_projection(const Mtx44 mtx, GXProjectionType type) {
+    // The orthographic ones matter as much as the perspective ones: the point
+    // of this trace is to find where the world stops and the interface starts,
+    // and only half the frame was being logged.
+    // The first orthographic projection that follows actual drawing is where
+    // the world stops and the interface begins. Two things happen here, and
+    // they are the same decision: the perspective that was active for the
+    // world is committed as the one the depth reconstruction will use, and the
+    // post-process runs while the picture is still only the world and the
+    // depth buffer still describes it.
+    //
+    // Requiring draws is what makes it the world rather than whatever came
+    // first: an orthographic projection set before anything has been drawn has
+    // not ended anything.
+    if (type != GX_PERSPECTIVE && sPendingValid && sPerfDraws > sDrawsAtFrameStart) {
+        sViewInvP00 = sPendingInvP00;
+        sViewInvP11 = sPendingInvP11;
+        sViewNear   = sPendingNear;
+        sViewFar    = sPendingFar;
+        sPendingValid = false;
+        post_apply_before_interface();
+    }
+    if (sProjDebug && type != GX_PERSPECTIVE) {
+        printf("[PC Port] Proj #%d: ORTHOGRAPHIC drawsSincePrevious=%d\n",
+               sProjSeenThisFrame, int(sPerfDraws - sDrawsAtProjection));
+        fflush(stdout);
+        sProjSeenThisFrame++;
+        sDrawsAtProjection = sPerfDraws;
+    }
     if (mtx && type == GX_PERSPECTIVE) {
         const float p00 = mtx[0][0];
         const float p11 = mtx[1][1];
@@ -2555,11 +2945,41 @@ void pc_gfx_set_projection(const Mtx44 mtx, GXProjectionType type) {
         if (p00 != 0.0f && p11 != 0.0f && m22 != 0.0f && m22 != 1.0f) {
             const float f = m23 / m22;
             const float n = -m22 * f / (1.0f - m22);
+            // Not the first perspective of the frame, and not the last: the one
+            // that was active when the world finished drawing.
+            //
+            // "First" was the obvious rule and it is wrong. Measured over a
+            // session, most frames arrive as
+            //
+            //   #0 perspective near=100 far=10000  <- the world, 336 draws
+            //   #1 orthographic                    <- the interface starts
+            //   #7 perspective near=1  far=5000    <- 3D bits of the HUD
+            //
+            // but some states put a different perspective in front of the
+            // world, and those frames took near=1 far=15000 and linearised
+            // every world pixel against the wrong planes. The symptom was a
+            // frame here and there with the whole screen blurred, which is
+            // exactly what it looks like when the depth is measured against a
+            // projection nothing was drawn with.
+            //
+            // So the terms are merely remembered here, and committed where the
+            // world demonstrably ends: at the first orthographic projection
+            // that follows actual drawing. Whatever was active then is what
+            // drew the world, by construction rather than by ordering luck.
             if (f > n && n > 0.0f) {
-                sViewInvP00 = 1.0f / p00;
-                sViewInvP11 = 1.0f / p11;
-                sViewNear = n;
-                sViewFar = f;
+                sPendingInvP00 = 1.0f / p00;
+                sPendingInvP11 = 1.0f / p11;
+                sPendingNear = n;
+                sPendingFar = f;
+                sPendingValid = true;
+                if (sProjDebug) {
+                    printf("[PC Port] Proj #%d: near=%.1f far=%.1f fovScale=%.3f drawsSincePrevious=%d\n",
+                           sProjSeenThisFrame, n, f, p11,
+                           int(sPerfDraws - sDrawsAtProjection));
+                    fflush(stdout);
+                }
+                sProjSeenThisFrame++;
+                sDrawsAtProjection = sPerfDraws;
             }
         }
     }
@@ -3791,6 +4211,12 @@ static GLuint compile_specialised_program(const PcTevShaderKey& key) {
         }
     }
     return program;
+}
+
+static void gl_program_cache_invalidate()
+{
+    sCurrentProgram = 0;
+    sLastTevKeyValid = false;
 }
 
 // Selects the program for the current TEV state and makes its uniform
