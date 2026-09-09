@@ -8,7 +8,6 @@
 #include "settings/pc_settings.h"
 #if defined(PIKI_PC_PORT)
 #include "pc_photo_mode.h"
-#include "pc_ambient_particles.h"
 #endif
 #endif
 
@@ -1768,30 +1767,6 @@ void GameCoreSection::updateAI()
 			f32 pitch = 0.0f, yaw = 0.0f;
 			pc_photo_mode_angles_from_forward(dir.x, dir.y, dir.z, &pitch, &yaw);
 			pc_photo_mode_enter(eye.x, eye.y, eye.z, pitch, yaw);
-		}
-	}
-
-	// Ambient motes. Not while photo mode has the world frozen: the effects
-	// would pile up in mid-air without ever ageing, which is neither what the
-	// player asked for nor a good photograph.
-	if (!pc_photo_mode_active() && effectMgr && cameraMgr && cameraMgr->mCamera) {
-		Vector3f watch;
-		cameraMgr->mCamera->getWatchpoint().output(watch);
-		pc_ambient_set_focus(watch.x, watch.y, watch.z);
-
-		PcAmbientMote motes[8];
-		const int spawned = pc_ambient_tick(gsys->getFrameTime(), 8, motes);
-		for (int i = 0; i < spawned; i++) {
-			const PcAmbientMote& m = motes[i];
-			Vector3f at(m.x, m.y, m.z);
-			Vector3f vel(m.vx, m.vy, m.vz);
-			Vector3f accel(m.ax, m.ay, m.az);
-			// Individual particles rather than whole effects. Every effect in
-			// the catalogue was authored to be noticed, which is the opposite
-			// of what atmosphere wants. This one fades out over its own life,
-			// which the manager does for free.
-			effectMgr->create(EffectMgr::SIMPLE_Horoki, at, m.lifeFrames, vel, accel,
-			                  m.size, m.rotSpeed, nullptr);
 		}
 	}
 
