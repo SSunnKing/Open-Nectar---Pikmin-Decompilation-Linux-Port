@@ -74,6 +74,20 @@ int  pc_newgame_prompt_result(void);
 /// Debug shortcuts F5 and F6, off by default.
 int pc_settings_get_debug_keys(void);
 
+/**
+ * @brief The language the PAL disc should be played in, as an OS_LANG_* value.
+ *
+ * Read straight from the configuration file the first time it is asked for,
+ * without loading the rest of the settings. That is not an optimisation: the
+ * game asks for the language from a static initialiser, before main and before
+ * anything has had a chance to load settings normally, so anything that
+ * depended on initialisation order would be answering with a default.
+ *
+ * NECTAR_LANGUAGE overrides the file. Only the European release ships more
+ * than one language; on any other disc this is answered but unused.
+ */
+unsigned char pc_settings_startup_language(void);
+
 #ifdef __cplusplus
 }
 #endif

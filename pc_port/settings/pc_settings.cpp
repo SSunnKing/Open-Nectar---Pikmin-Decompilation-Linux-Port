@@ -541,6 +541,51 @@ void resetToDefaults() {
     sVideoConfirmActive = false;
 }
 
+} // namespace
+
+// Defined outside the anonymous namespace and deliberately self-contained: it
+// runs during static initialisation, so it cannot rely on sConfig having been
+// loaded, or even on this file's own globals having been constructed.
+unsigned char pc_settings_startup_language(void) {
+    static const unsigned char language = [] {
+        static const struct { const char* code; unsigned char value; } kCodes[] = {
+            { "en", 0 }, { "de", 1 }, { "fr", 2 }, { "es", 3 }, { "it", 4 }, { "nl", 5 },
+        };
+        auto decode = [](const std::string& text, unsigned char fallback) {
+            for (const auto& entry : kCodes) {
+                if (text.compare(0, 2, entry.code) == 0) return entry.value;
+            }
+            return fallback;
+        };
+
+        if (const char* fromEnvironment = getenv("NECTAR_LANGUAGE")) {
+            return decode(fromEnvironment, (unsigned char)0);
+        }
+
+        std::ifstream in(kConfigFilename);
+        if (!in) return (unsigned char)0;
+        std::string line;
+        while (std::getline(in, line)) {
+            const size_t equals = line.find('=');
+            if (equals == std::string::npos) continue;
+            std::string key = line.substr(0, equals);
+            std::string value = line.substr(equals + 1);
+            const auto strip = [](std::string& text) {
+                const size_t first = text.find_first_not_of(" \t\r\n");
+                const size_t last = text.find_last_not_of(" \t\r\n");
+                text = (first == std::string::npos) ? std::string() : text.substr(first, last - first + 1);
+            };
+            strip(key);
+            strip(value);
+            if (key == "language") return decode(value, (unsigned char)0);
+        }
+        return (unsigned char)0;
+    }();
+    return language;
+}
+
+namespace {
+
 void saveConfig() {
     std::string path = std::string(kConfigFilename);
     std::ofstream out(path, std::ios::out | std::ios::trunc);
@@ -555,6 +600,14 @@ void saveConfig() {
     out << "aspectRatioMode = " << sConfig.aspectRatioMode << "\n";
     out << "refreshRate = " << sConfig.refreshRate << "\n";
     out << "vsync = " << (sConfig.vsync ? 1 : 0) << "\n";
+    {
+        // Written back so the key survives a save from the F1 menu. The value
+        // is whatever pc_settings_startup_language() resolved at boot: this is
+        // the installer's choice, and nothing in the game changes it yet.
+        static const char* const kCodes[] = { "en", "de", "fr", "es", "it", "nl" };
+        const unsigned char language = pc_settings_startup_language();
+        out << "language = " << kCodes[language < 6 ? language : 0] << "\n";
+    }
     out << "renderScale = " << sConfig.renderScale << "\n";
     out << "fpsMode = " << sConfig.fpsMode << "\n";
     out << "chainActions = " << sConfig.chainActions << "\n";

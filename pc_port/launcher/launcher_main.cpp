@@ -65,6 +65,58 @@ bool respawnInTerminal() { return platform::respawnInTerminal(); }
 
 fs::path askForInstallDirectory() { return platform::askForInstallDirectory(); }
 fs::path askForImage() { return platform::askForImage(); }
+int askForLanguage(const std::vector<std::string>& names) { return platform::askForLanguage(names); }
+
+// Writes one key into the game's settings file without disturbing the rest.
+//
+// The file belongs to the game, which rewrites it whole every time it saves,
+// so the key has to be one the game knows -- it is; see
+// pc_settings_startup_language. This only sets the initial value.
+bool writeSettingKey(const fs::path& dataRoot, const std::string& key, const std::string& value)
+{
+    const fs::path path = dataRoot / "pikmin_settings.conf";
+    std::vector<std::string> lines;
+    bool replaced = false;
+    {
+        std::ifstream in(path);
+        std::string line;
+        while (std::getline(in, line)) {
+            const std::size_t equals = line.find('=');
+            if (equals != std::string::npos && trim(line.substr(0, equals)) == key) {
+                lines.push_back(key + " = " + value);
+                replaced = true;
+            } else {
+                lines.push_back(line);
+            }
+        }
+    }
+    if (!replaced) {
+        if (lines.empty()) lines.push_back("# Open Nectar settings (F1 in-game to change)");
+        lines.push_back(key + " = " + value);
+    }
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) return false;
+    for (const std::string& line : lines) out << line << '\n';
+    return true;
+}
+
+// The languages a disc carries, with names to show and the codes the settings
+// file uses.
+struct LanguageChoice {
+    const char* code;
+    const char* name;
+};
+const LanguageChoice* languageChoice(const std::string& code)
+{
+    static const LanguageChoice kChoices[] = {
+        { "en", "English" }, { "de", "Deutsch" }, { "fr", "Français" },
+        { "es", "Español" }, { "it", "Italiano" }, { "nl", "Nederlands" },
+    };
+    for (const LanguageChoice& choice : kChoices) {
+        if (code == choice.code) return &choice;
+    }
+    return nullptr;
+}
 
 fs::path askForImageConsole()
 {
@@ -455,6 +507,45 @@ int main(int argc, char** argv)
             return 1;
         }
         installedAssetsNow = true;
+
+        // Which language to play in. Only the European disc carries more than
+        // one, and all of them are installed either way -- about 6 MB each out
+        // of 648 MB, so leaving some out saves nothing and would mean
+        // reinstalling to change your mind.
+        pikmin::launcher::DiscIdentity identity;
+        std::string ignored;
+        const pikmin::launcher::KnownDisc* disc
+            = pikmin::launcher::inspectGameCubeImage(image, identity, ignored)
+                  ? pikmin::launcher::findKnownDisc(identity)
+                  : nullptr;
+        if (disc != nullptr && disc->languageCount > 1) {
+            std::vector<std::string> names;
+            for (int i = 0; i < disc->languageCount; ++i) {
+                const LanguageChoice* choice = languageChoice(disc->languages[i]);
+                names.push_back(choice ? choice->name : disc->languages[i]);
+            }
+
+            int selected = -1;
+            if (stdinIsTerminal()) {
+                std::cout << "\nEste disco trae " << disc->languageCount << " idiomas:\n";
+                for (std::size_t i = 0; i < names.size(); ++i) {
+                    std::cout << "  " << (i + 1) << ") " << names[i] << '\n';
+                }
+                const std::string answer = promptLine("¿En cuál quieres jugar? [1]: ");
+                const int number = answer.empty() ? 1 : std::atoi(answer.c_str());
+                if (number >= 1 && number <= disc->languageCount) selected = number - 1;
+            } else {
+                selected = askForLanguage(names);
+            }
+
+            // No way to ask, or nothing chosen: English, and say where to
+            // change it rather than leaving it a mystery.
+            const int language = (selected >= 0) ? selected : 0;
+            if (writeSettingKey(dataRoot, "language", disc->languages[language])) {
+                std::cout << "Idioma: " << names[language]
+                          << "  (cámbialo en pikmin_settings.conf, clave 'language')\n";
+            }
+        }
     }
 
     std::string failure;

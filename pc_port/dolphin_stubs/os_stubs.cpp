@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "settings/pc_settings.h"
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -123,27 +124,12 @@ void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* timeDate) {
 // languages on one disc and picks with this -- so the USA build never linked
 // against it.
 //
-// There is no system menu here to ask, so the port reads the environment and
-// falls back to English. NECTAR_LANGUAGE accepts en, de, fr, es, it and nl,
-// which are exactly the six the hardware could report; anything else is
-// English. A real setting in the F1 menu is the right home for this, but that
-// belongs with the rest of the PAL work rather than in a stub.
-u8 OSGetLanguage() {
-    static const u8 language = [] {
-        const char* choice = getenv("NECTAR_LANGUAGE");
-        if (!choice) return u8(OS_LANG_ENGLISH);
-        const struct { const char* name; u8 value; } names[] = {
-            { "en", OS_LANG_ENGLISH }, { "de", OS_LANG_GERMAN },
-            { "fr", OS_LANG_FRENCH },  { "es", OS_LANG_SPANISH },
-            { "it", OS_LANG_ITALIAN }, { "nl", OS_LANG_DUTCH },
-        };
-        for (const auto& entry : names) {
-            if (strncmp(choice, entry.name, 2) == 0) return entry.value;
-        }
-        return u8(OS_LANG_ENGLISH);
-    }();
-    return language;
-}
+// There is no system menu here to ask. The installer records the choice in the
+// settings file and pc_settings_startup_language() reads it, straight from
+// disk and without the rest of the settings, because this is called from a
+// static initialiser: by the time settings are loaded normally, the game has
+// already decided which language it is running in.
+u8 OSGetLanguage() { return pc_settings_startup_language(); }
 
 void OSReport(const char* message, ...) {
     va_list args;

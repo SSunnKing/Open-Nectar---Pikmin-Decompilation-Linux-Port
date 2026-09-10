@@ -187,15 +187,52 @@ bool inspectGameCubeImage(const fs::path& image, DiscIdentity& identity, std::st
     return true;
 }
 
+namespace {
+
+// Los discos que el port sabe usar.
+//
+// Cada uno necesita un ejecutable compilado para su version: el juego se
+// compila desde la decompilacion, y esa decompilacion es condicional segun la
+// version en 404 sitios. El disco solo aporta los assets.
+constexpr const char* kLanguagesEnglishOnly[] = { "en" };
+constexpr const char* kLanguagesPal[] = { "en", "de", "fr", "es", "it" };
+
+constexpr KnownDisc kKnownDiscs[] = {
+    { "GPIE01", 1, "Pikmin USA Rev. 1",
+      "db013398ec77299e307ef61ec33e82b07e4b21cb676b18a0be712fe55e9775f2",
+      kLanguagesEnglishOnly, 1 },
+    // El disco europeo trae los cinco idiomas en el mismo dataDir; el juego
+    // elige en ejecucion. Verificado sobre un volcado real: 4874 archivos, y
+    // screen/ con eng, fre, ger, ita y spa.
+    { "GPIP01", 0, "Pikmin Europa (En, Fr, De, Es, It)",
+      "7c50b65545d2158e56545f7e9cdf0f0c0dbeabbcb4e1f080d3b0433f2f91c343",
+      kLanguagesPal, 5 },
+};
+
+} // namespace
+
+const KnownDisc* findKnownDisc(const DiscIdentity& identity)
+{
+    for (const KnownDisc& disc : kKnownDiscs) {
+        if (identity.gameId == disc.gameId && identity.revision == disc.revision) {
+            return &disc;
+        }
+    }
+    return nullptr;
+}
+
 bool isSupportedPikminDisc(const DiscIdentity& identity, std::string& error)
 {
-    if (identity.gameId != "GPIE01" || identity.revision != 1) {
-        error = "Esta versión inicial del port requiere Pikmin USA Rev. 1 "
-                "(GPIE01, revisión 1). Disco detectado: " + identity.gameId
-              + ", revisión " + std::to_string(identity.revision) + ".";
-        return false;
+    if (findKnownDisc(identity) != nullptr) return true;
+
+    std::string known;
+    for (const KnownDisc& disc : kKnownDiscs) {
+        known += std::string("\n  - ") + disc.description + " (" + disc.gameId
+               + ", revisión " + std::to_string(disc.revision) + ")";
     }
-    return true;
+    error = "Disco no reconocido: " + identity.gameId + ", revisión "
+          + std::to_string(identity.revision) + ".\n\nDiscos admitidos:" + known;
+    return false;
 }
 
 namespace {
@@ -254,12 +291,20 @@ bool hashImage(const fs::path& image, std::string& hexDigest, std::string& error
 bool verifyImageIntegrity(const fs::path& image, std::string& error,
                           const std::function<void(std::uint32_t)>& progress)
 {
+    DiscIdentity identity;
+    std::string ignored;
+    const KnownDisc* disc = inspectGameCubeImage(image, identity, ignored)
+                              ? findKnownDisc(identity)
+                              : nullptr;
+    const char* expected = disc ? disc->sha256 : kPikminUsaRev1Sha256;
+
     std::string digest;
     if (!hashImage(image, digest, error, progress)) return false;
-    if (digest == kPikminUsaRev1Sha256) return true;
+    if (digest == expected) return true;
 
-    error = "La imagen no coincide con un volcado íntegro de Pikmin USA Rev. 1.\n"
-            "Esperado: " + std::string(kPikminUsaRev1Sha256) + "\n"
+    error = std::string("La imagen no coincide con un volcado íntegro de ")
+          + (disc ? disc->description : "Pikmin USA Rev. 1") + ".\n"
+            "Esperado: " + std::string(expected) + "\n"
             "Obtenido: " + digest + "\n\n"
             "Lo más probable es que la copia se haya dañado al transferirla. "
             "Vuelve a copiar el archivo desde el original y comprueba el hash "

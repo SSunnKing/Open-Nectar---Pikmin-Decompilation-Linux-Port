@@ -176,6 +176,15 @@ fs::path askForInstallDirectory()
     return result;
 }
 
+int askForLanguage(const std::vector<std::string>& names)
+{
+    // The shell offers no list dialog worth the code it would take here, and
+    // the installer's own window is a fixed flow. The console path asks; the
+    // graphical one falls back to the default and says where to change it.
+    (void)names;
+    return -1;
+}
+
 bool respawnInTerminal()
 {
     // El launcher se compila como aplicación de consola, así que al abrirlo con

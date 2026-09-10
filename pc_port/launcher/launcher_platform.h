@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace pikmin {
 namespace launcher {
@@ -36,6 +37,16 @@ bool hasGraphicalDialogs();
 // True si la entrada estándar es una terminal interactiva, es decir, si tiene
 // sentido usar el instalador en modo texto.
 bool stdinIsTerminal();
+
+// Pregunta al usuario en qué idioma quiere jugar, entre los que trae el disco.
+// Devuelve el índice elegido, o -1 si no hay forma de preguntar o el usuario
+// cancela; quien llama decide qué hacer entonces.
+//
+// Solo el disco europeo trae más de un idioma, y los cinco quedan instalados
+// pase lo que pase: son unos 6 MB cada uno sobre 648 MB, así que no se gana
+// nada dejando fuera los que no se eligen, y dejarlos permite cambiar de idea
+// sin reinstalar.
+int askForLanguage(const std::vector<std::string>& names);
 
 // Identificador del proceso actual. Solo se usa para dar un nombre único a la
 // carpeta temporal de extracción, de modo que dos instalaciones simultáneas no

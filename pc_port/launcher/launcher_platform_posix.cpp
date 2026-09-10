@@ -172,6 +172,38 @@ fs::path askForImage()
     return {};
 }
 
+int askForLanguage(const std::vector<std::string>& names)
+{
+    if (names.size() < 2) return 0;
+
+    if (commandExists("zenity")) {
+        std::vector<std::string> args {
+            "--list", "--title=Pikmin Native - Idioma",
+            "--text=Este disco trae varios idiomas. ¿En cuál quieres jugar?",
+            "--column=Idioma", "--height=320"
+        };
+        for (const std::string& name : names) args.push_back(name);
+        const std::string chosen = runDialog("zenity", args);
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            if (chosen == names[i]) return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    if (commandExists("kdialog")) {
+        std::vector<std::string> args { "--menu", "¿En qué idioma quieres jugar?" };
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            args.push_back(std::to_string(i));
+            args.push_back(names[i]);
+        }
+        const std::string chosen = runDialog("kdialog", args);
+        if (chosen.empty()) return -1;
+        return std::atoi(chosen.c_str());
+    }
+
+    return -1;
+}
+
 // When the launcher is started by double-clicking it in a file manager there
 // is no terminal to show errors on. Re-run itself inside a terminal emulator
 // so the text-mode installer and any error message become visible.
