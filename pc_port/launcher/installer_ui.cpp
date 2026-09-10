@@ -119,7 +119,7 @@ struct InstallerWindow::Impl {
     SDL_Renderer* renderer = nullptr;
     std::string rom;
     std::string installDirectory;
-    std::string status = "Selecciona la ROM y la carpeta de instalacion";
+    std::string status = "Choose your disc image and where to install";
     std::uint32_t progress = 0;
     bool installing = false;
 
@@ -141,26 +141,26 @@ struct InstallerWindow::Impl {
         const std::string title = "Open Nectar Installer";
         drawText(renderer, (760 - textWidth(title, 3)) / 2, 29, title, 3, { 235, 244, 238, 255 });
 
-        drawText(renderer, 45, 101, "Ubicacion de la ROM", 2, { 174, 203, 221, 255 });
-        drawText(renderer, 45, 194, "Ubicacion de instalacion", 2, { 174, 203, 221, 255 });
+        drawText(renderer, 45, 101, "Disc image", 2, { 174, 203, 221, 255 });
+        drawText(renderer, 45, 194, "Install to", 2, { 174, 203, 221, 255 });
 
         fillRect(renderer, romField, { 238, 242, 246, 255 });
         strokeRect(renderer, romField, { 96, 121, 151, 255 });
         fillRect(renderer, installField, { 238, 242, 246, 255 });
         strokeRect(renderer, installField, { 96, 121, 151, 255 });
         drawText(renderer, romField.x + 10, romField.y + 14,
-                 fitPath(rom.empty() ? "Ninguna ROM seleccionada" : rom, romField.w - 20, 2),
+                 fitPath(rom.empty() ? "No disc image chosen" : rom, romField.w - 20, 2),
                  2, { 28, 37, 49, 255 });
         drawText(renderer, installField.x + 10, installField.y + 14,
-                 fitPath(installDirectory.empty() ? "Ninguna carpeta seleccionada" : installDirectory,
+                 fitPath(installDirectory.empty() ? "No folder chosen" : installDirectory,
                          installField.w - 20, 2),
                  2, { 28, 37, 49, 255 });
 
         int mouseX = 0, mouseY = 0;
         SDL_GetMouseState(&mouseX, &mouseY);
-        drawButton(romBrowse, "Seleccionar", contains(romBrowse, mouseX, mouseY));
-        drawButton(installBrowse, "Seleccionar", contains(installBrowse, mouseX, mouseY));
-        drawButton(installButton, installing ? "Instalando" : "Instalar",
+        drawButton(romBrowse, "Browse", contains(romBrowse, mouseX, mouseY));
+        drawButton(installBrowse, "Browse", contains(installBrowse, mouseX, mouseY));
+        drawButton(installButton, installing ? "Installing" : "Install",
                    contains(installButton, mouseX, mouseY), rom.empty() || installDirectory.empty() || installing);
 
         if (installing) {
@@ -286,10 +286,10 @@ bool InstallerWindow::choosePaths(const std::function<std::string()>& chooseRom,
             if (!selected.empty()) mImpl->installDirectory = selected;
         } else if (contains(mImpl->installButton, x, y)) {
             if (mImpl->rom.empty() || mImpl->installDirectory.empty()) {
-                mImpl->status = "Debes seleccionar la ROM y la carpeta de instalacion";
+                mImpl->status = "Choose a disc image and a folder first";
             } else {
                 mImpl->installing = true;
-                mImpl->status = "Preparando instalacion...";
+                mImpl->status = "Preparing...";
                 rom = mImpl->rom;
                 installDirectory = mImpl->installDirectory;
                 mImpl->render();
@@ -312,7 +312,7 @@ void InstallerWindow::updateProgress(std::uint32_t percent, const std::string& c
 void InstallerWindow::showError(const std::string& message)
 {
     mImpl->installing = false;
-    mImpl->status = "La instalacion no se completo";
+    mImpl->status = "Installation did not finish";
     mImpl->render();
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Open Nectar Installer", message.c_str(), mImpl->window);
 }
@@ -320,11 +320,11 @@ void InstallerWindow::showError(const std::string& message)
 void InstallerWindow::showComplete(const std::string& installDirectory, bool willLaunch)
 {
     mImpl->progress = 100;
-    mImpl->status = "Instalacion completada";
+    mImpl->status = "Installation complete";
     mImpl->render();
-    std::string message = "Pikmin Native se ha instalado en:\n" + installDirectory;
-    if (willLaunch) message += "\n\nEl juego se iniciara ahora.";
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Instalacion completada", message.c_str(), mImpl->window);
+    std::string message = "Open Nectar is installed in:\n" + installDirectory;
+    if (willLaunch) message += "\n\nThe game will start now.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Installation complete", message.c_str(), mImpl->window);
 }
 
 } // namespace launcher

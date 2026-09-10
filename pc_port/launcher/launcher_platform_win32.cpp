@@ -125,10 +125,10 @@ fs::path askForImage()
     OPENFILENAMEW dialog {};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner   = nullptr;
-    dialog.lpstrFilter = L"GameCube ISO/GCM\0*.iso;*.gcm\0Todos los archivos\0*.*\0\0";
+    dialog.lpstrFilter = L"GameCube ISO/GCM\0*.iso;*.gcm\0All files\0*.*\0\0";
     dialog.lpstrFile   = selected.data();
     dialog.nMaxFile    = static_cast<DWORD>(selected.size());
-    dialog.lpstrTitle  = L"Nectar - Selecciona tu disco de Pikmin";
+    dialog.lpstrTitle  = L"Open Nectar - Choose your disc image";
     dialog.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
                        | OFN_EXPLORER;
 
@@ -156,7 +156,7 @@ fs::path askForInstallDirectory()
             dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST
                                        | FOS_FORCEFILESYSTEM);
         }
-        dialog->SetTitle(L"Nectar - Selecciona la carpeta de instalación");
+        dialog->SetTitle(L"Open Nectar - Choose the install folder");
 
         if (SUCCEEDED(dialog->Show(nullptr))) {
             IShellItem* item = nullptr;

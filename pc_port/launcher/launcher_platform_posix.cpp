@@ -138,7 +138,7 @@ fs::path askForInstallDirectory()
         if (const char* home = std::getenv("HOME")) initial = fs::path(home).string() + "/";
         const std::string selected = runDialog("zenity", {
             "--file-selection", "--directory",
-            "--title=Pikmin Native - Selecciona la carpeta de instalación",
+            "--title=Open Nectar - Choose the install folder",
             "--filename=" + initial
         });
         if (!selected.empty()) return selected;
@@ -146,7 +146,7 @@ fs::path askForInstallDirectory()
         const std::string initial = std::getenv("HOME") ? std::getenv("HOME") : ".";
         const std::string selected = runDialog("kdialog", {
             "--getexistingdirectory", initial,
-            "--title", "Pikmin Native - Selecciona la carpeta de instalación"
+            "--title", "Open Nectar - Choose the install folder"
         });
         if (!selected.empty()) return selected;
     }
@@ -157,9 +157,9 @@ fs::path askForImage()
 {
     if (commandExists("zenity")) {
         const std::string selected = runDialog("zenity", {
-            "--file-selection", "--title=Pikmin Native - Selecciona tu disco",
+            "--file-selection", "--title=Open Nectar - Choose your disc image",
             "--file-filter=GameCube ISO/GCM | *.iso *.ISO *.gcm *.GCM",
-            "--file-filter=Todos los archivos | *"
+            "--file-filter=All files | *"
         });
         if (!selected.empty()) return selected;
     }
@@ -178,9 +178,9 @@ int askForLanguage(const std::vector<std::string>& names)
 
     if (commandExists("zenity")) {
         std::vector<std::string> args {
-            "--list", "--title=Pikmin Native - Idioma",
-            "--text=Este disco trae varios idiomas. ¿En cuál quieres jugar?",
-            "--column=Idioma", "--height=320"
+            "--list", "--title=Open Nectar - Language",
+            "--text=This disc carries several languages. Which one do you want to play in?",
+            "--column=Language", "--height=320"
         };
         for (const std::string& name : names) args.push_back(name);
         const std::string chosen = runDialog("zenity", args);
@@ -191,7 +191,7 @@ int askForLanguage(const std::vector<std::string>& names)
     }
 
     if (commandExists("kdialog")) {
-        std::vector<std::string> args { "--menu", "¿En qué idioma quieres jugar?" };
+        std::vector<std::string> args { "--menu", "Which language do you want to play in?" };
         for (std::size_t i = 0; i < names.size(); ++i) {
             args.push_back(std::to_string(i));
             args.push_back(names[i]);

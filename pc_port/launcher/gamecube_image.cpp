@@ -117,26 +117,26 @@ bool parseFst(std::ifstream& input, std::uint64_t imageSize, std::uint64_t& fstO
 {
     std::array<std::uint8_t, 8> header {};
     if (!readAt(input, kFstOffsetField, header.data(), header.size())) {
-        error = "No se pudo leer la cabecera FST de la imagen.";
+        error = "Could not read the disc's file table header.";
         return false;
     }
     fstOffset = readBe32(header.data());
     const std::uint64_t fstSize = readBe32(header.data() + 4);
     if (fstSize < 12 || fstOffset > imageSize || fstSize > imageSize - fstOffset
         || fstSize > 256ULL * 1024ULL * 1024ULL) {
-        error = "La tabla de archivos FST no es válida.";
+        error = "The disc's file table is not valid.";
         return false;
     }
     fst.resize(static_cast<std::size_t>(fstSize));
     if (!readAt(input, fstOffset, fst.data(), fst.size())) {
-        error = "No se pudo leer la tabla de archivos FST.";
+        error = "Could not read the disc's file table.";
         return false;
     }
     const std::uint32_t rootWord = readBe32(fst.data());
     const std::uint32_t entryCount = readBe32(fst.data() + 8);
     if ((rootWord >> 24) != 1 || entryCount == 0
         || std::uint64_t(entryCount) * 12ULL > fst.size()) {
-        error = "La raíz FST de la imagen no es válida.";
+        error = "The root of the disc's file table is not valid.";
         return false;
     }
     entries.resize(entryCount);
@@ -149,7 +149,7 @@ bool parseFst(std::ifstream& input, std::uint64_t imageSize, std::uint64_t& fstO
         entries[i].sizeOrNext = readBe32(raw + 8);
         if (entries[i].directory && (entries[i].sizeOrNext <= i
                                      || entries[i].sizeOrNext > entryCount)) {
-            error = "La jerarquía FST contiene un directorio inválido.";
+            error = "The disc's file table contains an invalid directory.";
             return false;
         }
     }
@@ -174,12 +174,12 @@ bool inspectGameCubeImage(const fs::path& image, DiscIdentity& identity, std::st
 {
     std::ifstream input(image, std::ios::binary);
     if (!input) {
-        error = "No se pudo abrir la imagen seleccionada.";
+        error = "Could not open the disc image.";
         return false;
     }
     std::array<std::uint8_t, 8> header {};
     if (!readAt(input, 0, header.data(), header.size())) {
-        error = "La imagen es demasiado pequeña para ser un disco de GameCube.";
+        error = "That file is too small to be a GameCube disc.";
         return false;
     }
     identity.gameId.assign(reinterpret_cast<const char*>(header.data()), 6);
@@ -228,10 +228,10 @@ bool isSupportedPikminDisc(const DiscIdentity& identity, std::string& error)
     std::string known;
     for (const KnownDisc& disc : kKnownDiscs) {
         known += std::string("\n  - ") + disc.description + " (" + disc.gameId
-               + ", revisión " + std::to_string(disc.revision) + ")";
+               + ", revision " + std::to_string(disc.revision) + ")";
     }
-    error = "Disco no reconocido: " + identity.gameId + ", revisión "
-          + std::to_string(identity.revision) + ".\n\nDiscos admitidos:" + known;
+    error = "Unrecognised disc: " + identity.gameId + ", revision "
+          + std::to_string(identity.revision) + ".\n\nSupported discs:" + known;
     return false;
 }
 
@@ -251,7 +251,7 @@ bool hashImage(const fs::path& image, std::string& hexDigest, std::string& error
 {
     std::ifstream input(image, std::ios::binary | std::ios::ate);
     if (!input) {
-        error = "No se pudo abrir la imagen seleccionada.";
+        error = "Could not open the disc image.";
         return false;
     }
     const std::uint64_t imageSize = static_cast<std::uint64_t>(input.tellg());
@@ -267,8 +267,8 @@ bool hashImage(const fs::path& image, std::string& hexDigest, std::string& error
             std::min<std::uint64_t>(imageSize - done, buffer.size()));
         input.read(buffer.data(), static_cast<std::streamsize>(chunk));
         if (input.gcount() != static_cast<std::streamsize>(chunk)) {
-            error = "No se pudo leer la imagen completa: puede estar dañada o "
-                    "el medio de almacenamiento da errores de lectura.";
+            error = "Could not read the whole image: it may be damaged, or the drive "
+                    "it is on is returning read errors.";
             return false;
         }
         hash.update(buffer.data(), chunk);
@@ -302,15 +302,14 @@ bool verifyImageIntegrity(const fs::path& image, std::string& error,
     if (!hashImage(image, digest, error, progress)) return false;
     if (digest == expected) return true;
 
-    error = std::string("La imagen no coincide con un volcado íntegro de ")
+    error = std::string("This image does not match an intact dump of ")
           + (disc ? disc->description : "Pikmin USA Rev. 1") + ".\n"
-            "Esperado: " + std::string(expected) + "\n"
-            "Obtenido: " + digest + "\n\n"
-            "Lo más probable es que la copia se haya dañado al transferirla. "
-            "Vuelve a copiar el archivo desde el original y comprueba el hash "
-            "antes de instalar. Si estás seguro de que tu volcado es correcto y "
-            "solo difiere del de referencia, puedes omitir esta comprobación con "
-            "--skip-verify.";
+            "Expected: " + std::string(expected) + "\n"
+            "Found:    " + digest + "\n\n"
+            "The likeliest cause is a copy that was damaged in transit. Copy the "
+            "file again from the original and check the hash before installing. "
+            "If you are sure your dump is good and simply differs from the "
+            "reference one, --skip-verify skips this check.";
     return false;
 }
 
@@ -320,12 +319,12 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
 {
     std::ifstream input(image, std::ios::binary | std::ios::ate);
     if (!input) {
-        error = "No se pudo abrir la imagen seleccionada.";
+        error = "Could not open the disc image.";
         return false;
     }
     const std::streamoff endPos = input.tellg();
     if (endPos <= 0) {
-        error = "La imagen seleccionada está vacía.";
+        error = "The disc image is empty.";
         return false;
     }
     const std::uint64_t imageSize = static_cast<std::uint64_t>(endPos);
@@ -339,7 +338,7 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
     std::error_code ec;
     fs::create_directories(destination, ec);
     if (ec) {
-        error = "No se pudo crear el directorio de assets: " + ec.message();
+        error = "Could not create the game data folder: " + ec.message();
         return false;
     }
 
@@ -352,7 +351,7 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
         while (stack.size() > 1 && i >= stack.back().nextIndex) stack.pop_back();
         std::string name;
         if (!entryName(fst, stringTable, entries[i], name)) {
-            error = "La FST contiene un nombre de archivo inseguro o inválido.";
+            error = "The disc's file table contains an unsafe or invalid file name.";
             return false;
         }
         const fs::path outputPath = stack.back().path / discNameToPath(name);
@@ -372,13 +371,13 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
         const std::uint64_t fileOffset = entries[i].offsetOrParent;
         const std::uint64_t fileSize = entries[i].sizeOrNext;
         if (fileOffset > imageSize || fileSize > imageSize - fileOffset) {
-            error = "La FST referencia datos fuera de la imagen: " + name;
+            error = "The file table points outside the image: " + name;
             return false;
         }
         fs::create_directories(outputPath.parent_path(), ec);
         std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
         if (!output) {
-            error = "No se pudo escribir " + pathText(outputPath) + ".";
+            error = "Could not write " + pathText(outputPath) + ".";
             return false;
         }
         input.clear();
@@ -406,7 +405,7 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
         // vaciado, y un disco lleno se manifiesta justo aquí.
         output.close();
         if (!output) {
-            error = "No se pudo terminar de escribir " + name
+            error = "Could not finish writing " + name
                   + ": comprueba el espacio libre en el destino.";
             return false;
         }
@@ -434,12 +433,12 @@ bool extractGameCubeImage(const fs::path& image, const fs::path& destination,
                 verified += chunk;
             }
             if (writtenHash.finish() != sourceHash.finish()) {
-                error = "El archivo " + name + " se escribió de forma incorrecta.\n\n"
-                        "Los datos del disco de destino no coinciden con los de la "
-                        "imagen. Suele indicar un problema del medio de "
-                        "almacenamiento (memoria USB defectuosa, disco con "
-                        "errores) o falta de espacio. Prueba a instalar en otra "
-                        "unidad.";
+                error = name + " was written incorrectly.\n\n"
+                        "What was read back from the destination does not match "
+                        "the image. That usually means a problem with the "
+                        "storage -- a failing USB stick, a drive with errors -- "
+                        "or that it ran out of room. Try installing to another "
+                        "drive.";
                 return false;
             }
         }

@@ -121,14 +121,14 @@ const LanguageChoice* languageChoice(const std::string& code)
 fs::path askForImageConsole()
 {
     std::cout << "Instalador en modo texto (sin Zenity/KDialog).\n";
-    return promptLine("Ruta de la imagen ISO/GCM de Pikmin USA Rev. 1: ");
+    return promptLine("Path to your Pikmin disc image (.iso/.gcm): ");
 }
 
 fs::path askForInstallDirectoryConsole()
 {
     const fs::path fallback = defaultDataRoot();
     const std::string selected = promptLine(
-        "Carpeta de instalación [" + fallback.string() + "]: ");
+        "Install folder [" + fallback.string() + "]: ");
     return selected.empty() ? fallback : fs::path(selected);
 }
 
@@ -163,12 +163,12 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
     std::error_code ec;
     fs::create_directories(dataRoot, ec);
     if (ec) {
-        failure = "No se pudo crear el directorio de instalación: " + ec.message();
+        failure = "Could not create the install folder: " + ec.message();
         return false;
     }
     if (fs::exists(partialAssets)) {
-        failure = "Ya existe una extracción temporal en " + partialAssets.string()
-                + ". Elimínala manualmente si ya no está en uso.";
+        failure = "A temporary extraction already exists at " + partialAssets.string()
+                + ". Remove it by hand if nothing is using it.";
         return false;
     }
     // Which build these assets need, for every later run: the disc is only
@@ -177,7 +177,7 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
     const pikmin::launcher::KnownDisc* disc = pikmin::launcher::findKnownDisc(identity);
     const std::string requiredBuild = (disc && disc->executable) ? disc->executable : "nectar";
 
-    std::cout << "Extrayendo los datos del disco. La ROM no se copia ni se modifica...\n";
+    std::cout << "Extracting the game data. Your disc image is not copied or modified...\n";
     std::uint32_t lastPercent = 101;
     const bool extracted = pikmin::launcher::extractGameCubeImage(
         image, partialAssets, error,
@@ -192,12 +192,12 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
     std::cout << '\n';
     if (!extracted) {
         fs::remove_all(partialAssets, ec);
-        failure = "Error de extracción: " + error;
+        failure = "Extraction failed: " + error;
         return false;
     }
     if (!fs::is_regular_file(partialAssets / "dataDir/parms/gamePrms.bin")) {
         fs::remove_all(partialAssets, ec);
-        failure = "La imagen no contiene el árbol dataDir esperado.";
+        failure = "The image does not contain the expected dataDir tree.";
         return false;
     }
     std::ofstream marker(partialAssets / ".pikmin-assets", std::ios::trunc);
@@ -208,17 +208,17 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
         buildMarker << requiredBuild << '\n';
     }
     if (fs::exists(finalAssets)) {
-        failure = "Ya existe un directorio de assets en " + finalAssets.string()
-                + ". No se sobrescribirá automáticamente.";
+        failure = "An assets folder already exists at " + finalAssets.string()
+                + ". It will not be overwritten automatically.";
         fs::remove_all(partialAssets, ec);
         return false;
     }
     fs::rename(partialAssets, finalAssets, ec);
     if (ec) {
-        failure = "No se pudo finalizar la instalación: " + ec.message();
+        failure = "Could not finish the installation: " + ec.message();
         return false;
     }
-    std::cout << "Assets instalados en " << finalAssets << "\n";
+    std::cout << "Game data installed in " << finalAssets << "\n";
     return true;
 }
 
@@ -274,21 +274,21 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
     std::error_code winEc;
     fs::create_directories(installDirectory, winEc);
     if (winEc) {
-        failure = "No se pudo crear la carpeta de instalación: " + winEc.message();
+        failure = "Could not create the install folder: " + winEc.message();
         return false;
     }
     for (const char* name : { kGameExecutable, kLauncherExecutable }) {
         const bool isGame = std::string(name) == kGameExecutable;
         const fs::path source = isGame ? gameSource(sourceDirectory, build, "") : sourceDirectory / name;
         if (!fs::is_regular_file(source)) {
-            failure = "El paquete está incompleto: falta " + source.filename().string() + ".";
+            failure = "The package is incomplete: missing " + source.filename().string() + ".";
             return false;
         }
         const fs::path destination = installDirectory / name;
         if (sameFile(source, destination)) continue;
         fs::copy_file(source, destination, fs::copy_options::overwrite_existing, winEc);
         if (winEc) {
-            failure = "No se pudo instalar " + std::string(name) + ": " + winEc.message();
+            failure = "Could not install " + std::string(name) + ": " + winEc.message();
             return false;
         }
     }
@@ -301,7 +301,7 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
         if (sameFile(entry.path(), destination)) continue;
         fs::copy_file(entry.path(), destination, fs::copy_options::overwrite_existing, winEc);
         if (winEc) {
-            failure = "No se pudo copiar " + entry.path().filename().string() + ": " + winEc.message();
+            failure = "Could not copy " + entry.path().filename().string() + ": " + winEc.message();
             return false;
         }
     }
@@ -319,15 +319,15 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             && fs::is_directory(sourceLib);
 
     if (!isStandalone && (!fs::is_regular_file(sourceGame) || !fs::is_regular_file(sourceLauncher))) {
-        failure = "El paquete está incompleto: " + std::string(kGameExecutable) + " y "
-                + kLauncherExecutable + " deben estar juntos.";
+        failure = "The package is incomplete: " + std::string(kGameExecutable) + " y "
+                + kLauncherExecutable + " must sit next to each other.";
         return false;
     }
 
     std::error_code ec;
     fs::create_directories(installDirectory, ec);
     if (ec) {
-        failure = "No se pudo crear la carpeta de instalación: " + ec.message();
+        failure = "Could not create the install folder: " + ec.message();
         return false;
     }
 
@@ -343,14 +343,14 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
             if (!sameFile(entry, dest)) {
                 fs::copy_file(entry, dest, fs::copy_options::overwrite_existing, ec);
                 if (ec) {
-                    failure = "No se pudo instalar " + entry.filename().string() + ": " + ec.message();
+                    failure = "Could not install " + entry.filename().string() + ": " + ec.message();
                     return false;
                 }
             }
             fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
                             fs::perm_options::add, ec);
             if (ec) {
-                failure = "No se pudo hacer ejecutable " + dest.string() + ": " + ec.message();
+                failure = "Could not make executable: " + dest.string() + ": " + ec.message();
                 return false;
             }
         }
@@ -363,19 +363,19 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                 const fs::path destLoader = destLib / "ld-linux-x86-64.so.2";
                 const fs::path sourceLoader = sourceLib / "ld-linux-x86-64.so.2";
                 if (!fs::is_regular_file(destLoader) || !fs::is_regular_file(sourceLoader)) {
-                    failure = "El directorio lib existente no pertenece a Nectar. "
-                              "Elige otra carpeta de instalación o elimina manualmente " + destLib.string();
+                    failure = "The existing lib folder does not belong to Open Nectar. "
+                              "Choose another install folder, or remove this one by hand: " + destLib.string();
                     return false;
                 }
                 fs::remove_all(destLib, ec);
                 if (ec) {
-                    failure = "No se pudo limpiar el directorio lib anterior: " + ec.message();
+                    failure = "Could not clear the previous lib folder: " + ec.message();
                     return false;
                 }
             }
             fs::copy(sourceLib, destLib, fs::copy_options::recursive, ec);
             if (ec) {
-                failure = "No se pudo copiar el directorio lib: " + ec.message();
+                failure = "Could not copy the lib folder: " + ec.message();
                 return false;
             }
         }
@@ -402,7 +402,7 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
             return !permEc;
         };
         if (!makeWrapper(kGameExecutable) || !makeWrapper(kLauncherExecutable)) {
-            failure = "No se pudieron crear los lanzadores.";
+            failure = "Could not create the launcher scripts.";
             return false;
         }
         return true;
@@ -415,7 +415,7 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
         if (!sameFile(source, destination)) {
             fs::copy_file(source, destination, fs::copy_options::overwrite_existing, ec);
             if (ec) {
-                failure = "No se pudo instalar " + std::string(name) + ": " + ec.message();
+                failure = "Could not install " + std::string(name) + ": " + ec.message();
                 return false;
             }
         }
@@ -423,7 +423,7 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                         fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
                         fs::perm_options::add, ec);
         if (ec) {
-            failure = "No se pudo hacer ejecutable " + destination.string() + ": " + ec.message();
+            failure = "Could not make executable: " + destination.string() + ": " + ec.message();
             return false;
         }
     }
@@ -438,11 +438,11 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
 
 void usage(const char* argv0)
 {
-    std::cout << "Uso: " << argv0 << " [--rom ARCHIVO.iso] [--install-dir DIR] [--extract-only]\n"
-              << "Sin argumentos abre el instalador gráfico (necesita zenity o kdialog);\n"
-              << "desde una terminal sin ellos se usa el instalador en modo texto.\n"
-              << "La ROM debe proceder de una copia legítima de Pikmin USA Rev. 1.\n"
-              << "--skip-verify omite la comprobación de integridad de la imagen.\n";
+    std::cout << "Usage: " << argv0 << " [--rom FILE.iso] [--install-dir DIR] [--extract-only]\n"
+              << "With no arguments it opens the graphical installer (needs zenity or kdialog);\n"
+              << "from a terminal without those it falls back to the text installer.\n"
+              << "The disc image must come from your own copy of Pikmin: USA Rev 1 or Europe.\n"
+              << "--skip-verify skips the image integrity check.\n";
 }
 
 } // namespace
@@ -478,7 +478,7 @@ int main(int argc, char** argv)
     std::unique_ptr<pikmin::launcher::InstallerWindow> installerWindow;
     const auto reportError = [&installerWindow](const std::string& error) {
         if (installerWindow) installerWindow->showError(error);
-        else std::cerr << "Error de instalación: " << error << '\n';
+        else std::cerr << "Installation error: " << error << '\n';
     };
     if (installedBesideLauncher) {
         dataRoot = sourceDirectory;
@@ -487,7 +487,7 @@ int main(int argc, char** argv)
             installerWindow = std::make_unique<pikmin::launcher::InstallerWindow>();
             std::string error;
             if (!installerWindow->open(error)) {
-                std::cerr << "No se pudo abrir el instalador: " << error << '\n';
+                std::cerr << "Could not open the installer: " << error << '\n';
                 return 1;
             }
             std::string selectedRom;
@@ -503,15 +503,15 @@ int main(int argc, char** argv)
         } else if (stdinIsTerminal()) {
             image = askForImageConsole();
             if (image.empty()) {
-                std::cerr << "No se seleccionó ninguna imagen.\n";
+                std::cerr << "No disc image was chosen.\n";
                 return 1;
             }
             dataRoot = askForInstallDirectoryConsole();
         } else {
             if (respawnInTerminal()) return 0;
-            std::cerr << "Se necesita Zenity o KDialog para el instalador gráfico.\n"
-                         "Instala zenity (Debian/Ubuntu: sudo apt install zenity; Arch: sudo pacman -S zenity)\n"
-                         "o ejecuta pikmin-launcher desde una terminal para usar el modo texto.\n";
+            std::cerr << "The graphical installer needs Zenity or KDialog.\n"
+                         "Install zenity (Debian/Ubuntu: sudo apt install zenity; Arch: sudo pacman -S zenity)\n"
+                         "or run nectar-launcher from a terminal to use the text installer.\n";
             return 1;
         }
     } else if (dataRoot.empty()) {
@@ -524,12 +524,12 @@ int main(int argc, char** argv)
         if (image.empty() && stdinIsTerminal()) image = askForImageConsole();
         if (image.empty()) {
             if (installerWindow) return 0;
-            std::cerr << "No se seleccionó ninguna imagen.\n";
+            std::cerr << "No disc image was chosen.\n";
             return 1;
         }
         const std::string ext = lowerExtension(image);
         if (ext != ".iso" && ext != ".gcm") {
-            const std::string error = "El instalador acepta ISO/GCM. Convierte RVZ/WIA/GCZ a ISO con dolphin-tool.";
+            const std::string error = "The installer takes ISO/GCM. Convert RVZ/WIA/GCZ to ISO with dolphin-tool.";
             reportError(error);
             return 1;
         }
@@ -537,12 +537,12 @@ int main(int argc, char** argv)
         // desde una copia dañada y que el fallo aparezca mucho después, ya en
         // el juego, como un error incomprensible.
         if (!skipVerify) {
-            if (installerWindow) installerWindow->updateProgress(0, "Verificando la imagen...");
-            else std::cout << "Verificando la integridad de la imagen..." << std::flush;
+            if (installerWindow) installerWindow->updateProgress(0, "Checking the image...");
+            else std::cout << "Checking the image..." << std::flush;
             std::string verifyError;
             const auto verifyProgress = [&installerWindow](std::uint32_t percent) {
                 if (installerWindow) {
-                    installerWindow->updateProgress(percent, "Verificando la imagen...");
+                    installerWindow->updateProgress(percent, "Checking the image...");
                 }
             };
             if (!pikmin::launcher::verifyImageIntegrity(image, verifyError, verifyProgress)) {
@@ -550,7 +550,7 @@ int main(int argc, char** argv)
                 reportError(verifyError);
                 return 1;
             }
-            if (!installerWindow) std::cout << " correcta.\n";
+            if (!installerWindow) std::cout << " ok.\n";
         }
 
         std::string failure;
@@ -582,11 +582,11 @@ int main(int argc, char** argv)
 
             int selected = -1;
             if (stdinIsTerminal()) {
-                std::cout << "\nEste disco trae " << disc->languageCount << " idiomas:\n";
+                std::cout << "\nThis disc carries " << disc->languageCount << " languages:\n";
                 for (std::size_t i = 0; i < names.size(); ++i) {
                     std::cout << "  " << (i + 1) << ") " << names[i] << '\n';
                 }
-                const std::string answer = promptLine("¿En cuál quieres jugar? [1]: ");
+                const std::string answer = promptLine("Which one do you want to play in? [1]: ");
                 const int number = answer.empty() ? 1 : std::atoi(answer.c_str());
                 if (number >= 1 && number <= disc->languageCount) selected = number - 1;
             } else {
@@ -597,8 +597,8 @@ int main(int argc, char** argv)
             // change it rather than leaving it a mystery.
             const int language = (selected >= 0) ? selected : 0;
             if (writeSettingKey(dataRoot, "language", disc->languages[language])) {
-                std::cout << "Idioma: " << names[language]
-                          << "  (cámbialo en pikmin_settings.conf, clave 'language')\n";
+                std::cout << "Language: " << names[language]
+                          << "  (change it in pikmin_settings.conf, key 'language')\n";
             }
         }
     }
@@ -610,14 +610,14 @@ int main(int argc, char** argv)
     }
     if (installedAssetsNow) {
         if (installerWindow) installerWindow->showComplete(dataRoot.string(), !extractOnly);
-        else std::cout << "Instalación completada en: " << dataRoot << '\n'
-                       << (extractOnly ? "" : "El juego se iniciará ahora.\n");
+        else std::cout << "Installed in: " << dataRoot << '\n'
+                       << (extractOnly ? "" : "The game will start now.\n");
     }
     if (extractOnly) return 0;
 
     const fs::path gameBinary = dataRoot / kGameExecutable;
     if (!fs::is_regular_file(gameBinary)) {
-        std::cerr << "No se encontró el ejecutable del juego junto al launcher: " << gameBinary << '\n';
+        std::cerr << "The game executable is not next to the launcher: " << gameBinary << '\n';
         return 1;
     }
     installerWindow.reset();
