@@ -5,6 +5,7 @@
 #include "Dolphin/os.h"
 #include "FlowController.h"
 #include "Generator.h"
+#include "Geometry.h"
 #include "Graphics.h"
 #include "MemoryCard.h"
 #include "PlayerState.h"
@@ -15,6 +16,7 @@
 #include "sysNew.h"
 #include "zen/ogFileChkSel.h"
 #if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
 #include "pc_permadeath.h"
 #include "settings/pc_settings.h"
 #endif
@@ -220,6 +222,18 @@ struct CardSelectSetupSection : public Node {
 	 */
 	virtual void draw(Graphics& gfx) // _14 (weak)
 	{
+#if defined(PIKI_PC_PORT)
+		pc_gfx_begin_menu_2d();
+		const int menuW = pc_gfx_menu_virt_width();
+		const RectArea menuArea(0, 0, menuW, gfx.mScreenHeight);
+		gfx.setViewport(menuArea);
+		gfx.setScissor(menuArea);
+		gfx.setClearColour(COLOUR_TRANSPARENT);
+		gfx.clearBuffer(Graphics::ClearBufferFlag::Both, false);
+
+		Matrix4f mtx;
+		gfx.setOrthogonal(mtx.mMtx, menuArea);
+#else
 		gfx.setViewport(AREA_FULL_SCREEN(gfx));
 		gfx.setScissor(AREA_FULL_SCREEN(gfx));
 		gfx.setClearColour(COLOUR_TRANSPARENT);
@@ -227,6 +241,7 @@ struct CardSelectSetupSection : public Node {
 
 		Matrix4f mtx;
 		gfx.setOrthogonal(mtx.mMtx, AREA_FULL_SCREEN(gfx));
+#endif
 
 #if defined(PIKI_PC_PORT)
 		// Before the early return: the file screen is closed while the prompt

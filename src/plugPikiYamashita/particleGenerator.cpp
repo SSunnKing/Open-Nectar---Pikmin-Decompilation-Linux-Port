@@ -4,6 +4,7 @@
 #include "zen/particle.h"
 #if defined(PIKI_PC_PORT)
 #include "timing/pc_render_phase.h"
+#include "pc_gfx.h"
 #endif
 
 /**
@@ -1001,6 +1002,9 @@ void zen::particleGenerator::drawPtclBillboard(Graphics& gfx)
 	gfx.useMatrix(gfx.mCamera->mLookAtMtx, 0);
 	GXSetAlphaCompare(GX_GEQUAL, 1, GX_AOP_AND, GX_LEQUAL, 255);
 	gfx.setBlendMode(mBlendFactor, mZMode, mAnimData.mBlendMode);
+#if defined(PIKI_PC_PORT)
+	pc_gfx_filesel_debug_note_ptcl(mBlendFactor, mZMode, mAnimData.mBlendMode, mScaleSize);
+#endif
 
 	if (gfx.initParticle(false)) {
 		zenList* origin = mPtclMdlListManager.getOrigin();

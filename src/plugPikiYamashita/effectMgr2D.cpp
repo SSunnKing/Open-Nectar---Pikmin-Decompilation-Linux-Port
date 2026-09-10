@@ -1,7 +1,11 @@
 #include "zen/EffectMgr2D.h"
 #include "DebugLog.h"
 #include "Graphics.h"
+#include "Geometry.h"
 #include "nlib/Math.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -122,10 +126,25 @@ void zen::EffectMgr2D::update()
  */
 void zen::EffectMgr2D::draw(Graphics& gfx)
 {
+#if defined(PIKI_PC_PORT)
+	const int virtW = pc_gfx_get_hud_wide() ? pc_gfx_get_hud_virtual_width() : gfx.mScreenWidth;
+	const f32 cx    = f32(virtW) * 0.5f;
+	const f32 dist  = NMathF::cos(15.0f * PI / 180.0f) / NMathF::sin(15.0f * PI / 180.0f) * 240.0f;
+	Vector3f eyePos(cx, 240.0f, dist);
+	Vector3f targetPos(cx, 240.0f, 0.0f);
+	mCamera.calcVectors(eyePos, targetPos);
+	mCamera.update(f32(virtW) / 480.0f, 30.0f, 1.0f, 5000.0f);
+#else
 	mCamera.update(f32(gfx.mScreenWidth) / f32(gfx.mScreenHeight), 30.0f, 1.0f, 5000.0f);
+#endif
 	gfx.setCamera(&mCamera);
 	gfx.setPerspective(mCamera.mPerspectiveMatrix.mMtx, mCamera.mFov, mCamera.mAspectRatio, mCamera.mNear, mCamera.mFar, 1.0f);
+#if defined(PIKI_PC_PORT)
+	pc_gfx_filesel_debug_note_aspect(mCamera.mAspectRatio, gfx.mScreenWidth, gfx.mScreenHeight);
+	gfx.setScissor(RectArea(0, 0, virtW, gfx.mScreenHeight));
+#else
 	gfx.setScissor(AREA_FULL_SCREEN(gfx));
+#endif
 	gfx.useMatrix(gfx.mCamera->mLookAtMtx, 0);
 	mParticleManager.draw(gfx);
 }

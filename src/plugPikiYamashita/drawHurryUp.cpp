@@ -8,6 +8,9 @@
 #include "sysNew.h"
 #include "zen/Math.h"
 #include "zen/ogTutorial.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -250,7 +253,16 @@ bool zen::DrawHurryUp::update()
 void zen::DrawHurryUp::draw(Graphics&)
 {
 	if (mIsVisible) {
+#if defined(PIKI_PC_PORT)
+		pc_gfx_set_hud_wide(1);
+		const int virtW = pc_gfx_get_hud_virtual_width();
+		P2DPerspGraph graph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
+		graph.setPort();
+		mScreen.draw((virtW - 640) / 2, 0, &graph);
+		pc_gfx_set_hud_wide(0);
+#else
 		mPerspGraph->setPort();
 		mScreen.draw(0, 0, mPerspGraph);
+#endif
 	}
 }

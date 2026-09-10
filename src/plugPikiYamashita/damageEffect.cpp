@@ -2,6 +2,9 @@
 #include "Graphics.h"
 #include "NaviMgr.h"
 #include "gameflow.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -86,7 +89,12 @@ void zen::DamageEffect::draw(Graphics& gfx)
 		GXSetTevColorOp(GX_TEVSTAGE3, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
 
 		f32 scale = 1.0f;
-		gfx.drawRectangle(RectArea(0, 0, (f32)gfx.mScreenWidth * scale, (f32)gfx.mScreenHeight * scale),
+#if defined(PIKI_PC_PORT)
+		const int screenW = pc_gfx_get_hud_wide() ? pc_gfx_get_hud_virtual_width() : gfx.mScreenWidth;
+#else
+		const int screenW = gfx.mScreenWidth;
+#endif
+		gfx.drawRectangle(RectArea(0, 0, (f32)screenW * scale, (f32)gfx.mScreenHeight * scale),
 		                  RectArea(0, 0, 0.5f * (f32)gfx.mScreenWidth, 0.5f * (f32)gfx.mScreenHeight), nullptr);
 
 		GXSetTevSwapMode(GX_TEVSTAGE0, GX_TEV_SWAP0, GX_TEV_SWAP0);

@@ -20,6 +20,9 @@
 #include "zen/DrawHiScore.h"
 #include "zen/ogStart.h"
 #include "zen/ogTitle.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 class TitleSetupSection;
 
@@ -635,7 +638,13 @@ public:
 		gfx.flushCachedShapes();
 		gsys->flushLFlares(gfx);
 
+#if defined(PIKI_PC_PORT)
+		pc_gfx_begin_menu_2d();
+		const int menuW = pc_gfx_menu_virt_width();
+		gfx.setOrthogonal(orthoMtx.mMtx, RectArea(0, 0, menuW, gfx.mScreenHeight));
+#else
 		gfx.setOrthogonal(orthoMtx.mMtx, AREA_FULL_SCREEN(gfx));
+#endif
 		gfx.useMatrix(Matrix4f::ident, 0); // colin i think it's been set mate
 
 		// this is just for fading the debug menu

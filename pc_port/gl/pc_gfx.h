@@ -27,6 +27,28 @@ void pc_gfx_set_aspect_ratio_mode(int mode);
 int pc_gfx_get_aspect_ratio_mode(void);
 float pc_gfx_get_current_aspect_ratio(void);
 
+// Menu 2D: uniform 640x480 inside the RT (pillarbox). World keeps the
+// stretched map. Viewport and scissor share map_gx_rect, so this flag
+// applies to both. Reset at begin_frame.
+void pc_gfx_set_ui_43(int enabled);
+int pc_gfx_get_ui_43(void);
+
+// Field HUD: GX space is V=480*aspect by 480, mapped uniformly onto the RT.
+// Panes are translated in that space (left / centre / right). Not a stretch.
+void pc_gfx_set_hud_wide(int enabled);
+int pc_gfx_get_hud_wide(void);
+int pc_gfx_get_hud_virtual_width(void);
+
+// Menu layout. Default is widescreen (same as field HUD B).
+// Revert to 4:3 pillarbox (A) without a rebuild: PIKMIN_MENU_PILLARBOX=1
+// or compile with -DNECTAR_MENU_PILLARBOX.
+int pc_gfx_menu_wide(void);
+void pc_gfx_begin_menu_2d(void);
+int pc_gfx_menu_virt_width(void);
+int pc_gfx_menu_shift_center(void);
+int pc_gfx_menu_shift_right(void);
+int pc_gfx_menu_shift_slot(int slotIndex);
+
 // Viewport / Scissor / Matrices
 void pc_gfx_set_projection(const Mtx44 mtx, GXProjectionType type);
 void pc_gfx_set_viewport(f32 xOrig, f32 yOrig, f32 wd, f32 ht, f32 nearZ, f32 farZ);
@@ -197,6 +219,15 @@ void pc_gfx_get_pool_peaks(int* matrixPeak, int* matrixMax, int* shapePeak, int*
 // once per frame, right after renderall. No-op unless PIKMIN_TICK_STATS is set.
 void pc_gfx_flush_batch(void);
 void pc_gfx_flush_submit_stats(void);
+
+// File-select stain probe. Off unless PIKMIN_FILESEL_DEBUG=1. Reads the same
+// left/right pixels before particles, after particles, after the rest of the
+// UI, and on both sides of the late post pass, and dumps blend/TEV on the
+// particle draws in between. One report every 60 file-select frames.
+void pc_gfx_filesel_debug_probe(const char* tag);
+void pc_gfx_filesel_debug_set_fx(int active);
+void pc_gfx_filesel_debug_note_aspect(float aspect, int screenW, int screenH);
+void pc_gfx_filesel_debug_note_ptcl(unsigned blendFactor, unsigned zMode, unsigned tevMode, float scaleSize);
 
 class PcRenderPacketStore;
 PcRenderPacketStore& pc_gfx_get_packet_store();

@@ -1,9 +1,13 @@
 #include "zen/DrawHiScore.h"
 #include "DebugLog.h"
 #include "Graphics.h"
+#include "Geometry.h"
 #include "P2D/TextBox.h"
 #include "SoundMgr.h"
 #include "sysNew.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -148,7 +152,14 @@ void zen::DrawHiScore::draw(Graphics& gfx)
 		gfx.setOrthogonal(mtx.mMtx, AREA_FULL_SCREEN(gfx));
 		gfx.setColour(COLOUR_BLACK, true);
 		gfx.setAuxColour(Colour(0, 0, 64, 255));
+#if defined(PIKI_PC_PORT)
+		pc_gfx_begin_menu_2d();
+		const int virtW = pc_gfx_menu_virt_width();
+		gfx.setOrthogonal(mtx.mMtx, RectArea(0, 0, virtW, gfx.mScreenHeight));
+		gfx.fillRectangle(RectArea(0, 0, virtW, gfx.mScreenHeight));
+#else
 		gfx.fillRectangle(AREA_FULL_SCREEN(gfx));
+#endif
 		mScreen->draw();
 	}
 

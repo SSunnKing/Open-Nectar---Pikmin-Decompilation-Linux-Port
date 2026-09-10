@@ -695,6 +695,30 @@ static inline void pc_gfx_note_gl_state_change() {
     ++sGlStateEpoch;
 }
 
+// The pipeline setters (blend, depth, cull, viewport, scissor) keep a
+// redundancy guard so a repeated GX call does not touch GL. post_apply()
+// writes those bits of GL itself -- it disables blend, depth and cull --
+// and present() does not put them back. A guard that still believes the
+// last GX blend is bound then skips the glEnable that would have corrected
+// it. On the file-select screen that is fatal: the whole frame is
+// perspective, so the pass runs at present() rather than at an ortho
+// boundary, and the next frame's pictures (IA4 stars, I8 sparkles) draw
+// with blending left off. Their dark texels overwrite the background as
+// opaque black squares.
+static uint32_t sGlPipelineGuardSerial = 1;
+static void invalidate_gl_pipeline_guards() {
+    ++sGlPipelineGuardSerial;
+}
+
+static bool sFileSelDebugReport = false;
+static bool sFileSelFxWindow = false;
+static uint64_t sGfxFrameSerial = 0;
+static void filesel_debug_probe_now(const char* tag, GLuint fbo);
+static void filesel_debug_log_draw();
+static void filesel_debug_on_present(bool latePost, GLuint produced);
+static void filesel_debug_note_ortho_post();
+static void filesel_debug_print_post_ortho();
+
 // ── Render Packet Capture System ──
 // Captures immutable render packets at the GX -> OpenGL boundary.
 // These packets can be replayed without re-entering game code.
@@ -957,30 +981,171 @@ static std::unordered_map<u32, PcTlut> sLoadedTluts;
 static std::unordered_map<uintptr_t, PcCiTexture> sCiTextures;
 static int sDrawableWidth = 640;
 static int sDrawableHeight = 480;
+static bool sUi43 = false;
+static bool sHudWide = false;
 
-// Pikmin renders into the GameCube's 640x480 EFB coordinate space, but we scale
-// it to the target aspect ratio. Translate GX's top-left origin to OpenGL's bottom-left.
-static void map_gx_rect(float x, float y, float width, float height,
-                        GLint& glX, GLint& glY, GLsizei& glWidth, GLsizei& glHeight) {
+static int hud_virtual_width() {
+    const int v = int(lroundf(480.0f * sCurrentAspectRatio));
+    return v < 640 ? 640 : v;
+}
+
+// GX 640x480 → GL. World/HUD stretch X to the window aspect. Menu UI 4:3 uses
+// a uniform scale and centres the 640x480 rect (pillarbox). Viewport and
+// scissor both call this so they cannot drift.
+static void gx_rect_params(float& scaleX, float& scaleY, float& offsetX, float& offsetY) {
     const float targetWidth = sNativeFramebufferReady ? float(sRenderWidth) : float(sDrawableWidth);
     const float targetHeight = sNativeFramebufferReady ? float(sRenderHeight) : float(sDrawableHeight);
-    
-    // Base dimensions match the target aspect ratio (not always 4:3)
-    float aspect = sCurrentAspectRatio;
-    int baseWidth = int(lroundf(480.0f * aspect));
-    int baseHeight = 480;
-    
+    if (sUi43) {
+        const float scale = fminf(targetWidth / 640.0f, targetHeight / 480.0f);
+        scaleX = scale;
+        scaleY = scale;
+        offsetX = (targetWidth - 640.0f * scale) * 0.5f;
+        offsetY = (targetHeight - 480.0f * scale) * 0.5f;
+        return;
+    }
+    if (sHudWide) {
+        const float virtW = float(hud_virtual_width());
+        const float scale = fminf(targetWidth / virtW, targetHeight / 480.0f);
+        scaleX = scale;
+        scaleY = scale;
+        offsetX = (targetWidth - virtW * scale) * 0.5f;
+        offsetY = (targetHeight - 480.0f * scale) * 0.5f;
+        return;
+    }
+    const int baseWidth = int(lroundf(480.0f * sCurrentAspectRatio));
+    const int baseHeight = 480;
     const float scale = fminf(targetWidth / float(baseWidth), targetHeight / float(baseHeight));
-    const float offsetX = (targetWidth - float(baseWidth) * scale) * 0.5f;
-    const float offsetY = (targetHeight - float(baseHeight) * scale) * 0.5f;
-    
-    // Scale from 640x480 GX coordinates to the target aspect ratio
-    float scaleX = float(baseWidth) / 640.0f;
-    
-    glX = (GLint)lroundf(offsetX + x * scaleX * scale);
-    glY = (GLint)lroundf(offsetY + (480.0f - y - height) * scale);
-    glWidth = (GLsizei)std::max(0L, lroundf(width * scaleX * scale));
-    glHeight = (GLsizei)std::max(0L, lroundf(height * scale));
+    offsetX = (targetWidth - float(baseWidth) * scale) * 0.5f;
+    offsetY = (targetHeight - float(baseHeight) * scale) * 0.5f;
+    scaleX = (float(baseWidth) / 640.0f) * scale;
+    scaleY = scale;
+}
+
+static void map_gx_rect(float x, float y, float width, float height,
+                        GLint& glX, GLint& glY, GLsizei& glWidth, GLsizei& glHeight) {
+    float scaleX, scaleY, offsetX, offsetY;
+    gx_rect_params(scaleX, scaleY, offsetX, offsetY);
+    glX = (GLint)lroundf(offsetX + x * scaleX);
+    glY = (GLint)lroundf(offsetY + (480.0f - y - height) * scaleY);
+    glWidth = (GLsizei)std::max(0L, lroundf(width * scaleX));
+    glHeight = (GLsizei)std::max(0L, lroundf(height * scaleY));
+}
+
+static void fill_ui_43_bars() {
+    const float targetWidth = sNativeFramebufferReady ? float(sRenderWidth) : float(sDrawableWidth);
+    const float targetHeight = sNativeFramebufferReady ? float(sRenderHeight) : float(sDrawableHeight);
+    GLint ix, iy;
+    GLsizei iw, ih;
+    map_gx_rect(0.0f, 0.0f, 640.0f, 480.0f, ix, iy, iw, ih);
+    const GLint tw = (GLint)lroundf(targetWidth);
+    const GLint th = (GLint)lroundf(targetHeight);
+    const GLint leftW = ix;
+    const GLint rightX = ix + iw;
+    const GLint rightW = tw - rightX;
+    const GLint botH = iy;
+    const GLint topY = iy + ih;
+    const GLint topH = th - topY;
+    if (leftW <= 0 && rightW <= 0 && botH <= 0 && topH <= 0) {
+        return;
+    }
+    pc_gfx_note_gl_state_change();
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_SCISSOR_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    if (leftW > 0) {
+        glScissor(0, 0, leftW, th);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    if (rightW > 0) {
+        glScissor(rightX, 0, rightW, th);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    if (botH > 0) {
+        glScissor(0, 0, tw, botH);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    if (topH > 0) {
+        glScissor(0, topY, tw, topH);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    glClearColor(sCopyClearColor[0], sCopyClearColor[1], sCopyClearColor[2], sCopyClearColor[3]);
+    invalidate_gl_pipeline_guards();
+}
+
+void pc_gfx_set_ui_43(int enabled) {
+    const bool want = enabled != 0;
+    if (want != sUi43) {
+        sUi43 = want;
+        invalidate_gl_pipeline_guards();
+    }
+    if (want) {
+        fill_ui_43_bars();
+    }
+}
+
+int pc_gfx_get_ui_43(void) {
+    return sUi43 ? 1 : 0;
+}
+
+void pc_gfx_set_hud_wide(int enabled) {
+    const bool want = enabled != 0;
+    if (want != sHudWide) {
+        sHudWide = want;
+        invalidate_gl_pipeline_guards();
+    }
+}
+
+int pc_gfx_get_hud_wide(void) {
+    return sHudWide ? 1 : 0;
+}
+
+int pc_gfx_get_hud_virtual_width(void) {
+    return hud_virtual_width();
+}
+
+static int menu_wide_cached = -1;
+
+int pc_gfx_menu_wide(void) {
+    if (menu_wide_cached < 0) {
+#if defined(NECTAR_MENU_PILLARBOX)
+        menu_wide_cached = 0;
+#else
+        menu_wide_cached = (std::getenv("PIKMIN_MENU_PILLARBOX") != nullptr) ? 0 : 1;
+#endif
+    }
+    return menu_wide_cached;
+}
+
+void pc_gfx_begin_menu_2d(void) {
+    if (pc_gfx_menu_wide()) {
+        pc_gfx_set_ui_43(0);
+        pc_gfx_set_hud_wide(1);
+    } else {
+        pc_gfx_set_hud_wide(0);
+        pc_gfx_set_ui_43(1);
+    }
+}
+
+int pc_gfx_menu_virt_width(void) {
+    return pc_gfx_menu_wide() ? hud_virtual_width() : 640;
+}
+
+int pc_gfx_menu_shift_center(void) {
+    return (pc_gfx_menu_virt_width() - 640) / 2;
+}
+
+int pc_gfx_menu_shift_right(void) {
+    return pc_gfx_menu_virt_width() - 640;
+}
+
+int pc_gfx_menu_shift_slot(int slotIndex) {
+    if (slotIndex <= 0) {
+        return 0;
+    }
+    if (slotIndex == 1) {
+        return pc_gfx_menu_shift_center();
+    }
+    return pc_gfx_menu_shift_right();
 }
 
 // ── GLSL Shaders ──
@@ -1815,6 +1980,8 @@ static void perf_gpu_scene_begin() {
 }
 
 void pc_gfx_begin_frame(void) {
+    sUi43 = false;
+    sHudWide = false;
     // One frame's worth of projection changes every second. Printing every
     // frame drowns the log and changes the timing of what it is measuring.
     {
@@ -1832,6 +1999,7 @@ void pc_gfx_begin_frame(void) {
         sProjSeenThisFrame = 0;
         sDrawsAtProjection = sPerfDraws;
     }
+    ++sGfxFrameSerial;
     sPendingValid = false;
     sDrawsAtFrameStart = sPerfDraws;
     using Clock = std::chrono::steady_clock;
@@ -2824,6 +2992,10 @@ static GLuint post_apply()
     // flashes only when the TEV key changed and forced a rebind.
     for (int i = 0; i < 8; i++) sBoundTextures[i] = 0;
     gl_program_cache_invalidate();
+    // Same class of bug as the program cache above: the pass has just
+    // disabled blend/depth/cull and resized the viewport, so the GX
+    // setters' redundancy guards are now lying.
+    invalidate_gl_pipeline_guards();
     return sPostFramebuffer;
 }
 
@@ -2961,6 +3133,7 @@ static void post_apply_before_interface()
     }
 
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+    filesel_debug_note_ortho_post();
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
     if (hadScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
@@ -3001,7 +3174,14 @@ void pc_gfx_present(void) {
     // Normally the pass has already run, where the world ended. It still runs
     // here when it did not -- a frame with no interface at all, which is what
     // a cutscene is -- so nothing is lost in those.
+    const bool latePost = !sPostRanThisFrame;
+    if (sFileSelDebugReport && latePost) {
+        filesel_debug_probe_now("present_before_post", sNativeFramebuffer);
+    }
     const GLuint sourceFramebuffer = sPostRanThisFrame ? sNativeFramebuffer : post_apply();
+    if (sFileSelDebugReport) {
+        filesel_debug_on_present(latePost, sourceFramebuffer);
+    }
     sPostRanThisFrame = false;
     glBindFramebuffer_ptr(GL_READ_FRAMEBUFFER, sourceFramebuffer);
     glBindFramebuffer_ptr(GL_DRAW_FRAMEBUFFER, 0);
@@ -3134,7 +3314,10 @@ void pc_gfx_set_viewport(f32 xOrig, f32 yOrig, f32 wd, f32 ht, f32 nearZ, f32 fa
     map_gx_rect(xOrig, yOrig, wd, ht, x, y, width, height);
     static GLint lastX = 0, lastY = 0;
     static GLsizei lastWidth = 0, lastHeight = 0;
-    if (x == lastX && y == lastY && width == lastWidth && height == lastHeight) return;
+    static uint32_t seenSerial = 0;
+    if (seenSerial == sGlPipelineGuardSerial
+        && x == lastX && y == lastY && width == lastWidth && height == lastHeight) return;
+    seenSerial = sGlPipelineGuardSerial;
     lastX = x; lastY = y; lastWidth = width; lastHeight = height;
     pc_gfx_note_gl_state_change();
     glViewport(x, y, width, height);
@@ -3145,7 +3328,10 @@ void pc_gfx_set_scissor(u32 xOrig, u32 yOrig, u32 wd, u32 ht) {
     map_gx_rect((float)xOrig, (float)yOrig, (float)wd, (float)ht, x, y, width, height);
     static GLint lastX = -1, lastY = -1;
     static GLsizei lastWidth = -1, lastHeight = -1;
-    if (x == lastX && y == lastY && width == lastWidth && height == lastHeight) return;
+    static uint32_t seenSerial = 0;
+    if (seenSerial == sGlPipelineGuardSerial
+        && x == lastX && y == lastY && width == lastWidth && height == lastHeight) return;
+    seenSerial = sGlPipelineGuardSerial;
     lastX = x; lastY = y; lastWidth = width; lastHeight = height;
     pc_gfx_note_gl_state_change();
     glScissor(x, y, width, height);
@@ -3195,9 +3381,12 @@ void pc_gfx_set_tex_coord_gen(GXTexCoordID coord, GXTexGenType type, GXTexGenSrc
 
 void pc_gfx_set_z_mode(GXBool compareEnable, GXCompare func, GXBool updateEnable) {
     static bool valid = false;
+    static uint32_t seenSerial = 0;
     static GXBool lastCompare = GX_FALSE, lastUpdate = GX_FALSE;
     static GXCompare lastFunc = GX_NEVER;
-    if (valid && lastCompare == compareEnable && lastFunc == func && lastUpdate == updateEnable) return;
+    if (seenSerial == sGlPipelineGuardSerial && valid
+        && lastCompare == compareEnable && lastFunc == func && lastUpdate == updateEnable) return;
+    seenSerial = sGlPipelineGuardSerial;
     valid = true; lastCompare = compareEnable; lastFunc = func; lastUpdate = updateEnable;
     pc_gfx_note_gl_state_change();
     if (compareEnable) {
@@ -3222,10 +3411,13 @@ void pc_gfx_set_z_mode(GXBool compareEnable, GXCompare func, GXBool updateEnable
 
 void pc_gfx_set_blend_mode(GXBlendMode type, GXBlendFactor srcFactor, GXBlendFactor dstFactor, GXLogicOp op) {
     static bool valid = false;
+    static uint32_t seenSerial = 0;
     static GXBlendMode lastType = GX_BM_NONE;
     static GXBlendFactor lastSrc = GX_BL_ZERO, lastDst = GX_BL_ZERO;
     static GXLogicOp lastOp = GX_LO_CLEAR;
-    if (valid && lastType == type && lastSrc == srcFactor && lastDst == dstFactor && lastOp == op) return;
+    if (seenSerial == sGlPipelineGuardSerial && valid
+        && lastType == type && lastSrc == srcFactor && lastDst == dstFactor && lastOp == op) return;
+    seenSerial = sGlPipelineGuardSerial;
     valid = true; lastType = type; lastSrc = srcFactor; lastDst = dstFactor; lastOp = op;
     pc_gfx_note_gl_state_change();
     glDisable(GL_COLOR_LOGIC_OP);
@@ -3275,8 +3467,10 @@ void pc_gfx_set_blend_mode(GXBlendMode type, GXBlendFactor srcFactor, GXBlendFac
 
 void pc_gfx_set_cull_mode(GXCullMode mode) {
     static bool valid = false;
+    static uint32_t seenSerial = 0;
     static GXCullMode lastMode = GX_CULL_NONE;
-    if (valid && lastMode == mode) return;
+    if (seenSerial == sGlPipelineGuardSerial && valid && lastMode == mode) return;
+    seenSerial = sGlPipelineGuardSerial;
     valid = true; lastMode = mode;
     pc_gfx_note_gl_state_change();
     if (mode == GX_CULL_NONE) {
@@ -4287,6 +4481,329 @@ void pc_gfx_set_fog(int enabled, float startZ, float endZ, float nearZ, float fa
 
 void pc_gfx_set_fog_allowed(int allowed) { sFogAllowed = allowed != 0; }
 
+static bool filesel_debug_enabled()
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = getenv("PIKMIN_FILESEL_DEBUG") != nullptr ? 1 : 0;
+        if (cached) {
+            printf("[PC Port] PIKMIN_FILESEL_DEBUG: file-select stain probe on (once per second)\n");
+            fflush(stdout);
+        }
+    }
+    return cached != 0;
+}
+
+static const char* gl_blend_name(GLint factor)
+{
+    switch (factor) {
+    case GL_ZERO: return "ZERO";
+    case GL_ONE: return "ONE";
+    case GL_SRC_ALPHA: return "SRCALPHA";
+    case GL_ONE_MINUS_SRC_ALPHA: return "INVSRCALPHA";
+    case GL_DST_ALPHA: return "DSTALPHA";
+    case GL_ONE_MINUS_DST_ALPHA: return "INVDSTALPHA";
+    case GL_DST_COLOR: return "DSTCOL";
+    case GL_ONE_MINUS_DST_COLOR: return "INVDSTCOL";
+    case GL_SRC_COLOR: return "SRCCOL";
+    case GL_ONE_MINUS_SRC_COLOR: return "INVSRCCOL";
+    default: return "?";
+    }
+}
+
+static void filesel_debug_probe_now(const char* tag, GLuint fbo)
+{
+    if (!sFileSelDebugReport || !sNativeFramebufferReady || !glBindFramebuffer_ptr) return;
+    pc_gfx_flush_batch();
+    if (!fbo) fbo = sNativeFramebuffer;
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, fbo);
+
+    struct Probe {
+        const char* name;
+        int x;
+        int y;
+    };
+    const int yBand = std::max(0, sRenderHeight * 3 / 10);
+    const Probe probes[3] = {
+        { "L", std::max(0, sRenderWidth / 20), yBand },
+        { "R", std::max(0, sRenderWidth * 19 / 20), yBand },
+        { "C", sRenderWidth / 2, sRenderHeight / 2 },
+    };
+
+    GLint glSrc = 0, glDst = 0;
+    const GLboolean blendOn = glIsEnabled(GL_BLEND);
+    const GLboolean depthOn = glIsEnabled(GL_DEPTH_TEST);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &glSrc);
+    glGetIntegerv(GL_BLEND_DST_RGB, &glDst);
+
+    printf("[PC Port] FILESEL %s: %dx%d aspect=%.3f blend=%d src=%s dst=%s depth=%d fogReq=%d fogAllow=%d prog=%u ssao=%d dof=%d bloom=%d\n",
+           tag ? tag : "?",
+           sRenderWidth, sRenderHeight,
+           sCurrentAspectRatio,
+           blendOn ? 1 : 0, gl_blend_name(glSrc), gl_blend_name(glDst),
+           depthOn ? 1 : 0,
+           sFogRequested ? 1 : 0, sFogAllowed ? 1 : 0,
+           unsigned(sCurrentProgram),
+           pc_post_ssao_active(sPostEffects) ? 1 : 0,
+           pc_post_dof_active(sPostEffects) ? 1 : 0,
+           pc_post_bloom_active(sPostEffects) ? 1 : 0);
+    for (const Probe& probe : probes) {
+        unsigned char rgba[4] = { 0, 0, 0, 0 };
+        float depth = -1.0f;
+        glReadPixels(probe.x, probe.y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        if (sDepthIsTexture) {
+            glReadPixels(probe.x, probe.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+        }
+        printf("[PC Port] FILESEL %s %s=(%d,%d) rgb=(%d,%d,%d) a=%d z=%.4f\n",
+               tag ? tag : "?", probe.name, probe.x, probe.y,
+               rgba[0], rgba[1], rgba[2], rgba[3], depth);
+    }
+    {
+        const int xs[7] = {
+            std::max(0, sRenderWidth / 20),
+            std::max(0, sRenderWidth * 3 / 20),
+            std::max(0, sRenderWidth / 4),
+            sRenderWidth / 2,
+            std::max(0, sRenderWidth * 3 / 4),
+            std::max(0, sRenderWidth * 17 / 20),
+            std::max(0, sRenderWidth * 19 / 20),
+        };
+        const char* names[7] = { "5%", "15%", "25%", "50%", "75%", "85%", "95%" };
+        printf("[PC Port] FILESEL %s scan y=%d:", tag ? tag : "?", yBand);
+        for (int i = 0; i < 7; ++i) {
+            unsigned char rgba[4] = { 0, 0, 0, 0 };
+            glReadPixels(xs[i], yBand, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            printf(" %s=(%d,%d,%d)", names[i], rgba[0], rgba[1], rgba[2]);
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+}
+
+static uint64_t sFileSelDrawKeys[12];
+static int sFileSelDrawKeyCount = 0;
+static int sFileSelLargeQuadCount = 0;
+
+static void filesel_debug_log_draw()
+{
+    if (!sFileSelDebugReport || !sFileSelFxWindow) return;
+
+    const TevStageState& st = sTevStages[0];
+    const int c0r = int(sTevRegisters[GX_TEVREG0][0] * 255.0f + 0.5f);
+    const int c0g = int(sTevRegisters[GX_TEVREG0][1] * 255.0f + 0.5f);
+    const int c0b = int(sTevRegisters[GX_TEVREG0][2] * 255.0f + 0.5f);
+    const int c0a = int(sTevRegisters[GX_TEVREG0][3] * 255.0f + 0.5f);
+    const int c1r = int(sTevRegisters[GX_TEVREG1][0] * 255.0f + 0.5f);
+    const int c1g = int(sTevRegisters[GX_TEVREG1][1] * 255.0f + 0.5f);
+    const int c1b = int(sTevRegisters[GX_TEVREG1][2] * 255.0f + 0.5f);
+    const int c1a = int(sTevRegisters[GX_TEVREG1][3] * 255.0f + 0.5f);
+
+    GLint glSrc = 0, glDst = 0;
+    const GLboolean blendOn = glIsEnabled(GL_BLEND);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &glSrc);
+    glGetIntegerv(GL_BLEND_DST_RGB, &glDst);
+
+    uint64_t key = uint64_t(st.colorIn[0] & 15)
+        | (uint64_t(st.colorIn[1] & 15) << 4)
+        | (uint64_t(st.colorIn[2] & 15) << 8)
+        | (uint64_t(st.colorIn[3] & 15) << 12)
+        | (uint64_t(glSrc & 0xFFFF) << 16)
+        | (uint64_t(glDst & 0xFFFF) << 32)
+        | (uint64_t(c1r & 255) << 48)
+        | (uint64_t(blendOn ? 1 : 0) << 56);
+    bool seen = false;
+    for (int i = 0; i < sFileSelDrawKeyCount; ++i) {
+        if (sFileSelDrawKeys[i] == key) {
+            seen = true;
+            break;
+        }
+    }
+    if (!seen && sFileSelDrawKeyCount < 12) {
+        sFileSelDrawKeys[sFileSelDrawKeyCount++] = key;
+        printf("[PC Port] FILESEL draw: blend=%d src=%s dst=%s tevC=(%d,%d,%d,%d) tevA=(%d,%d,%d,%d) C0=(%d,%d,%d,%d) C1=(%d,%d,%d,%d) fog=%d prog=%u verts=%zu\n",
+               blendOn ? 1 : 0, gl_blend_name(glSrc), gl_blend_name(glDst),
+               int(st.colorIn[0]), int(st.colorIn[1]), int(st.colorIn[2]), int(st.colorIn[3]),
+               int(st.alphaIn[0]), int(st.alphaIn[1]), int(st.alphaIn[2]), int(st.alphaIn[3]),
+               c0r, c0g, c0b, c0a, c1r, c1g, c1b, c1a,
+               (sFogRequested && sFogAllowed) ? 1 : 0,
+               unsigned(sCurrentProgram), sVertexStream.size());
+        fflush(stdout);
+    }
+
+    if (sFileSelLargeQuadCount >= 6 || sVertexStream.empty()) return;
+    static const float identity[16] = {
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1
+    };
+    const float* model = sVerticesPretransformed ? identity : sPosMatrix[sCurrentPosMtxId];
+    float ndcMinX = 1.0e30f, ndcMaxX = -1.0e30f, ndcMinY = 1.0e30f, ndcMaxY = -1.0e30f;
+    for (const Vertex& vertex : sVertexStream) {
+        const float mx = model[0] * vertex.x + model[4] * vertex.y + model[8] * vertex.z + model[12];
+        const float my = model[1] * vertex.x + model[5] * vertex.y + model[9] * vertex.z + model[13];
+        const float mz = model[2] * vertex.x + model[6] * vertex.y + model[10] * vertex.z + model[14];
+        const float mw = model[3] * vertex.x + model[7] * vertex.y + model[11] * vertex.z + model[15];
+        const float cx = sProjMatrix[0] * mx + sProjMatrix[4] * my + sProjMatrix[8] * mz + sProjMatrix[12] * mw;
+        const float cy = sProjMatrix[1] * mx + sProjMatrix[5] * my + sProjMatrix[9] * mz + sProjMatrix[13] * mw;
+        const float cw = sProjMatrix[3] * mx + sProjMatrix[7] * my + sProjMatrix[11] * mz + sProjMatrix[15] * mw;
+        if (fabsf(cw) > 1.0e-8f) {
+            const float nx = cx / cw;
+            const float ny = cy / cw;
+            ndcMinX = std::min(ndcMinX, nx);
+            ndcMaxX = std::max(ndcMaxX, nx);
+            ndcMinY = std::min(ndcMinY, ny);
+            ndcMaxY = std::max(ndcMaxY, ny);
+        }
+    }
+    const float spanX = ndcMaxX - ndcMinX;
+    const bool side = ndcMinX < -0.7f || ndcMaxX > 0.7f;
+    if (spanX > 0.15f && side) {
+        ++sFileSelLargeQuadCount;
+        printf("[PC Port] FILESEL quad: ndc=(%.2f,%.2f)-(%.2f,%.2f) spanX=%.2f C1=(%d,%d,%d) dst=%s\n",
+               ndcMinX, ndcMinY, ndcMaxX, ndcMaxY, spanX, c1r, c1g, c1b, gl_blend_name(glDst));
+        fflush(stdout);
+    }
+}
+
+static uint64_t sFileSelPtclKeys[12];
+static int sFileSelPtclKeyCount = 0;
+
+void pc_gfx_filesel_debug_probe(const char* tag)
+{
+    if (!filesel_debug_enabled()) return;
+    static int gate = 0;
+    if (tag && std::strcmp(tag, "before_slots") == 0) {
+        sFileSelDebugReport = (++gate % 60 == 1);
+        sFileSelDrawKeyCount = 0;
+        sFileSelPtclKeyCount = 0;
+        sFileSelLargeQuadCount = 0;
+    }
+    if (!sFileSelDebugReport) return;
+    if (tag && std::strcmp(tag, "before_slots") == 0) {
+        filesel_debug_print_post_ortho();
+    }
+    filesel_debug_probe_now(tag, sNativeFramebuffer);
+}
+
+void pc_gfx_filesel_debug_set_fx(int active)
+{
+    sFileSelFxWindow = active != 0 && sFileSelDebugReport;
+}
+
+void pc_gfx_filesel_debug_note_aspect(float aspect, int screenW, int screenH)
+{
+    if (!sFileSelDebugReport) return;
+    printf("[PC Port] FILESEL fxCam: aspect=%.3f screen=%dx%d (4:3 would be 1.333) winAspect=%.3f\n",
+           aspect, screenW, screenH, sCurrentAspectRatio);
+    fflush(stdout);
+}
+
+void pc_gfx_filesel_debug_note_ptcl(unsigned blendFactor, unsigned zMode, unsigned tevMode, float scaleSize)
+{
+    if (!sFileSelDebugReport || !sFileSelFxWindow) return;
+    const uint64_t key = uint64_t(blendFactor & 255)
+        | (uint64_t(zMode & 255) << 8)
+        | (uint64_t(tevMode & 255) << 16);
+    for (int i = 0; i < sFileSelPtclKeyCount; ++i) {
+        if (sFileSelPtclKeys[i] == key) return;
+    }
+    if (sFileSelPtclKeyCount >= 12) return;
+    sFileSelPtclKeys[sFileSelPtclKeyCount++] = key;
+    printf("[PC Port] FILESEL pcr: blendFactor=0x%02x zMode=0x%02x tevMode=%u scale=%.2f (src=%u dst=%u)\n",
+           blendFactor, zMode, tevMode, scaleSize,
+           blendFactor & 0xf, (blendFactor >> 4) & 0xf);
+    fflush(stdout);
+}
+
+static uint64_t sPostOrthoFrame = 0;
+static int sPostOrthoDraws = -1;
+static float sPostOrthoNear = 0.0f, sPostOrthoFar = 0.0f;
+static float sPostOrthoInvP00 = 0.0f, sPostOrthoInvP11 = 0.0f;
+static int sPostOrthoViewport[4] = { 0, 0, 0, 0 };
+static unsigned char sPostOrthoL[4] = { 0, 0, 0, 0 };
+static unsigned char sPostOrthoC[4] = { 0, 0, 0, 0 };
+static unsigned char sPostOrthoScan[7][4] = {};
+
+static void filesel_debug_note_ortho_post()
+{
+    if (!filesel_debug_enabled() || !glBindFramebuffer_ptr) return;
+    sPostOrthoFrame = sGfxFrameSerial;
+    sPostOrthoDraws = int(sPerfDraws - sDrawsAtFrameStart);
+    sPostOrthoNear = sViewNear;
+    sPostOrthoFar = sViewFar;
+    sPostOrthoInvP00 = sViewInvP00;
+    sPostOrthoInvP11 = sViewInvP11;
+    glGetIntegerv(GL_VIEWPORT, sPostOrthoViewport);
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+    const int yBand = std::max(0, sRenderHeight * 3 / 10);
+    glReadPixels(std::max(0, sRenderWidth / 20), yBand, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, sPostOrthoL);
+    glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, sPostOrthoC);
+    const int xs[7] = {
+        std::max(0, sRenderWidth / 20),
+        std::max(0, sRenderWidth * 3 / 20),
+        std::max(0, sRenderWidth / 4),
+        sRenderWidth / 2,
+        std::max(0, sRenderWidth * 3 / 4),
+        std::max(0, sRenderWidth * 17 / 20),
+        std::max(0, sRenderWidth * 19 / 20),
+    };
+    for (int i = 0; i < 7; ++i) {
+        glReadPixels(xs[i], yBand, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, sPostOrthoScan[i]);
+    }
+}
+
+static void filesel_debug_print_post_ortho()
+{
+    if (sPostOrthoFrame != sGfxFrameSerial) {
+        printf("[PC Port] FILESEL post_ortho: none this frame (post has not run yet)\n");
+        fflush(stdout);
+        return;
+    }
+    printf("[PC Port] FILESEL post_ortho: draws=%d near=%.1f far=%.1f invP=(%.3f,%.3f) vp=(%d,%d,%d,%d) L=(%d,%d,%d) C=(%d,%d,%d)\n",
+           sPostOrthoDraws, sPostOrthoNear, sPostOrthoFar,
+           sPostOrthoInvP00, sPostOrthoInvP11,
+           sPostOrthoViewport[0], sPostOrthoViewport[1], sPostOrthoViewport[2], sPostOrthoViewport[3],
+           sPostOrthoL[0], sPostOrthoL[1], sPostOrthoL[2],
+           sPostOrthoC[0], sPostOrthoC[1], sPostOrthoC[2]);
+    printf("[PC Port] FILESEL post_ortho scan: 5%%=(%d,%d,%d) 15%%=(%d,%d,%d) 25%%=(%d,%d,%d) 50%%=(%d,%d,%d) 75%%=(%d,%d,%d) 85%%=(%d,%d,%d) 95%%=(%d,%d,%d)\n",
+           sPostOrthoScan[0][0], sPostOrthoScan[0][1], sPostOrthoScan[0][2],
+           sPostOrthoScan[1][0], sPostOrthoScan[1][1], sPostOrthoScan[1][2],
+           sPostOrthoScan[2][0], sPostOrthoScan[2][1], sPostOrthoScan[2][2],
+           sPostOrthoScan[3][0], sPostOrthoScan[3][1], sPostOrthoScan[3][2],
+           sPostOrthoScan[4][0], sPostOrthoScan[4][1], sPostOrthoScan[4][2],
+           sPostOrthoScan[5][0], sPostOrthoScan[5][1], sPostOrthoScan[5][2],
+           sPostOrthoScan[6][0], sPostOrthoScan[6][1], sPostOrthoScan[6][2]);
+    fflush(stdout);
+}
+
+static void filesel_debug_on_present(bool latePost, GLuint produced)
+{
+    if (!sFileSelDebugReport) return;
+    filesel_debug_probe_now(latePost ? "present_after_post" : "present_no_late_post", produced);
+    if (sLastAoReady && sAoFbo[0] && glBindFramebuffer_ptr && sAoWidth > 0 && sAoHeight > 0) {
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[0]);
+        const int ax = std::max(0, sAoWidth / 20);
+        const int ay = std::max(0, sAoHeight * 3 / 10);
+        unsigned char aoL[4] = { 0, 0, 0, 0 };
+        unsigned char ao15[4] = { 0, 0, 0, 0 };
+        unsigned char aoC[4] = { 0, 0, 0, 0 };
+        glReadPixels(ax, ay, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, aoL);
+        glReadPixels(std::max(0, sAoWidth * 3 / 20), ay, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, ao15);
+        glReadPixels(sAoWidth / 2, sAoHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, aoC);
+        printf("[PC Port] FILESEL AO: built=%d latePost=%d L=%d 15%%=%d C=%d (255=none, 0=full darken) produced=%u\n",
+               sLastAoReady ? 1 : 0, latePost ? 1 : 0, aoL[0], ao15[0], aoC[0], unsigned(produced));
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+    } else {
+        printf("[PC Port] FILESEL AO: built=%d ssaoOn=%d latePost=%d produced=%u\n",
+               sLastAoReady ? 1 : 0,
+               pc_post_ssao_active(sPostEffects) ? 1 : 0,
+               latePost ? 1 : 0,
+               unsigned(produced));
+    }
+    fflush(stdout);
+    sFileSelDebugReport = false;
+    sFileSelFxWindow = false;
+}
+
 static PcTevShaderKey sLastTevKey;
 static bool sLastTevKeyValid = false;
 
@@ -4923,6 +5440,7 @@ void pc_gfx_end(void) {
     // Pick the program for this material first: every uniform below is written
     // through sLoc, which describes whichever program is now bound.
     use_program_for_current_state();
+    filesel_debug_log_draw();
 
     glUniformMatrix4fv_ptr(sLoc.projMtx, 1, GL_FALSE, sProjMatrix);
     static const float identity[16] = {

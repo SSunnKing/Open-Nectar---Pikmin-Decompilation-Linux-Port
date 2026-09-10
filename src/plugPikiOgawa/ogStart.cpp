@@ -4,6 +4,9 @@
 #include "P2D/Screen.h"
 #include "sysNew.h"
 #include "zen/DrawCommon.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -122,7 +125,15 @@ void zen::ogScrStartMgr::draw(Graphics& gfx)
 		return;
 	}
 
+#if defined(PIKI_PC_PORT)
+	pc_gfx_begin_menu_2d();
+	const int virtW = pc_gfx_menu_virt_width();
+	P2DPerspGraph perspGraph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
+	perspGraph.setPort();
+	mPressStartScreen->draw(pc_gfx_menu_shift_center(), 0, &perspGraph);
+#else
 	P2DPerspGraph perspGraph(0, 0, 640, 480, 30.0f, 1.0f, 5000.0f);
 	perspGraph.setPort();
 	mPressStartScreen->draw(0, 0, &perspGraph);
+#endif
 }

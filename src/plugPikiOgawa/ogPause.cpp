@@ -7,6 +7,9 @@
 #include "PlayerState.h"
 #include "sysNew.h"
 #include "zen/DrawMenu.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -244,9 +247,17 @@ void zen::ogScrPauseMgr::draw(Graphics& gfx)
 		return;
 	}
 
+#if defined(PIKI_PC_PORT)
+	pc_gfx_begin_menu_2d();
+	const int virtW = pc_gfx_menu_virt_width();
+	P2DPerspGraph perspGraph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
+	perspGraph.setPort();
+	mParentScreen->draw(0, 0, &perspGraph);
+#else
 	P2DPerspGraph perspGraph(0, 0, 640, 480, 30.0f, 1.0f, 5000.0f);
 	perspGraph.setPort();
 	mParentScreen->draw(0, 0, &perspGraph);
+#endif
 	mMainMenu->draw(gfx);
 	mSubMenu->draw(gfx);
 }

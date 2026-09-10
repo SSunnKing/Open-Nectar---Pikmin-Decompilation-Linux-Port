@@ -97,7 +97,7 @@ public:
 		}
 	}
 
-	void draw(P2DPerspGraph* perspGraph) { mScreen.draw(0, 0, perspGraph); }
+	void draw(P2DPerspGraph* perspGraph, int xOffs = 0) { mScreen.draw(xOffs, 0, perspGraph); }
 
 	void makeResident() { P2DPaneLibrary::makeResident(&mScreen); }
 

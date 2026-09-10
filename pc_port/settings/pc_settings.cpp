@@ -1894,7 +1894,7 @@ void pc_newgame_prompt_draw(void) {
     ensureFont();
     if (!sFont) return;
 
-    const int screenW = gfx->mScreenWidth;
+    const int screenW = pc_gfx_menu_wide() ? pc_gfx_menu_virt_width() : gfx->mScreenWidth;
     const int screenH = gfx->mScreenHeight;
     PcSettingsP2DFrame nativeFrame(screenW, screenH);
 

@@ -9,6 +9,9 @@
 #include "zen/Math.h"
 #include "zen/Number.h"
 #include "zen/ogSub.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -51,8 +54,16 @@ void zen::DrawScreen::update()
  */
 void zen::DrawScreen::draw()
 {
+#if defined(PIKI_PC_PORT)
+	pc_gfx_begin_menu_2d();
+	const int virtW = pc_gfx_menu_virt_width();
+	P2DPerspGraph graph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
+	graph.setPort();
+	mScreen.draw(pc_gfx_menu_shift_center(), 0, &graph);
+#else
 	mGrafContext->setPort();
 	mScreen.draw(0, 0, mGrafContext);
+#endif
 }
 
 /**
