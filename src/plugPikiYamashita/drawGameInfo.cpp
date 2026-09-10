@@ -721,6 +721,16 @@ zen::DrawGameInfo::DrawGameInfo(zen::DrawGameInfo::playModeFlag playMode)
 		}
 	}
 
+#if defined(PIKI_PC_PORT)
+	// play09.blo ships a leftover 'c_lr' picture at (772,406) with the
+	// placeholder 7_64.bti. On 4:3 it sits past the 640 edge. After HUD B
+	// the sun BLO is shifted by (V-640)/2, so at 21:9 it lands on the
+	// pikmin counter (and the old 1000 scissor had been hiding it).
+	if (P2DPane* stray = mUpperScreenMgr->search('c_lr', false)) {
+		stray->hide();
+	}
+#endif
+
 	pane = mLowerScreenMgr->search('li_i', true);
 	pane->setCallBack(new NaviIconCallBack(pane));
 
