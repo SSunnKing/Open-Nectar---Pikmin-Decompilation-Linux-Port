@@ -15,11 +15,16 @@ This project builds upon the decompilation by [projectPiki/pikmin](https://githu
 - Full audio: the game's original JAudio engine, with a software DSP
 - TEV specialization for optimal performance
 - Controller, keyboard and mouse support
+- **Both retail discs**: Pikmin USA Rev 1 and Pikmin Europe. The European disc
+  carries five languages — English, French, German, Spanish and Italian — and
+  the installer asks which one you want to play in
+- **Pre-rendered movies**: the attract movies play, with sound
+- **Widescreen**: the HUD is laid out for 16:9 rather than stretched, and the
+  3D view culls to the same shape, so nothing pops in and out at the sides
+- Post-processing: antialiasing, restored fog, bloom, ambient occlusion, depth
+  of field, texture filtering and colour grading — every one of them optional
 
 **In development:**
-- Pre-rendered cutscenes (the opening and the ending) play their audio but
-  show no picture — the HVQM4 video decoder is not built into the port yet.
-  The in-game cinematics, which are rendered by the engine, do play
 - Some minor graphical differences
 - Ports to other operating systems
 
@@ -128,11 +133,25 @@ To move the installation elsewhere, copy the folder. To remove it, delete it.
 | Closes instantly, no window | `SDL2.dll` is missing from the folder, or Windows blocked it |
 | "Could not initialize window/OpenGL" | Graphics drivers too old, or the generic Windows display driver |
 | Starts but finds no data | Run it from the installation folder, not from elsewhere |
-| The image is rejected | It must be Pikmin USA Rev. 1 (GPIE01), uncompressed. Convert RVZ/WIA/GCZ to ISO with `dolphin-tool` |
+| The image is rejected | It must be Pikmin USA Rev 1 or Pikmin Europe, uncompressed. Convert RVZ/WIA/GCZ to ISO with `dolphin-tool` |
 
 ### Both platforms
 
-The launcher asks for your **Pikmin USA Rev. 1 (GPIE01)** ISO/GCM, extracts the assets it needs and starts the game. The ROM is never copied or modified.
+The launcher asks for your ISO/GCM, extracts the assets it needs and starts the
+game. Your disc image is never copied or modified.
+
+Supported discs:
+
+| Disc | Game ID | Languages |
+|---|---|---|
+| Pikmin USA Rev 1 | `GPIE01`, revision 1 | English |
+| Pikmin Europe | `GPIP01`, revision 0 | English, French, German, Spanish, Italian |
+
+Each release needs its own executable — the game's code is compiled here, and it
+differs between releases — so the package carries both and the installer picks
+the one your disc needs. With the European disc it also asks which language to
+play in; all five are installed either way, so **F1 → Language** changes it
+later without reinstalling.
 
 ### Launcher options
 
@@ -165,6 +184,20 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
+
+### Choosing which release to build
+
+The game's own code is compiled here, and it is conditional on which retail
+release it came from in some four hundred places, so this is a build-time
+choice rather than a setting. It defaults to USA Rev 1:
+
+```sh
+cmake -S . -B build-pal -DPIKMIN_GAME_VERSION=VERSION_GPIP01_00
+cmake --build build-pal -j"$(nproc)"
+```
+
+The release packages carry both, and the installer copies whichever the disc
+asks for. `packaging/linux/package-standalone.sh` builds them both.
 
 ### Windows (cross-compiled from Linux)
 
@@ -272,6 +305,30 @@ Press **F1** at any time to open the configuration menu:
 - **VSync**: Vertical synchronization on/off
 - **Refresh rate**: Force a specific refresh rate
 
+**Graphics:**
+
+Every effect has an Off, and each applies as you move through the menu, against
+the scene behind it. The reference machine for this project is a GTX 1050, so
+none of this is mandatory.
+
+- **Depth of field**: the focus plane follows the captain — what sits at his
+  distance stays sharp, what is nearer or further falls away. Four steps. The
+  sharp band is a fraction of the camera's distance to him, so it behaves the
+  same in the close follow view and the far one. It stands down during cutscenes
+- **Ambient occlusion**: contact shadows in creases, under leaves, where a
+  Pikmin meets the ground
+- **Bloom**: three named steps rather than a slider
+- **Antialiasing**: FXAA, applied to the finished image. Deliberately not MSAA —
+  Pikmin's undergrowth is alpha-tested quads, and MSAA does nothing for edges
+  that are not geometry
+- **Fog**: the game's own, which the port used to discard. On is the original
+- **Texture filtering**: up to 16x anisotropic, with mipmaps the port never
+  built. Changing it re-applies to everything already loaded
+- **Colour grading**: gamma, brightness and saturation
+
+**Language** (European disc only): switches between the five languages on the
+disc. It takes effect the next time you start the game.
+
 **Gameplay:**
 - **FPS mode**:
   - `30 FPS (stable)`: Original game behavior
@@ -328,6 +385,8 @@ The port supports any SDL2-compatible controller:
 
 **Improvements over the original:**
 - **Arbitrary resolution**: From 480p up to 4K and ultrawide, no hacks needed
+- **Widescreen that is not a stretch**: the HUD is laid out for the frame it is
+  drawn in, and the 3D view culls to the same shape
 - **60 and 120 FPS**: The original ran gameplay at 30
 - **Mouse control**: Precision impossible on GameCube, including wheel shortcuts
 - **Improved Pikmin AI**: Chain tasks automatically (optional)
@@ -342,6 +401,14 @@ The validated configuration is **1920x1080 with native internal resolution** (`r
 
 The game integrates by elapsed time, so raising the frame rate does not speed up gameplay. 120 FPS needs a display that can present it; on a 60 Hz panel with VSync the game still shows 60.
 
+**Memory**: entering a stage used about 4 GB and kept climbing. It now settles
+around 600 MB.
+
+**Laptops with switchable graphics**: the game asks for the dedicated GPU on
+both platforms, and only where that hardware is present. The log line
+`[PC Port] GPU:` reports which one it got. `NECTAR_NO_PRIME=1` turns the request
+off.
+
 ## Debug and environment variables
 
 ```sh
@@ -353,6 +420,13 @@ PIKMIN_PERF_STATS=1          # GPU statistics
 PIKMIN_TICK_STATS=1          # CPU statistics per tick
 PIKMIN_AUDIO_STATS=1         # Audio mixer statistics
 PIKMIN_WHEEL_TRACE=1         # Trace mouse wheel colour selection
+PIKMIN_H4M_DEBUG=1           # Trace the pre-rendered movie player
+PIKMIN_NO_H4M=1              # Skip the attract movies
+PIKMIN_DOF_DEBUG=1           # Focus distance and scene depth
+PIKMIN_PROJ_DEBUG=1          # One frame's projections, once a second
+PIKMIN_MENU_PILLARBOX=1      # Menus boxed in 4:3 instead of widescreen
+NECTAR_LANGUAGE=es           # Language (European disc), overrides the setting
+NECTAR_NO_PRIME=1            # Do not ask for the dedicated GPU
 ```
 
 The game binary also accepts `--audio-self-test`, which walks scenes, stages,
@@ -367,8 +441,9 @@ This project was developed with the assistance of AI tools. The generated code w
 
 This repository **does not contain ROMs or Nintendo resources**.
 
-To play you need to legally dump your own disc of:
-- **Pikmin USA Rev. 1 (GPIE01, revision 1)**
+To play you need to legally dump your own disc of one of:
+- **Pikmin USA Rev. 1** (`GPIE01`, revision 1)
+- **Pikmin Europe** (`GPIP01`, revision 0)
 
 Do not upload ROMs, extracted assets, keys, or proprietary material to issues or pull requests. See [LEGAL.md](LEGAL.md).
 
