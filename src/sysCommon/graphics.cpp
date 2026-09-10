@@ -726,7 +726,19 @@ static char kanji_convert_table[] ATTRIBUTE_ALIGN(32) = {
  */
 int Font::charToIndex(char c)
 {
+#if defined(PIKI_PC_PORT)
+	// char is unsigned on the PowerPC this was written for and signed on x86,
+	// so every byte above 0x7F arrived here negative and indexed backwards out
+	// of the character table. In English that is almost invisible; in the
+	// European release it is every accented letter, which came out as a black
+	// box full of kanji taken from whatever lies before the table.
+	//
+	// Cast rather than change the signature: on the console the two are the
+	// same thing, and this keeps the decompiled interface as it was.
+	return static_cast<unsigned char>(c) - 0x20;
+#else
 	return c - 0x20;
+#endif
 }
 
 /**

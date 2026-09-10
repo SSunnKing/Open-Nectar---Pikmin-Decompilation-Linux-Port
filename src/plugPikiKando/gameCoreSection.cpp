@@ -1810,7 +1810,12 @@ void GameCoreSection::updateAI()
 		PcamCamera* pcam = cameraMgr ? cameraMgr->mCamera : nullptr;
 		Navi* navi       = naviMgr ? naviMgr->getNavi() : nullptr;
 		f32 focus        = 0.0f;
-		if (pcam && navi) {
+		// Not during a cutscene. The camera goes wherever the scene wants it and
+		// the captain is often not in the shot at all, so his distance stops
+		// describing anything on screen: the whole frame ends up outside the
+		// sharp band, which is what put Olimar out of focus in his own close-up.
+		const bool inCutscene = gameflow.mMoviePlayer && gameflow.mMoviePlayer->mIsActive;
+		if (pcam && navi && !inCutscene) {
 			Vector3f eye, look;
 			pcam->getViewpoint().output(eye);
 			pcam->getWatchpoint().output(look);

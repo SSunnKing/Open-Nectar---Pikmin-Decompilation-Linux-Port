@@ -269,7 +269,18 @@ struct CardSelectSetupSection : public Node {
 				// An empty slot means a run is about to be created, and its
 				// rules belong to the file. Ask now, while nothing has been
 				// committed and backing out is still free.
-				if (card.mSaveStatus == PlayState::Fresh) {
+				// Anything that is not a run already in progress. Fresh (1)
+				// is a file that exists on the card but was never initialised;
+				// a slot with no file at all is 0, straight from
+				// CardQuickInfo's constructor, because the scan only fills in
+				// slots it found a file for.
+				//
+				// Testing for Fresh alone missed the most ordinary case there
+				// is -- the first file on an empty card -- and the run was
+				// created without ever asking. It looked like a European
+				// problem because that install started with an empty card;
+				// USA does the same on a card with nothing on it.
+				if (card.mSaveStatus != PlayState::ReadyToSave) {
 					mPendingCard           = card;
 					mPendingSlot           = returnCode - zen::ogScrFileChkSelMgr::FILECHKSEL_SlotOffset;
 					mAwaitingNewGameChoice = true;
