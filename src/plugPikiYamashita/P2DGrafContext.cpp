@@ -85,7 +85,20 @@ void P2DGrafContext::setup2D()
  */
 void P2DGrafContext::setScissor()
 {
-	PUTRect bounds(0, 0, 1000, 1000);
+	// GC HUD is 640×480; 1000×1000 was “big enough”. Widescreen HUD B uses
+	// V = 480×aspect (1120 at 21:9). Intersecting with 1000 clips the
+	// right-anchored pikmin/day counter.
+	int capW = 1000;
+	int capH = 1000;
+#if defined(PIKI_PC_PORT)
+	if (mViewportBounds.mMaxX > capW) {
+		capW = mViewportBounds.mMaxX;
+	}
+	if (mViewportBounds.mMaxY > capH) {
+		capH = mViewportBounds.mMaxY;
+	}
+#endif
+	PUTRect bounds(0, 0, capW, capH);
 	PUTRect scissor = mScissorBounds;
 	mScissorBounds.intersect(bounds);
 	scissor.normalize();

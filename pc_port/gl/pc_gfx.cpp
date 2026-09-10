@@ -1148,6 +1148,19 @@ int pc_gfx_menu_shift_slot(int slotIndex) {
     return pc_gfx_menu_shift_right();
 }
 
+static bool sMenuClip43 = false;
+
+void pc_gfx_set_menu_clip_43(int enabled) {
+    sMenuClip43 = enabled != 0;
+}
+
+void pc_gfx_apply_menu_clip_43(void) {
+    if (!sMenuClip43) {
+        return;
+    }
+    pc_gfx_set_scissor((u32)pc_gfx_menu_shift_center(), 0, 640, 480);
+}
+
 // ── GLSL Shaders ──
 static const char* vShaderSrc = 
     "#version 140\n"
@@ -1982,6 +1995,7 @@ static void perf_gpu_scene_begin() {
 void pc_gfx_begin_frame(void) {
     sUi43 = false;
     sHudWide = false;
+    sMenuClip43 = false;
     // One frame's worth of projection changes every second. Printing every
     // frame drowns the log and changes the timing of what it is measuring.
     {
@@ -4666,6 +4680,100 @@ static void filesel_debug_log_draw()
 
 static uint64_t sFileSelPtclKeys[12];
 static int sFileSelPtclKeyCount = 0;
+
+static bool title_debug_enabled()
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = std::getenv("PIKMIN_TITLE_DEBUG") != nullptr ? 1 : 0;
+        if (cached) {
+            printf("[PC Port] PIKMIN_TITLE_DEBUG: title crop probe on (heartbeat 1 Hz; extra on black sides)\n");
+            fflush(stdout);
+        }
+    }
+    return cached != 0;
+}
+
+void pc_gfx_title_debug_probe(const char* tag)
+{
+    if (!title_debug_enabled()) return;
+    if (!sNativeFramebufferReady || !glBindFramebuffer_ptr) return;
+
+    static uint64_t seenFrame = 0;
+    static bool printThisFrame = false;
+    static int gate = 0;
+    if (seenFrame != sGfxFrameSerial) {
+        seenFrame = sGfxFrameSerial;
+        printThisFrame = (++gate % 60 == 1);
+    }
+
+    pc_gfx_flush_batch();
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+
+    const int yBand = std::max(0, sRenderHeight * 3 / 10);
+    const int xs[7] = {
+        std::max(0, sRenderWidth / 20),
+        std::max(0, sRenderWidth * 3 / 20),
+        std::max(0, sRenderWidth / 4),
+        sRenderWidth / 2,
+        std::max(0, sRenderWidth * 3 / 4),
+        std::max(0, sRenderWidth * 17 / 20),
+        std::max(0, sRenderWidth * 19 / 20),
+    };
+    unsigned char scan[7][4] = {};
+    for (int i = 0; i < 7; ++i) {
+        glReadPixels(xs[i], yBand, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, scan[i]);
+    }
+
+    const int lumL = std::max(scan[0][0], std::max(scan[0][1], scan[0][2]));
+    const int lumR = std::max(scan[6][0], std::max(scan[6][1], scan[6][2]));
+    const int lumC = std::max(scan[3][0], std::max(scan[3][1], scan[3][2]));
+    const bool sidesBlack = lumL < 16 && lumR < 16 && lumC > 40;
+    if (sidesBlack) {
+        printThisFrame = true;
+    }
+    if (!printThisFrame) {
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+        return;
+    }
+
+    GLint vp[4] = { 0, 0, 0, 0 };
+    GLint sc[4] = { 0, 0, 0, 0 };
+    glGetIntegerv(GL_VIEWPORT, vp);
+    glGetIntegerv(GL_SCISSOR_BOX, sc);
+    const GLboolean scissorOn = glIsEnabled(GL_SCISSOR_TEST);
+
+    GLint map640x = 0, map640y = 0;
+    GLsizei map640w = 0, map640h = 0;
+    GLint mapVx = 0, mapVy = 0;
+    GLsizei mapVw = 0, mapVh = 0;
+    map_gx_rect(0.0f, 0.0f, 640.0f, 480.0f, map640x, map640y, map640w, map640h);
+    map_gx_rect(0.0f, 0.0f, float(hud_virtual_width()), 480.0f, mapVx, mapVy, mapVw, mapVh);
+
+    printf("[PC Port] TITLE %s: ui43=%d hudWide=%d menuWide=%d virtW=%d rt=%dx%d aspect=%.3f scissorOn=%d%s\n",
+           tag ? tag : "?",
+           sUi43 ? 1 : 0, sHudWide ? 1 : 0, pc_gfx_menu_wide(),
+           hud_virtual_width(), sRenderWidth, sRenderHeight, sCurrentAspectRatio,
+           scissorOn ? 1 : 0,
+           sidesBlack ? " SIDES_BLACK" : "");
+    printf("[PC Port] TITLE %s: gl vp=(%d,%d,%d,%d) sc=(%d,%d,%d,%d) map640=(%d,%d,%d,%d) mapV=(%d,%d,%d,%d)\n",
+           tag ? tag : "?",
+           vp[0], vp[1], vp[2], vp[3],
+           sc[0], sc[1], sc[2], sc[3],
+           map640x, map640y, int(map640w), int(map640h),
+           mapVx, mapVy, int(mapVw), int(mapVh));
+    printf("[PC Port] TITLE %s scan y=%d: 5%%=(%d,%d,%d) 15%%=(%d,%d,%d) 25%%=(%d,%d,%d) 50%%=(%d,%d,%d) 75%%=(%d,%d,%d) 85%%=(%d,%d,%d) 95%%=(%d,%d,%d)\n",
+           tag ? tag : "?", yBand,
+           scan[0][0], scan[0][1], scan[0][2],
+           scan[1][0], scan[1][1], scan[1][2],
+           scan[2][0], scan[2][1], scan[2][2],
+           scan[3][0], scan[3][1], scan[3][2],
+           scan[4][0], scan[4][1], scan[4][2],
+           scan[5][0], scan[5][1], scan[5][2],
+           scan[6][0], scan[6][1], scan[6][2]);
+    fflush(stdout);
+    glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+}
 
 void pc_gfx_filesel_debug_probe(const char* tag)
 {

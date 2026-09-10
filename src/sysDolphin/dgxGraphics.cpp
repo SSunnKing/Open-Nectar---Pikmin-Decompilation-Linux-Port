@@ -785,15 +785,13 @@ void DGXGraphics::setLight(Light* light, int idx)
 void DGXGraphics::setPerspective(Mtx44 mtx, f32 fovY, f32 aspect, f32 zNear, f32 zFar, f32 scale)
 {
 #if defined(PIKI_PC_PORT)
-	// Override aspect ratio with configured value from pc_gfx
-	f32 actualAspect = pc_gfx_get_current_aspect_ratio();
+	// Field 3D uses the window aspect (hor+). A 4:3 pillarbox pass (title
+	// cine, menu path A) must keep the caller's aspect: the title set is
+	// built for 640/480, and stretching its frustum to 16:9 looks past it.
+	f32 actualAspect = pc_gfx_get_ui_43() ? aspect : pc_gfx_get_current_aspect_ratio();
 	if (actualAspect <= 0.0f) actualAspect = aspect;
 
-	// Adjust FOV for wider aspect ratios to show more horizontally
-	// Keep vertical FOV, extend horizontal view
-	f32 adjustedFovY = fovY;
-
-	MTXPerspective(mtx, adjustedFovY, actualAspect, zNear, zFar);
+	MTXPerspective(mtx, fovY, actualAspect, zNear, zFar);
 #else
 	MTXPerspective(mtx, fovY, aspect, zNear, zFar);
 #endif

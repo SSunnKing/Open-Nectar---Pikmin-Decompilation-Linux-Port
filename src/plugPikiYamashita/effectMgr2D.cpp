@@ -142,6 +142,7 @@ void zen::EffectMgr2D::draw(Graphics& gfx)
 #if defined(PIKI_PC_PORT)
 	pc_gfx_filesel_debug_note_aspect(mCamera.mAspectRatio, gfx.mScreenWidth, gfx.mScreenHeight);
 	gfx.setScissor(RectArea(0, 0, virtW, gfx.mScreenHeight));
+	pc_gfx_apply_menu_clip_43();
 #else
 	gfx.setScissor(AREA_FULL_SCREEN(gfx));
 #endif

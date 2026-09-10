@@ -313,6 +313,19 @@ void CullFrustum::createInvVecs()
  */
 void CullFrustum::update(f32 aspectRatio, f32 fov, f32 zNear, f32 zFar)
 {
+#if defined(PIKI_PC_PORT)
+	// Same rule as DGXGraphics::setPerspective: field 3D is hor+ on the
+	// window aspect. Callers still pass 640/480 (mScreenWidth/Height stay
+	// GX virtual). Without this, isPointVisible / isBoundVisible cull at
+	// 4:3 while the projection already shows 16:9 — objects pop at the
+	// old side edges. Menu path A (sUi43) keeps the caller aspect.
+	if (!pc_gfx_get_ui_43()) {
+		f32 windowAspect = pc_gfx_get_current_aspect_ratio();
+		if (windowAspect > 0.0f) {
+			aspectRatio = windowAspect;
+		}
+	}
+#endif
 	mAspectRatio   = aspectRatio;
 	mVerticalScale = 1.0f;
 	mFov           = fov;
@@ -364,14 +377,7 @@ void CullFrustum::calcVectors(immut Vector3f& eyePos, immut Vector3f& targetPos)
 	mLookAtMtx.makeLookat(mPosition, mViewXAxis, mViewYAxis, mViewZAxis);
 	mLookAtMtx.inverse(&mInverseLookAtMtx);
 
-#if defined(PIKI_PC_PORT)
-	// Use configured aspect ratio from pc_gfx for frustum culling
-	f32 configuredAspect = pc_gfx_get_current_aspect_ratio();
-	if (configuredAspect <= 0.0f) configuredAspect = 1.0f;
-	update(configuredAspect, mFov, mNear, mFar);
-#else
 	update(1.0f, mFov, mNear, mFar);
-#endif
 }
 
 /**

@@ -49,6 +49,12 @@ int pc_gfx_menu_shift_center(void);
 int pc_gfx_menu_shift_right(void);
 int pc_gfx_menu_shift_slot(int slotIndex);
 
+// Title 2D only: keep MenuPanel p00N (the water-drop pictures) inside the
+// centred 640×480. P2DPerspGraph disables pane scissor, so they otherwise
+// fly across the 16:9 bars. Reset at begin_frame.
+void pc_gfx_set_menu_clip_43(int enabled);
+void pc_gfx_apply_menu_clip_43(void);
+
 // Viewport / Scissor / Matrices
 void pc_gfx_set_projection(const Mtx44 mtx, GXProjectionType type);
 void pc_gfx_set_viewport(f32 xOrig, f32 yOrig, f32 wd, f32 ht, f32 nearZ, f32 farZ);
@@ -228,6 +234,12 @@ void pc_gfx_filesel_debug_probe(const char* tag);
 void pc_gfx_filesel_debug_set_fx(int active);
 void pc_gfx_filesel_debug_note_aspect(float aspect, int screenW, int screenH);
 void pc_gfx_filesel_debug_note_ptcl(unsigned blendFactor, unsigned zMode, unsigned tevMode, float scaleSize);
+
+// Title Start/Options crop probe. Off unless PIKMIN_TITLE_DEBUG=1.
+// Prints viewport/scissor/mapping plus a 7-point scan. Heartbeat once a
+// second; also prints the rest of that frame if the 5%/95% samples are
+// black while the centre is not — the failure, not the first N events.
+void pc_gfx_title_debug_probe(const char* tag);
 
 class PcRenderPacketStore;
 PcRenderPacketStore& pc_gfx_get_packet_store();

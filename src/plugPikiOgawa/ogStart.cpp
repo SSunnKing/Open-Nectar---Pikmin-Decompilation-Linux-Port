@@ -130,6 +130,7 @@ void zen::ogScrStartMgr::draw(Graphics& gfx)
 	const int virtW = pc_gfx_menu_virt_width();
 	P2DPerspGraph perspGraph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
 	perspGraph.setPort();
+	pc_gfx_apply_menu_clip_43();
 	mPressStartScreen->draw(pc_gfx_menu_shift_center(), 0, &perspGraph);
 #else
 	P2DPerspGraph perspGraph(0, 0, 640, 480, 30.0f, 1.0f, 5000.0f);

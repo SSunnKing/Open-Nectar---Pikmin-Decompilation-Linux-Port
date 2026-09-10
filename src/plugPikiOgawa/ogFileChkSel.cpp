@@ -166,10 +166,16 @@ void zen::ogScrFileChkSelMgr::draw(Graphics& gfx)
 	if (mIsScreenVisible) {
 #if defined(PIKI_PC_PORT)
 		pc_gfx_begin_menu_2d();
-		const int virtW = pc_gfx_menu_virt_width();
-		P2DPerspGraph perspGraph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
+		P2DPerspGraph perspGraph(0, 0, pc_gfx_menu_virt_width(), 480, 30.0f, 1.0f, 5000.0f);
 		perspGraph.setPort();
-		mDataBScreen->draw(0, 0, &perspGraph);
+		// data_b is not a 16:9 dirt plate. 'back' is black_32 stretched to
+		// 1280×1280; the water/dew art is the sibling picture ws08_160, also
+		// oversized. Letting either of them draw unclipped is exactly the
+		// black bars + bubbles. Same clip as the title 2D.
+		pc_gfx_set_menu_clip_43(1);
+		pc_gfx_apply_menu_clip_43();
+		mDataBScreen->draw(pc_gfx_menu_shift_center(), 0, &perspGraph);
+		pc_gfx_set_menu_clip_43(0);
 #else
 		P2DPerspGraph perspGraph(0, 0, 640, 480, 30.0f, 1.0f, 5000.0f);
 		perspGraph.setPort();

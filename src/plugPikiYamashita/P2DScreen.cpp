@@ -6,6 +6,9 @@
 #include "P2D/Window.h"
 #include "sysNew.h"
 #include "zen/ogSub.h"
+#if defined(PIKI_PC_PORT)
+#include "pc_gfx.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -161,6 +164,9 @@ void P2DScreen::draw(int x, int y, const P2DGrafContext* grafContext)
 		P2DGrafContext context(*grafContext);
 		P2DPane::draw(x, y, grafContext, _EC);
 		context.setScissor();
+#if defined(PIKI_PC_PORT)
+		pc_gfx_apply_menu_clip_43();
+#endif
 	} else {
 		P2DOrthoGraph ortho(0, 0, 640, 480);
 		ortho.setPort();

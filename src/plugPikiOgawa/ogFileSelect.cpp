@@ -21,7 +21,8 @@
 
 static f32 filesel_fx_x(int slot, P2DPane* pane)
 {
-	return f32(pane->getPosH()) + f32(pane->getWidth()) / 2.0f + f32(pc_gfx_menu_shift_slot(slot));
+	(void)slot;
+	return f32(pane->getPosH()) + f32(pane->getWidth()) / 2.0f + f32(pc_gfx_menu_shift_center());
 }
 #endif
 
@@ -1234,7 +1235,7 @@ void zen::ogScrFileSelectMgr::TailEffectMove(int x, int y)
 	int newX = x + mIconOnyonPanes[mCurrSlotIdx]->getWidth() / 2;
 	int newY = y + mIconOnyonPanes[mCurrSlotIdx]->getHeight();
 #if defined(PIKI_PC_PORT)
-	newX += pc_gfx_menu_shift_slot(mCurrSlotIdx);
+	newX += pc_gfx_menu_shift_center();
 #endif
 
 	pos.set(newX, 480 - newY, 0.0f);
@@ -1251,7 +1252,7 @@ void zen::ogScrFileSelectMgr::TailEffectMoveM(int x, int y)
 	int newX = x + mIconPikminPanes[mCurrSlotIdx]->getWidth() / 2;
 	int newY = y + mIconPikminPanes[mCurrSlotIdx]->getHeight();
 #if defined(PIKI_PC_PORT)
-	newX += pc_gfx_menu_shift_slot(mCurrSlotIdx);
+	newX += pc_gfx_menu_shift_center();
 #endif
 
 	pos.set(newX, 480 - newY + 100, 0.0f);
@@ -1448,8 +1449,13 @@ void zen::ogScrFileSelectMgr::draw(Graphics& gfx)
 	P2DPerspGraph perspGraph(0, 0, virtW, 480, 30.0f, 1.0f, 5000.0f);
 	perspGraph.setPort();
 
+	// data_b is drawn (and clipped) by ogFileChkSel. Slots, chrome and 2D FX
+	// stay in the original 640×480 so they do not paint the side bars.
+	pc_gfx_set_menu_clip_43(1);
+	pc_gfx_apply_menu_clip_43();
+
 	for (int i = 0; i < 3; i++) {
-		const int slotX = pc_gfx_menu_shift_slot(i);
+		const int slotX = pc_gfx_menu_shift_center();
 		mSlotScreensData[i]->draw(slotX, 0, &perspGraph);
 		mSlotScreensNoData[i]->draw(slotX, 0, &perspGraph);
 	}
@@ -1479,6 +1485,8 @@ void zen::ogScrFileSelectMgr::draw(Graphics& gfx)
 	mCopyCursorsScreen->draw(chromeX, 0, &perspGraph);
 	mMainUIScreen->draw(chromeX, 0, &perspGraph);
 	mFileInfoScreen->draw(chromeX, 0, &perspGraph);
+	pc_gfx_set_menu_clip_43(0);
+	pc_gfx_set_scissor(0, 0, (u32)virtW, 480);
 	mBlackOverlayScreen->draw(0, 0, &perspGraph);
 #else
 	mCopyCursorsScreen->draw(0, 0, &perspGraph);
