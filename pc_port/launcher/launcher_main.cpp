@@ -250,9 +250,18 @@ std::string installedGameBuild(const fs::path& dataRoot)
 fs::path gameSource(const fs::path& sourceDirectory, const std::string& build,
                     const std::string& suffix)
 {
-    const fs::path preferred = sourceDirectory / (build + suffix);
+    // The build name has no extension -- it comes from the disc table, which
+    // knows nothing about platforms -- so it takes whatever the canonical name
+    // carries. On Windows that is ".exe", and without it this looked for a
+    // file called "nectar-pal", never found one, and quietly installed the
+    // American build over a European disc.
+    const std::string canonical = kGameExecutable;
+    const std::size_t dot = canonical.rfind('.');
+    const std::string extension = (dot == std::string::npos) ? std::string() : canonical.substr(dot);
+
+    const fs::path preferred = sourceDirectory / (build + extension + suffix);
     if (fs::is_regular_file(preferred)) return preferred;
-    return sourceDirectory / (std::string(kGameExecutable) + suffix);
+    return sourceDirectory / (canonical + suffix);
 }
 
 bool installExecutables(const fs::path& sourceDirectory, const fs::path& installDirectory,

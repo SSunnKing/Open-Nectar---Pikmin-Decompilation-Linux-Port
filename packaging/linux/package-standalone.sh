@@ -24,6 +24,10 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 build_dir="${repo_root}/build-linux-standalone"
+# La version europea es otro ejecutable: el codigo del juego se compila desde la
+# decompilacion y esa decompilacion es condicional segun la version. El paquete
+# lleva los dos y el instalador copia el que pida el disco.
+pal_build_dir="${repo_root}/build-linux-standalone-pal"
 output_dir="${script_dir}/out/nectar-linux"
 stage_dir="${build_dir}/stage"
 
@@ -59,7 +63,7 @@ else
 fi
 
 if ((clean)); then
-    rm -rf "${build_dir}" "${output_dir}"
+    rm -rf "${build_dir}" "${pal_build_dir}" "${output_dir}"
 fi
 
 printf '%s\n' '[1/5] Configurando y compilando (x86-64 genérico)...'
@@ -77,6 +81,17 @@ cmake -S "${repo_root}" -B "${build_dir}" \
     -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build "${build_dir}" -j"$(nproc)"
 
+# La europea, con las mismas opciones. Solo el ejecutable del juego: el
+# lanzador y las librerias son los mismos.
+cmake -S "${repo_root}" -B "${pal_build_dir}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DPIKMIN_GAME_VERSION=VERSION_GPIP01_00 \
+    -DPIKMIN_NATIVE_OPTIMIZE=OFF \
+    -DPIKMIN_ENABLE_IPO=ON \
+    -DPIKMIN_NATIVE_JAUDIO=ON \
+    -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build "${pal_build_dir}" --target pikmin_pc -j"$(nproc)"
+
 if ((run_tests)); then
     printf '%s\n' '[2/5] Pruebas offline...'
     ctest --test-dir "${build_dir}" --output-on-failure
@@ -90,6 +105,10 @@ DESTDIR="${stage_dir}" cmake --install "${build_dir}" --strip >/dev/null
 
 mkdir -p "${output_dir}/lib"
 cp "${stage_dir}/usr/bin/nectar" "${output_dir}/nectar.real"
+# Sin pasar por "cmake --install": ese instala bajo el mismo nombre y
+# sobrescribiria el americano.
+cp "${pal_build_dir}/bin/nectar" "${output_dir}/nectar-pal.real"
+strip "${output_dir}/nectar-pal.real" 2>/dev/null || true
 cp "${stage_dir}/usr/bin/nectar-launcher" "${output_dir}/nectar-launcher.real"
 cp "${script_dir}/${readme_source}" "${output_dir}/${readme_source}"
 
@@ -103,7 +122,7 @@ collect_libs() {
 
 copied=0
 declare -a source_libs=()
-for binary in "${output_dir}/nectar.real" "${output_dir}/nectar-launcher.real"; do
+for binary in "${output_dir}/nectar.real" "${output_dir}/nectar-pal.real" "${output_dir}/nectar-launcher.real"; do
     while IFS= read -r lib; do
         name="$(basename "$lib")"
         if [[ "$name" =~ $blocklist ]]; then
@@ -182,7 +201,7 @@ printf '%s\n' '[5/5] Verificando el paquete...'
 # La ISA debe seguir siendo x86-64 base. El techo de glibc no aplica:
 # el paquete lleva su propia glibc.
     PIKMIN_SKIP_LIBC_CHECK=1 "${script_dir}/verify-portable.sh" \
-    "${output_dir}/nectar.real" "${output_dir}/nectar-launcher.real"
+    "${output_dir}/nectar.real" "${output_dir}/nectar-pal.real" "${output_dir}/nectar-launcher.real"
 
 # Ninguna dependencia debe quedar sin resolver usando las librerías incluidas.
 if LD_LIBRARY_PATH="${output_dir}/lib" ldd "${output_dir}/nectar.real" | grep -q 'not found'; then
