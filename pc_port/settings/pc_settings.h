@@ -88,6 +88,11 @@ int pc_settings_get_debug_keys(void);
  */
 unsigned char pc_settings_startup_language(void);
 
+/// The language shown and changed in the F1 menu. Takes effect on the next
+/// start: the screens the game has already loaded belong to the old one.
+unsigned char pc_settings_get_language(void);
+void pc_settings_set_language(unsigned char language);
+
 #ifdef __cplusplus
 }
 #endif

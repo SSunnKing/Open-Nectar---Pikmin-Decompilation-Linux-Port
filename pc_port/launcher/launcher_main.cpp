@@ -171,6 +171,12 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
                 + ". Elimínala manualmente si ya no está en uso.";
         return false;
     }
+    // Which build these assets need, for every later run: the disc is only
+    // known here, and the executables are installed every time the launcher
+    // starts.
+    const pikmin::launcher::KnownDisc* disc = pikmin::launcher::findKnownDisc(identity);
+    const std::string requiredBuild = (disc && disc->executable) ? disc->executable : "nectar";
+
     std::cout << "Extrayendo los datos del disco. La ROM no se copia ni se modifica...\n";
     std::uint32_t lastPercent = 101;
     const bool extracted = pikmin::launcher::extractGameCubeImage(
@@ -197,6 +203,10 @@ bool installAssets(const fs::path& image, const fs::path& dataRoot, std::string&
     std::ofstream marker(partialAssets / ".pikmin-assets", std::ios::trunc);
     marker << identity.gameId << " revision=" << unsigned(identity.revision) << '\n';
     marker.close();
+    {
+        std::ofstream buildMarker(partialAssets / ".pikmin-build", std::ios::trunc);
+        buildMarker << requiredBuild << '\n';
+    }
     if (fs::exists(finalAssets)) {
         failure = "Ya existe un directorio de assets en " + finalAssets.string()
                 + ". No se sobrescribirá automáticamente.";
@@ -218,9 +228,37 @@ bool sameFile(const fs::path& lhs, const fs::path& rhs)
     return fs::exists(lhs) && fs::exists(rhs) && fs::equivalent(lhs, rhs, ec) && !ec;
 }
 
+// The build this installation needs, recorded when the assets were extracted.
+//
+// The disc is only known while installing, but the executables are installed
+// on every run, so the answer has to survive on disk. Falls back to the plain
+// name, which is what a package carrying a single build has.
+std::string installedGameBuild(const fs::path& dataRoot)
+{
+    std::ifstream in(dataRoot / "assets" / ".pikmin-build");
+    std::string name;
+    if (in && std::getline(in, name)) {
+        name = trim(name);
+        if (!name.empty()) return name;
+    }
+    return kGameExecutable;
+}
+
+// Where the game binary for that build lives in the package, given the suffix
+// the platform uses (".exe", ".real", or none). Falls back to the plain name so
+// a package with only one build still installs.
+fs::path gameSource(const fs::path& sourceDirectory, const std::string& build,
+                    const std::string& suffix)
+{
+    const fs::path preferred = sourceDirectory / (build + suffix);
+    if (fs::is_regular_file(preferred)) return preferred;
+    return sourceDirectory / (std::string(kGameExecutable) + suffix);
+}
+
 bool installExecutables(const fs::path& sourceDirectory, const fs::path& installDirectory,
                         std::string& failure)
 {
+    const std::string build = installedGameBuild(installDirectory);
 #ifdef _WIN32
     // En Windows el paquete no lleva cargador ni envoltorios: junto a los .exe
     // viajan las DLL (SDL2 y las del runtime), y basta con copiarlo todo.
@@ -231,9 +269,10 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
         return false;
     }
     for (const char* name : { kGameExecutable, kLauncherExecutable }) {
-        const fs::path source = sourceDirectory / name;
+        const bool isGame = std::string(name) == kGameExecutable;
+        const fs::path source = isGame ? gameSource(sourceDirectory, build, "") : sourceDirectory / name;
         if (!fs::is_regular_file(source)) {
-            failure = "El paquete está incompleto: falta " + std::string(name) + ".";
+            failure = "El paquete está incompleto: falta " + source.filename().string() + ".";
             return false;
         }
         const fs::path destination = installDirectory / name;
@@ -259,9 +298,9 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
     }
     return true;
 #else
-    const fs::path sourceGame = sourceDirectory / kGameExecutable;
+    const fs::path sourceGame = gameSource(sourceDirectory, build, "");
     const fs::path sourceLauncher = sourceDirectory / kLauncherExecutable;
-    const fs::path sourceGameReal = sourceDirectory / (std::string(kGameExecutable) + ".real");
+    const fs::path sourceGameReal = gameSource(sourceDirectory, build, ".real");
     const fs::path sourceLauncherReal
         = sourceDirectory / (std::string(kLauncherExecutable) + ".real");
     const fs::path sourceLib = sourceDirectory / "lib";
@@ -285,7 +324,13 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
 
     if (isStandalone) {
         for (const auto& entry : { sourceGameReal, sourceLauncherReal }) {
-            const fs::path dest = installDirectory / entry.filename();
+            // Always installed under the canonical name: the wrappers, the
+            // desktop entry and everything else look for "nectar.real",
+            // whichever build produced it.
+            const bool isGame = (entry == sourceGameReal);
+            const fs::path dest = installDirectory
+                                / (isGame ? std::string(kGameExecutable) + ".real"
+                                          : entry.filename().string());
             if (!sameFile(entry, dest)) {
                 fs::copy_file(entry, dest, fs::copy_options::overwrite_existing, ec);
                 if (ec) {
@@ -355,7 +400,8 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
     }
 
     for (const char* name : { kGameExecutable, kLauncherExecutable }) {
-        const fs::path source = sourceDirectory / name;
+        const bool isGame = std::string(name) == kGameExecutable;
+        const fs::path source = isGame ? sourceGame : sourceDirectory / name;
         const fs::path destination = installDirectory / name;
         if (!sameFile(source, destination)) {
             fs::copy_file(source, destination, fs::copy_options::overwrite_existing, ec);

@@ -200,13 +200,13 @@ constexpr const char* kLanguagesPal[] = { "en", "de", "fr", "es", "it" };
 constexpr KnownDisc kKnownDiscs[] = {
     { "GPIE01", 1, "Pikmin USA Rev. 1",
       "db013398ec77299e307ef61ec33e82b07e4b21cb676b18a0be712fe55e9775f2",
-      kLanguagesEnglishOnly, 1 },
+      kLanguagesEnglishOnly, 1, "nectar" },
     // El disco europeo trae los cinco idiomas en el mismo dataDir; el juego
     // elige en ejecucion. Verificado sobre un volcado real: 4874 archivos, y
     // screen/ con eng, fre, ger, ita y spa.
     { "GPIP01", 0, "Pikmin Europa (En, Fr, De, Es, It)",
       "7c50b65545d2158e56545f7e9cdf0f0c0dbeabbcb4e1f080d3b0433f2f91c343",
-      kLanguagesPal, 5 },
+      kLanguagesPal, 5, "nectar-pal" },
 };
 
 } // namespace

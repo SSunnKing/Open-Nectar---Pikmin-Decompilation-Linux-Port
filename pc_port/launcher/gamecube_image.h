@@ -23,6 +23,10 @@ struct KnownDisc {
     // numera. Una sola entrada significa que no hay nada que elegir.
     const char* const* languages;
     int languageCount;
+    // Nombre base del ejecutable compilado para esta version. El juego se
+    // compila desde la decompilacion y esa decompilacion es condicional segun
+    // la version, asi que cada disco necesita el suyo.
+    const char* executable;
 };
 
 // El disco de la lista que coincide con la identidad dada, o nullptr.

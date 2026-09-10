@@ -170,6 +170,11 @@ enum Row {
     ROW_REFRESH_RATE,
     ROW_VSYNC,
     ROW_FPS_MODE,
+#if defined(VERSION_GPIP01)
+    // Only the European release carries more than one language. On any other
+    // disc the row would be a control with one position.
+    ROW_LANGUAGE,
+#endif
     ROW_CONTROLS,
     ROW_GAMEPAD,
     ROW_ADVANCED,
@@ -546,6 +551,10 @@ void resetToDefaults() {
 // Defined outside the anonymous namespace and deliberately self-contained: it
 // runs during static initialisation, so it cannot rely on sConfig having been
 // loaded, or even on this file's own globals having been constructed.
+// The language in force, as an OS_LANG_* value. Seeded from the file at boot
+// and changed from the F1 menu; saved back on every write.
+static unsigned char sLanguage = 0xFF; // 0xFF = not yet seeded
+
 unsigned char pc_settings_startup_language(void) {
     static const unsigned char language = [] {
         static const struct { const char* code; unsigned char value; } kCodes[] = {
@@ -581,7 +590,17 @@ unsigned char pc_settings_startup_language(void) {
         }
         return (unsigned char)0;
     }();
+    if (sLanguage == 0xFF) sLanguage = language;
     return language;
+}
+
+unsigned char pc_settings_get_language(void) {
+    if (sLanguage == 0xFF) pc_settings_startup_language();
+    return sLanguage;
+}
+
+void pc_settings_set_language(unsigned char language) {
+    sLanguage = (language < 6) ? language : 0;
 }
 
 namespace {
@@ -605,8 +624,7 @@ void saveConfig() {
         // is whatever pc_settings_startup_language() resolved at boot: this is
         // the installer's choice, and nothing in the game changes it yet.
         static const char* const kCodes[] = { "en", "de", "fr", "es", "it", "nl" };
-        const unsigned char language = pc_settings_startup_language();
-        out << "language = " << kCodes[language < 6 ? language : 0] << "\n";
+        out << "language = " << kCodes[pc_settings_get_language()] << "\n";
     }
     out << "renderScale = " << sConfig.renderScale << "\n";
     out << "fpsMode = " << sConfig.fpsMode << "\n";
@@ -1422,6 +1440,20 @@ void pollMenuInput() {
             sPending.fpsMode = (sPending.fpsMode + 1) % 3;
         }
         break;
+#if defined(VERSION_GPIP01)
+    case ROW_LANGUAGE: {
+        // Only the five the European disc actually carries. Dutch exists in the
+        // hardware's list and not on the disc, so offering it would point the
+        // game at files that are not there.
+        const int kCount = 5;
+        int language = pc_settings_get_language();
+        if (language >= kCount) language = 0;
+        if (left) language = (language + kCount - 1) % kCount;
+        else if (right) language = (language + 1) % kCount;
+        pc_settings_set_language((unsigned char)language);
+        break;
+    }
+#endif
     case ROW_CONTROLS:
         if (ok) {
             sInControlsSubmenu = true;
@@ -1976,10 +2008,15 @@ void pc_settings_draw(void) {
 
     const char* labels[ROW_COUNT] = {
         "Display Mode", "Resolution", "Aspect Ratio", "3D Resolution", "Refresh Rate", "Frame Sync (VSync)",
-        "FPS Mode", "Controls", "Gamepad", "Advanced Settings", "Graphics", "Mods",
+        "FPS Mode",
+#if defined(VERSION_GPIP01)
+        "Language",
+#endif
+        "Controls", "Gamepad", "Advanced Settings", "Graphics", "Mods",
         "Reset to Defaults", "Save", "Close",
     };
-    const bool actionRow[ROW_COUNT] = { false, false, false, false, false, false, false, false, false, false, false, false, true, true, true };
+    bool actionRow[ROW_COUNT] = {};
+    actionRow[ROW_RESET] = actionRow[ROW_SAVE] = actionRow[ROW_CLOSE] = true;
 
     const char* aspectNames[5] = { "Auto", "4:3", "16:10", "16:9", "21:9" };
     char aspectBuf[32];
@@ -1989,7 +2026,7 @@ void pc_settings_draw(void) {
     char fpsModeBuf[32];
     snprintf(fpsModeBuf, sizeof(fpsModeBuf), "%s", fpsModeNames[sPending.fpsMode >= 0 && sPending.fpsMode < 3 ? sPending.fpsMode : 0]);
 
-    char valueBuf[7][128];
+    char valueBuf[ROW_CONTROLS][128];
     snprintf(valueBuf[0], sizeof(valueBuf[0]), "%s",
              modeNames[sPending.displayMode >= 0 && sPending.displayMode < 3 ? sPending.displayMode : 0]);
     if (sPending.displayMode == PC_WINDOW_FULLSCREEN_BORDERLESS) {
@@ -2014,7 +2051,16 @@ void pc_settings_draw(void) {
     if (sPending.refreshRate <= 0.0) snprintf(valueBuf[4], sizeof(valueBuf[4]), "Auto");
     else snprintf(valueBuf[4], sizeof(valueBuf[4]), "%.0f Hz", sPending.refreshRate);
     snprintf(valueBuf[5], sizeof(valueBuf[5]), "%s", sPending.vsync ? "On" : "Off");
-    snprintf(valueBuf[6], sizeof(valueBuf[6]), "%s", fpsModeBuf);
+    snprintf(valueBuf[ROW_FPS_MODE], sizeof(valueBuf[0]), "%s", fpsModeBuf);
+#if defined(VERSION_GPIP01)
+    {
+        static const char* const kNames[] = { "English", "Deutsch", "Francais",
+                                              "Espanol", "Italiano", "Nederlands" };
+        const unsigned char language = pc_settings_get_language();
+        snprintf(valueBuf[ROW_LANGUAGE], sizeof(valueBuf[0]), "%s%s", kNames[language],
+                 language == pc_settings_startup_language() ? "" : "  (on restart)");
+    }
+#endif
 
     // The rows before ROW_CONTROLS carry a computed value; from there to
     // ROW_RESET they open a submenu and all read "Open >".
@@ -2026,7 +2072,6 @@ void pc_settings_draw(void) {
     auto rowValue = [&](int row) -> const char* {
         return (row < ROW_CONTROLS) ? valueBuf[row] : "Open >";
     };
-    static_assert(ROW_CONTROLS == 7, "valueBuf covers exactly the rows before ROW_CONTROLS");
 
     const int rowH = pc_settings_p2d_active() ? 20 : 18;
     const int labelRight = px1 + panelW / 2 - 12;
