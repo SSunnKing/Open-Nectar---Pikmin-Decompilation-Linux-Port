@@ -46,7 +46,17 @@ StdSystem::StdSystem()
 {
 	mConsFont = nullptr;
 #if defined(VERSION_GPIP01)
+#if defined(PIKI_PC_PORT)
+	// Whatever the preferences chose before this object existed. On the console
+	// the link order ran the system's constructor first, so GamePrefs could
+	// write straight through gsys; here the order between translation units is
+	// unspecified, and gameflow's constructor got there first -- dereferencing
+	// a null gsys and crashing before main. Even without the crash, this line
+	// would then have overwritten the chosen language with English.
+	mLanguageID = pcPendingLanguage();
+#else
 	mLanguageID = LANG_English;
+#endif
 #endif
 	mCurrentFade      = 0.0f;
 	mTargetFade       = 0.0f;

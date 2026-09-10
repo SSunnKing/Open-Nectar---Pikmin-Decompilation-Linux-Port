@@ -506,6 +506,13 @@ public:
 
 extern SYSCORE_API System* gsys;
 
+#if defined(PIKI_PC_PORT) && defined(VERSION_GPIP01)
+/// The language chosen before the System object existed. See stdSystem.cpp.
+LanguageID pcPendingLanguage();
+/// Records the language, and applies it immediately if gsys is already up.
+void pcSetLanguage(LanguageID language);
+#endif
+
 // SYSTEM STREAMS
 
 /**

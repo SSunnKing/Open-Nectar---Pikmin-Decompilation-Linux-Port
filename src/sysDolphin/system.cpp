@@ -105,6 +105,27 @@ SYSCORE_API HWND sysCurrWnd;
 SYSCORE_API HINSTANCE sysHInst;
 #endif
 SYSCORE_API System* gsys = nullptr;
+
+#if defined(PIKI_PC_PORT) && defined(VERSION_GPIP01)
+// Deliberately a function-local static rather than a file-scope one: this is
+// read and written from other translation units during static initialisation,
+// which is precisely the situation a file-scope global cannot be trusted in.
+static LanguageID& pendingLanguageSlot()
+{
+	static LanguageID slot = LANG_English;
+	return slot;
+}
+
+LanguageID pcPendingLanguage() { return pendingLanguageSlot(); }
+
+void pcSetLanguage(LanguageID language)
+{
+	pendingLanguageSlot() = language;
+	if (gsys) {
+		gsys->mLanguageID = language;
+	}
+}
+#endif
 SYSCORE_API Stream* sysCon;
 SYSCORE_API Stream* errCon;
 static OSMessage dvdMesgBuffer;

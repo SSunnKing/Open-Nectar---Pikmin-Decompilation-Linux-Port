@@ -48,7 +48,12 @@ void PlayState::openStage(int storyStageID)
 void GamePrefs::Initialise()
 {
 	mFlags            = GAMEPREF_Vibe | GAMEPREF_Stereo;
+#if defined(PIKI_PC_PORT)
+	// This runs from a static initialiser, before the System object exists.
+	pcSetLanguage(LANG_English);
+#else
 	gsys->mLanguageID = LANG_English;
+#endif
 
 	LanguageID ids[] = {
 		LANG_English, // OS English
@@ -175,7 +180,11 @@ void GamePrefs::setChildMode(int lang)
 
 	STACK_PAD_VAR(1);
 
+#if defined(PIKI_PC_PORT)
+	pcSetLanguage((LanguageID)lang);
+#else
 	gsys->mLanguageID = (LanguageID)lang;
+#endif
 	mFlags            = PACK_LANG_FLAG(mFlags, lang);
 }
 
@@ -403,7 +412,11 @@ void GamePrefs::read(RandomAccessStream& input)
 	}
 
 	// sync with system language
+#if defined(PIKI_PC_PORT)
+	pcSetLanguage(lang);
+#else
 	gsys->mLanguageID = lang;
+#endif
 #endif
 }
 
