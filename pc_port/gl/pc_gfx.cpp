@@ -2682,6 +2682,8 @@ static bool ao_build()
     return true;
 }
 
+static void gl_program_cache_invalidate();
+
 // Returns the framebuffer the blit should read from.
 static GLuint post_apply()
 {
@@ -2814,7 +2816,14 @@ static GLuint post_apply()
 
     glUseProgram_ptr(0);
     glBindTexture(GL_TEXTURE_2D, 0);
-    sBoundTextures[0] = 0;
+    // present() runs this pass on frames with no interface (the H4M player
+    // is one). Leaving sCurrentProgram and sLastTevKeyValid pointing at a
+    // program that is no longer bound made the next GX draw skip glUseProgram,
+    // write uniforms to program 0 (GL_INVALID_OPERATION), and cover the
+    // framebuffer with nothing. Measured: program=0, glerr=0x502, one-frame
+    // flashes only when the TEV key changed and forced a rebind.
+    for (int i = 0; i < 8; i++) sBoundTextures[i] = 0;
+    gl_program_cache_invalidate();
     return sPostFramebuffer;
 }
 
@@ -2843,7 +2852,6 @@ static bool sPostRanThisFrame = false;
 // program is not the ubershader -- which is exactly what a zeroed cache looks
 // like. It would have kept the post-process's own program bound for the
 // interface, or bound nothing at all.
-static void gl_program_cache_invalidate();
 
 static void post_apply_before_interface()
 {
@@ -4403,7 +4411,8 @@ static void use_program_for_current_state() {
 
     PcTevShaderKey key;
     build_tev_shader_key(key);
-    if (sLastTevKeyValid && sCurrentProgram != sShaderProgram && key == sLastTevKey) {
+    if (sLastTevKeyValid && sCurrentProgram != 0 && sCurrentProgram != sShaderProgram
+        && key == sLastTevKey) {
         return;
     }
     const uint64_t hash = pc_tev_hash_key(key);
