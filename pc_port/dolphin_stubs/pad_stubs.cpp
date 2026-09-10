@@ -48,7 +48,16 @@ void PADSetSpec(u32 spec)                     { (void)spec; }
 u32  PADGetSpec(void)                         { return PAD_SPEC_5; }
 int  PADGetType(s32 chan, u32* type)           { (void)chan; if(type) *type = 0; return 0; }
 
-/* OS_BUILD_VERSION 20010719L < 20011112L → void return */
+/* The newer SDK returns the previous callback; pad.h branches on
+   OS_BUILD_VERSION and so does this. Nothing in the game reads the result. */
+#if OS_BUILD_VERSION >= 20011112L
+PADSamplingCallback PADSetSamplingCallback(PADSamplingCallback callback)
+{
+    (void)callback;
+    return nullptr;
+}
+#else
 void PADSetSamplingCallback(PADSamplingCallback callback) { (void)callback; }
+#endif
 
 } // extern "C"

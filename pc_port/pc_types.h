@@ -36,7 +36,13 @@
 /* ──────────────────────────────────────────────
  *  Version selection: USA Rev 1 (the default and most complete)
  * ────────────────────────────────────────────── */
-#ifndef VERSION_GPIE01_01
+#if !defined(VERSION_GPIE01_00) && !defined(VERSION_GPIE01_01) && !defined(VERSION_GPIP01_00) \
+ && !defined(VERSION_GPIJ01_01) && !defined(VERSION_GPIJ01_02) && !defined(VERSION_DPIJ01_PIKIDEMO) \
+ && !defined(VERSION_G98E01_PIKIDEMO) && !defined(VERSION_G98P01_PIKIDEMO)
+// USA Rev 1 is the default because it is the version this port is developed and
+// tested against. It is a default, not an assumption: defining another version
+// on the command line has to leave this one undefined, or types.h derives two
+// region groups at once and the conditional code in 83 files takes both paths.
 #define VERSION_GPIE01_01
 #endif
 

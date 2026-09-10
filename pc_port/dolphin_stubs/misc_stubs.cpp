@@ -47,8 +47,15 @@ void SITransferCommands(void)      { }
 u32  SISetXY(u32 x, u32 y)       { (void)x; (void)y; return 0; }
 u32  SIEnablePolling(u32 poll)    { (void)poll; return 0; }
 u32  SIDisablePolling(u32 poll)   { (void)poll; return 0; }
-/* SIGetResponse: OS_BUILD_VERSION 20010719L < 20011002L → returns void */
+/* SIGetResponse changed signature between SDK builds, and the two retail
+   releases of this game were built against different ones: USA Rev 1 predates
+   20011002, PAL does not. si.h already branches on OS_BUILD_VERSION; match it
+   rather than assuming a version here. */
+#if OS_BUILD_VERSION >= 20011002L
+BOOL SIGetResponse(s32 chan, void* data) { (void)chan; (void)data; return FALSE; }
+#else
 void SIGetResponse(s32 chan, void* data) { (void)chan; (void)data; }
+#endif
 /* Takes __OSInterruptHandler, not void* */
 BOOL SIRegisterPollingHandler(__OSInterruptHandler handler) { (void)handler; return TRUE; }
 BOOL SIUnregisterPollingHandler(__OSInterruptHandler handler) { (void)handler; return TRUE; }
@@ -147,9 +154,14 @@ void PSMTXScale(Mtx mtx, f32 sx, f32 sy, f32 sz) {
     PSMTXIdentity(mtx);
     mtx[0][0] = sx; mtx[1][1] = sy; mtx[2][2] = sz;
 }
+/* On the newer SDK, MTXScale is a macro for PSMTXScale, so this wrapper would
+   be a second definition of the function directly above. On the older one it
+   aliases C_MTXScale and the wrapper is what provides it. */
+#if OS_BUILD_VERSION < 20011002L
 void MTXScale(Mtx mtx, f32 sx, f32 sy, f32 sz) {
     PSMTXScale(mtx, sx, sy, sz);
 }
+#endif
 void PSMTXTrans(Mtx mtx, f32 tx, f32 ty, f32 tz) {
     PSMTXIdentity(mtx);
     mtx[0][3] = tx; mtx[1][3] = ty; mtx[2][3] = tz;
@@ -210,7 +222,9 @@ void PSVECNormalize(const Vec* src, Vec* unit) {
     else { unit->x = unit->y = unit->z = 0.0f; }
 }
 f32 PSVECMag(const Vec* v) { return sqrtf(v->x*v->x + v->y*v->y + v->z*v->z); }
+#if OS_BUILD_VERSION < 20011002L
 f32 VECMag(const Vec* v) { return PSVECMag(v); }
+#endif
 f32 PSVECSquareMag(const Vec* v) { return v->x*v->x + v->y*v->y + v->z*v->z; }
 f32 PSVECDotProduct(const Vec* a, const Vec* b) { return a->x*b->x + a->y*b->y + a->z*b->z; }
 void PSVECCrossProduct(const Vec* a, const Vec* b, Vec* axb) {

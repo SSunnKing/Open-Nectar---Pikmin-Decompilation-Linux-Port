@@ -119,6 +119,32 @@ void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* timeDate) {
 /* ──────────────────────────────────────────────
  *  Reporting / Errors
  * ────────────────────────────────────────────── */
+// The console's system language. Only the PAL release asks -- it ships five
+// languages on one disc and picks with this -- so the USA build never linked
+// against it.
+//
+// There is no system menu here to ask, so the port reads the environment and
+// falls back to English. NECTAR_LANGUAGE accepts en, de, fr, es, it and nl,
+// which are exactly the six the hardware could report; anything else is
+// English. A real setting in the F1 menu is the right home for this, but that
+// belongs with the rest of the PAL work rather than in a stub.
+u8 OSGetLanguage() {
+    static const u8 language = [] {
+        const char* choice = getenv("NECTAR_LANGUAGE");
+        if (!choice) return u8(OS_LANG_ENGLISH);
+        const struct { const char* name; u8 value; } names[] = {
+            { "en", OS_LANG_ENGLISH }, { "de", OS_LANG_GERMAN },
+            { "fr", OS_LANG_FRENCH },  { "es", OS_LANG_SPANISH },
+            { "it", OS_LANG_ITALIAN }, { "nl", OS_LANG_DUTCH },
+        };
+        for (const auto& entry : names) {
+            if (strncmp(choice, entry.name, 2) == 0) return entry.value;
+        }
+        return u8(OS_LANG_ENGLISH);
+    }();
+    return language;
+}
+
 void OSReport(const char* message, ...) {
     va_list args;
     va_start(args, message);

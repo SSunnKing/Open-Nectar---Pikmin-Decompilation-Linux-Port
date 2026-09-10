@@ -90,10 +90,18 @@ option(PIKMIN_NATIVE_JAUDIO "Drive audio with the original src/jaudio engine" OF
 # on with -DPIKMIN_DEBUG_KEYS=ON while working on the Mods settings.
 option(PIKMIN_DEBUG_KEYS "Build the F5/F6 testing shortcuts" OFF)
 
-# ─── Version define for USA Rev 1 ───
+# ─── Which release of the game this binary is built for ───
+#
+# The port compiles the game's own code, and that code is conditional on the
+# release in 404 places across 83 files, so this is a build-time choice and not
+# a setting. The disc is only ever used for assets.
+set(PIKMIN_GAME_VERSION "VERSION_GPIE01_01" CACHE STRING
+    "Game release to build: VERSION_GPIE01_01 (USA Rev 1), VERSION_GPIE01_00, \
+VERSION_GPIP01_00 (PAL), VERSION_GPIJ01_01, VERSION_GPIJ01_02")
+
 add_compile_definitions(
     PIKI_PC_PORT=1
-    VERSION_GPIE01_01
+    ${PIKMIN_GAME_VERSION}
     DTK_CONFIG_NONMATCHING=1
     # The Linux renderer translates the game's native GX command stream to
     # OpenGL.  Selecting the old Win32/OpenGL code path here mixes two
