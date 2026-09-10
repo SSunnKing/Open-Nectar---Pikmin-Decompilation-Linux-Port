@@ -3731,6 +3731,36 @@ static void apply_texture_filtering(bool gameRequestedMipmaps)
     }
 }
 
+void pc_gfx_init_tex_obj_rgba(GXTexObj* obj, void* rgba, u16 width, u16 height) {
+    if (!obj || !rgba || width == 0 || height == 0) return;
+
+    const uintptr_t key = (uintptr_t)obj;
+    GLuint texId = 0;
+    auto it = sTextureCache.find(key);
+    if (it != sTextureCache.end()) {
+        texId = it->second;
+    } else {
+        glGenTextures(1, &texId);
+        sTextureCache[key] = texId;
+        sTexturesCreated++;
+    }
+
+    // Uploaded every call, with no signature check: the movie hands over a new
+    // picture each frame in the same buffer, so "same pointer, same size" is
+    // exactly the case that must still re-upload.
+    pc_gfx_flush_batch();
+    glActiveTexture_ptr(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texId);
+    sBoundTextures[0] = texId;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    sBoundTextures[0] = 0;
+}
+
 void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrapS, GXTexWrapMode wrapT, GXBool mipmap) {
     if (!obj || !imagePtr || width == 0 || height == 0) return;
 
@@ -3835,29 +3865,23 @@ void pc_gfx_init_tex_obj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, G
                             u8 packed = source[tileOffset + index];
 							a = (packed >> 4) * 17; r = g = b = (packed & 0x0f) * 17;
                         } else if (format == GX_TF_IA8) {
-                            // Which byte holds the intensity and which the
-                            // alpha. The port has always taken alpha first;
-                            // the hardware format documents intensity in the
-                            // high byte, which is the first one in this
-                            // big-endian data. The H4M player packs the movie's
-                            // two chroma planes into an IA8 texture and pulls
-                            // them back out with TEV swap tables, so getting
-                            // this the wrong way round swaps U and V and the
-                            // colours come out wrong -- which is what it does.
+                            // Alpha first, intensity second.
                             //
-                            // Confirmed on screen: with intensity first the
-                            // movie's colours are right, and the rest of the
-                            // game -- logo, fonts, HUD, all of which use IA8 --
-                            // is unchanged. PIKMIN_IA8_ALPHA_FIRST=1 restores
-                            // the old order for comparison.
-                            static const bool alphaFirst = getenv("PIKMIN_IA8_ALPHA_FIRST") != nullptr;
-                            if (!alphaFirst) {
-                                r = g = b = source[tileOffset + index * 2];
-                                a = source[tileOffset + index * 2 + 1];
-                            } else {
-                                a = source[tileOffset + index * 2];
-                                r = g = b = source[tileOffset + index * 2 + 1];
-                            }
+                            // This looks wrong against the hardware format,
+                            // where intensity is the high byte, and it was
+                            // changed to match -- which fixed the H4M movie's
+                            // colours and put a visible rectangle around every
+                            // window frame in the game, because a frame that
+                            // should have been transparent became opaque.
+                            // Confirmed by switching it back on the machine.
+                            //
+                            // So the rest of the port reads these two channels
+                            // consistently with what is here, and it is the
+                            // movie that packs its chroma the other way round.
+                            // Fixed there instead: one player against every
+                            // IA8 texture in the game.
+                            a = source[tileOffset + index * 2];
+                            r = g = b = source[tileOffset + index * 2 + 1];
                         } else if (format == GX_TF_RGB565 || format == GX_TF_RGB5A3) {
                             u16 value = (source[tileOffset + index * 2] << 8) | source[tileOffset + index * 2 + 1];
                             if (format == GX_TF_RGB565) {

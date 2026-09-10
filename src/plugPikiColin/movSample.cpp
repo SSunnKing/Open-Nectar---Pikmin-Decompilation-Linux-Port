@@ -35,6 +35,69 @@ DEFINE_PRINT("MovSample")
 /**
  * @todo: Documentation
  */
+#if defined(PIKI_PC_PORT)
+#include "gl/pc_gfx.h"
+
+// The picture, converted to RGB here instead of being encoded into a GameCube
+// texture format and taken apart again by four TEV stages.
+//
+// That path could not be made to work. The player packs its two chroma planes
+// into an IA8 texture and pulls them out with TEV swap tables, which depends on
+// which byte of an IA8 texel is intensity and which is alpha -- and this port
+// reads those the opposite way round from the hardware, consistently, with the
+// whole interface built on top of that. Correcting the reader put a visible
+// rectangle around every window frame in the game; compensating in the player
+// was tried in all four byte orders and every one of them came out black,
+// because the last TEV stage multiplies the colour by an alpha that both
+// textures contribute to, so the two channels are not interchangeable.
+//
+// One movie against every IA8 texture in the game. The movie gives way, and it
+// gives way completely: no shared convention left to get wrong.
+static u8* pcMovieRgba(int width, int height)
+{
+	static u8* buffer = nullptr;
+	static int size = 0;
+	const int wanted = width * height * 4;
+	if (size < wanted) {
+		delete[] buffer;
+		buffer = new u8[wanted];
+		size = wanted;
+	}
+	return buffer;
+}
+
+static inline u8 pcClamp255(int value)
+{
+	return (u8)(value < 0 ? 0 : (value > 255 ? 255 : value));
+}
+
+// BT.601, the conversion these files were encoded with, on the ranges the
+// decoder produces: luma 16..235, chroma centred on 128.
+static void pcMovieConvert(int width, int height, immut u8* yuv, u8* rgba)
+{
+	immut u8* luma = yuv;
+	immut u8* cb   = yuv + width * height;
+	immut u8* cr   = cb + (width / 2) * (height / 2);
+
+	for (int y = 0; y < height; y++) {
+		immut u8* lumaRow = luma + y * width;
+		immut u8* cbRow   = cb + (y / 2) * (width / 2);
+		immut u8* crRow   = cr + (y / 2) * (width / 2);
+		u8* out           = rgba + y * width * 4;
+		for (int x = 0; x < width; x++) {
+			const int Y = (298 * (lumaRow[x] - 16)) >> 8;
+			const int U = cbRow[x / 2] - 128;
+			const int V = crRow[x / 2] - 128;
+			out[0] = pcClamp255(Y + ((409 * V) >> 8));
+			out[1] = pcClamp255(Y - ((100 * U + 208 * V) >> 8));
+			out[2] = pcClamp255(Y + ((516 * U) >> 8));
+			out[3] = 255;
+			out += 4;
+		}
+	}
+}
+#endif
+
 void convHVQM4TexY8UV8(int stride, int height, u8* src, u8* dst)
 {
 	u32* out;
@@ -91,26 +154,26 @@ void convHVQM4TexY8UV8(int stride, int height, u8* src, u8* dst)
 		for (j = stride / 2; j > 0; j -= 4) {
 			// two packed pixels per line per iteration
 			// Line 0
-			out[0] = ((u32)u0[0] << 24) | ((u32)v0[0] << 16) | ((u32)u0[1] << 8) | ((u32)v0[1]);
-			out[1] = ((u32)u0[2] << 24) | ((u32)v0[2] << 16) | ((u32)u0[3] << 8) | ((u32)v0[3]);
+						out[0] = ((u32)u0[0] << 24) | ((u32)v0[0] << 16) | ((u32)u0[1] << 8) | ((u32)v0[1]);
+						out[1] = ((u32)u0[2] << 24) | ((u32)v0[2] << 16) | ((u32)u0[3] << 8) | ((u32)v0[3]);
 			u0 += 4;
 			v0 += 4;
 
 			// Line 1
-			out[2] = ((u32)u1[0] << 24) | ((u32)v1[0] << 16) | ((u32)u1[1] << 8) | ((u32)v1[1]);
-			out[3] = ((u32)u1[2] << 24) | ((u32)v1[2] << 16) | ((u32)u1[3] << 8) | ((u32)v1[3]);
+						out[2] = ((u32)u1[0] << 24) | ((u32)v1[0] << 16) | ((u32)u1[1] << 8) | ((u32)v1[1]);
+						out[3] = ((u32)u1[2] << 24) | ((u32)v1[2] << 16) | ((u32)u1[3] << 8) | ((u32)v1[3]);
 			u1 += 4;
 			v1 += 4;
 
 			// Line 2
-			out[4] = ((u32)u2[0] << 24) | ((u32)v2[0] << 16) | ((u32)u2[1] << 8) | ((u32)v2[1]);
-			out[5] = ((u32)u2[2] << 24) | ((u32)v2[2] << 16) | ((u32)u2[3] << 8) | ((u32)v2[3]);
+						out[4] = ((u32)u2[0] << 24) | ((u32)v2[0] << 16) | ((u32)u2[1] << 8) | ((u32)v2[1]);
+						out[5] = ((u32)u2[2] << 24) | ((u32)v2[2] << 16) | ((u32)u2[3] << 8) | ((u32)v2[3]);
 			u2 += 4;
 			v2 += 4;
 
 			// Line 3
-			out[6] = ((u32)u3[0] << 24) | ((u32)v3[0] << 16) | ((u32)u3[1] << 8) | ((u32)v3[1]);
-			out[7] = ((u32)u3[2] << 24) | ((u32)v3[2] << 16) | ((u32)u3[3] << 8) | ((u32)v3[3]);
+						out[6] = ((u32)u3[0] << 24) | ((u32)v3[0] << 16) | ((u32)u3[1] << 8) | ((u32)v3[1]);
+						out[7] = ((u32)u3[2] << 24) | ((u32)v3[2] << 16) | ((u32)u3[3] << 8) | ((u32)v3[3]);
 			u3 += 4;
 			v3 += 4;
 
@@ -282,7 +345,34 @@ struct MovSampleSetupSection : public Node {
 #endif
 
 		if (pictureData && pictureStatus) {
-#if defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
+#if defined(PIKI_PC_PORT)
+			// Straight from the decoder's planes to RGB. convHVQM4TexY8UV8
+			// re-encodes them into a GameCube texture; see pcMovieConvert for
+			// why that route was abandoned.
+			pcMovieConvert(pictureWidth, pictureHeight, pictureData,
+			               pcMovieRgba(pictureWidth, pictureHeight));
+			if (hvqmDebugLogging()) {
+				// The average colour of what was just converted. The picture is
+				// still black on screen with this path, and this says which
+				// half is at fault: a real average means the decode and the
+				// conversion are fine and the fault is in the upload or the
+				// draw; near-zero means the picture never arrived.
+				static int gate = 0;
+				if ((++gate % 60) == 0) {
+					const u8* rgba = pcMovieRgba(pictureWidth, pictureHeight);
+					long r = 0, g = 0, b = 0, n = 0;
+					for (int y = 0; y < pictureHeight; y += 8) {
+						for (int x = 0; x < pictureWidth; x += 8) {
+							const u8* px = rgba + (y * pictureWidth + x) * 4;
+							r += px[0]; g += px[1]; b += px[2]; n++;
+						}
+					}
+					printf("[PC Port] H4M: converted picture average rgb (%ld, %ld, %ld)\n",
+					       r / n, g / n, b / n);
+					fflush(stdout);
+				}
+			}
+#elif defined(VERSION_GPIJ01) || defined(VERSION_DPIJ01_PIKIDEMO)
 			convHVQM4TexY8UV8(pictureWidth, pictureHeight, pictureData, mYuvFrameBuffers[mFrameBufferIndex]);
 #else
 			convHVQM4TexY8UV8(pictureWidth, pictureHeight, pictureData, mYuvFrameBuffers[mFrameBufferIndex ^ 1]);
@@ -325,6 +415,32 @@ struct MovSampleSetupSection : public Node {
 		STACK_PAD_VAR(64);
 		gfx.setOrthogonal(mtx.mMtx, AREA_FULL_SCREEN(gfx));
 
+#if defined(PIKI_PC_PORT)
+		// One finished picture, one texture, one stage. Everything below this
+		// block builds the console's YUV decode out of four TEV stages and two
+		// textures; none of it is needed once the picture arrives as RGB.
+		{
+			GXSetNumTexGens(1);
+			GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX3X4, GX_TG_TEX0, 60, 0, 125);
+			GXInvalidateTexAll();
+			GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
+			GXSetNumTevStages(1);
+			GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+			GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
+
+			pc_gfx_init_tex_obj_rgba(&YtexObj, pcMovieRgba(ImgW, ImgH), ImgW, ImgH);
+			GXLoadTexObj(&YtexObj, GX_TEXMAP0);
+
+			gfx.setColour(COLOUR_WHITE, true);
+			int width, height;
+			gfx.testRectangle(RectArea(0, 0, width = 640, height = 480));
+
+			gfx.setColour(Colour(255, 255, 64, 255), true);
+			gfx.setAuxColour(Colour(255, 0, 64, 255));
+			gameflow.drawLoadLogo(gfx, false, gameflow.mLevelBannerTex, gameflow.mLevelBannerFadeValue);
+			return;
+		}
+#endif
 		GXSetNumTexGens(2);
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX3X4, GX_TG_TEX0, 60, 0, 125);
 		GXSetTexCoordGen2(GX_TEXCOORD1, GX_TG_MTX3X4, GX_TG_TEX0, 60, 0, 125);
