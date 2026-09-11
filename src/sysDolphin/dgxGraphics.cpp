@@ -1891,6 +1891,11 @@ void DGXGraphics::drawOneTri(immut Vector3f* vertices, immut Vector3f* normals, 
 		}
 		GXTexCoord2f32(texCoords[i].x, texCoords[i].y);
 	}
+#if defined(PIKI_PC_PORT)
+	// GX consumes the declared vertex count on hardware; the PC stream needs
+	// an explicit submission before the next primitive replaces its vertices.
+	GXEnd();
+#endif
 }
 
 /**
