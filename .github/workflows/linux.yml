@@ -21,11 +21,13 @@ jobs:
             echo 'Proprietary game data found in repository'
             exit 1
           fi
+      - name: Archive package with executable permissions
+        run: tar -czf nectar-linux.tar.gz -C packaging/linux/out nectar-linux
       - name: Upload standalone package
         uses: actions/upload-artifact@v4
         with:
           name: nectar-linux
-          path: packaging/linux/out/nectar-linux
+          path: nectar-linux.tar.gz
 
   smoke-clean-distro:
     # Reproduce lo que verá otro equipo: una distro limpia donde SOLO se
@@ -38,7 +40,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: nectar-linux
-          path: nectar-linux
+      - name: Extract package with executable permissions
+        run: tar -xzf nectar-linux.tar.gz
       - name: Install only the documented requirement (OpenGL driver)
         run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0
       - name: Standalone package runs on clean Debian 12
