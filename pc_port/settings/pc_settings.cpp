@@ -574,46 +574,75 @@ void resetToDefaults() {
 // Defined outside the anonymous namespace and deliberately self-contained: it
 // runs during static initialisation, so it cannot rely on sConfig having been
 // loaded, or even on this file's own globals having been constructed.
+//
+// PAL's GamePrefs constructor calls OSGetLanguage() before main(). On MinGW
+// that can be before ios_base::Init; std::ifstream / std::string there is a
+// crash-at-launch while the USA binary (which never asks) starts fine. Stay
+// on getenv/fopen/fgets.
 // The language in force, as an OS_LANG_* value. Seeded from the file at boot
 // and changed from the F1 menu; saved back on every write.
 static unsigned char sLanguage = 0xFF; // 0xFF = not yet seeded
 
+static unsigned char decodeLanguageCode(const char* text, unsigned char fallback)
+{
+    static const struct {
+        char a;
+        char b;
+        unsigned char value;
+    } kCodes[] = {
+        { 'e', 'n', 0 }, { 'd', 'e', 1 }, { 'f', 'r', 2 },
+        { 'e', 's', 3 }, { 'i', 't', 4 }, { 'n', 'l', 5 },
+    };
+    if (!text || !text[0] || !text[1])
+        return fallback;
+    for (unsigned i = 0; i < sizeof(kCodes) / sizeof(kCodes[0]); ++i) {
+        if (text[0] == kCodes[i].a && text[1] == kCodes[i].b)
+            return kCodes[i].value;
+    }
+    return fallback;
+}
+
+static void trimCString(char* text)
+{
+    char* start = text;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+        ++start;
+    if (start != text)
+        memmove(text, start, strlen(start) + 1);
+    size_t n = strlen(text);
+    while (n > 0 && (text[n - 1] == ' ' || text[n - 1] == '\t' || text[n - 1] == '\r' || text[n - 1] == '\n'))
+        text[--n] = '\0';
+}
+
 unsigned char pc_settings_startup_language(void) {
-    static const unsigned char language = [] {
-        static const struct { const char* code; unsigned char value; } kCodes[] = {
-            { "en", 0 }, { "de", 1 }, { "fr", 2 }, { "es", 3 }, { "it", 4 }, { "nl", 5 },
-        };
-        auto decode = [](const std::string& text, unsigned char fallback) {
-            for (const auto& entry : kCodes) {
-                if (text.compare(0, 2, entry.code) == 0) return entry.value;
-            }
-            return fallback;
-        };
-
+    static unsigned char language = 0;
+    static int seeded = 0;
+    if (!seeded) {
+        seeded = 1;
+        language = 0;
         if (const char* fromEnvironment = getenv("NECTAR_LANGUAGE")) {
-            return decode(fromEnvironment, (unsigned char)0);
+            language = decodeLanguageCode(fromEnvironment, 0);
+        } else if (FILE* in = fopen(kConfigFilename, "r")) {
+            char line[512];
+            while (fgets(line, sizeof(line), in)) {
+                char* equals = strchr(line, '=');
+                if (!equals)
+                    continue;
+                *equals = '\0';
+                char* key = line;
+                char* value = equals + 1;
+                trimCString(key);
+                trimCString(value);
+                if (strcmp(key, "language") == 0) {
+                    language = decodeLanguageCode(value, 0);
+                    break;
+                }
+            }
+            fclose(in);
         }
-
-        std::ifstream in(kConfigFilename);
-        if (!in) return (unsigned char)0;
-        std::string line;
-        while (std::getline(in, line)) {
-            const size_t equals = line.find('=');
-            if (equals == std::string::npos) continue;
-            std::string key = line.substr(0, equals);
-            std::string value = line.substr(equals + 1);
-            const auto strip = [](std::string& text) {
-                const size_t first = text.find_first_not_of(" \t\r\n");
-                const size_t last = text.find_last_not_of(" \t\r\n");
-                text = (first == std::string::npos) ? std::string() : text.substr(first, last - first + 1);
-            };
-            strip(key);
-            strip(value);
-            if (key == "language") return decode(value, (unsigned char)0);
-        }
-        return (unsigned char)0;
-    }();
-    if (sLanguage == 0xFF) sLanguage = language;
+    }
+    if (sLanguage == 0xFF)
+        sLanguage = language;
     return language;
 }
 

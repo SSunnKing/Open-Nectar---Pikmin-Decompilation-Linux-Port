@@ -64,7 +64,10 @@ void GamePrefs::Initialise()
 		LANG_English  // OS Dutch
 	};
 
-	setChildMode(ids[OSGetLanguage()]);
+	u8 osLang = OSGetLanguage();
+	if (osLang >= (u8)(sizeof(ids) / sizeof(ids[0])))
+		osLang = 0;
+	setChildMode(ids[osLang]);
 	mBgmVol                = 8;
 	mSfxVol                = 8;
 	mMostRecentFileSlot    = 0;
