@@ -45,6 +45,12 @@ int pc_settings_get_fps_mode(void);
 // stock port stays faithful.
 int pc_settings_get_chain_actions(void);
 
+// Returns 1 while hold-to-continue-plucking is enabled, 0 otherwise.
+//
+// Retail wants a tap for each sprout. With the mod on, holding Extract after
+// the first pluck keeps going; release or whistle cancels. Off by default.
+int pc_settings_get_hold_to_pluck(void);
+
 /// What the mouse wheel controls: 0 = Pikmin colour to throw, 1 = camera zoom.
 int pc_settings_get_mouse_wheel_action(void);
 

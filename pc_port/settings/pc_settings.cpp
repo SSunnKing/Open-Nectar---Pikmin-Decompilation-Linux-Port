@@ -81,6 +81,8 @@ struct PcConfig {
     // Off by default. The stock behaviour -- finish a job, walk back to the
     // squad -- is what the retail game does; this only changes it on request.
     int chainActions = 0;
+    // Hold Extract to keep plucking (0=off/faithful, 1=on). Off by default.
+    int holdToPluck = 0;
     // What the mouse wheel does: 0 = pick the Pikmin colour to throw,
     // 1 = zoom the camera. One setting rather than two toggles, so the two
     // uses cannot both be on or both be off.
@@ -123,6 +125,7 @@ struct PcConfig {
         stickInvert = 0;
         cStickInvert = 0;
         chainActions = 0;
+        holdToPluck = 0;
         mouseWheelAction = 0;
         pikiLimit = 100;
         dayMinutes = 10;
@@ -287,14 +290,14 @@ constexpr int kSaturationStopCount = int(sizeof(kSaturationStops) / sizeof(kSatu
 // Mods submenu state. Everything here changes how the game *plays* rather than
 // how it looks or reads input hardware, so it lives apart from the rest: a
 // player who wants the original experience only has to leave this one page
-// alone. 0=control scheme, 1=chain Pikmin actions.
+// alone.
 bool sInModsSubmenu = false;
 int sModsSelection = 0;
 #if PIKI_DEBUG_KEYS
-constexpr int kModsRowCount = 6;
+constexpr int kModsRowCount = 7;
 #else
 // The debug row is the last one, so leaving it off simply shortens the list.
-constexpr int kModsRowCount = 5;
+constexpr int kModsRowCount = 6;
 #endif
 
 // Field-limit stops. 100 is what the original game uses.
@@ -681,6 +684,7 @@ void saveConfig() {
     out << "renderScale = " << sConfig.renderScale << "\n";
     out << "fpsMode = " << sConfig.fpsMode << "\n";
     out << "chainActions = " << sConfig.chainActions << "\n";
+    out << "holdToPluck = " << sConfig.holdToPluck << "\n";
     out << "mouseWheelAction = " << sConfig.mouseWheelAction << "\n";
     out << "pikiLimit = " << sConfig.pikiLimit << "\n";
     out << "dayMinutes = " << sConfig.dayMinutes << "\n";
@@ -778,6 +782,9 @@ void loadConfig() {
         }
         else if (key == "chainActions") {
             sConfig.chainActions = atoi(val.c_str()) ? 1 : 0;
+        }
+        else if (key == "holdToPluck") {
+            sConfig.holdToPluck = atoi(val.c_str()) ? 1 : 0;
         }
         else if (key == "mouseWheelAction") {
             sConfig.mouseWheelAction = atoi(val.c_str());
@@ -1390,14 +1397,18 @@ void pollMenuInput() {
         else if (sModsSelection == 1) {
             if (left || right) sPending.chainActions = sPending.chainActions ? 0 : 1;
         }
-        // What the mouse wheel controls.
+        // Hold Extract to keep plucking after the first sprout.
         else if (sModsSelection == 2) {
+            if (left || right) sPending.holdToPluck = sPending.holdToPluck ? 0 : 1;
+        }
+        // What the mouse wheel controls.
+        else if (sModsSelection == 3) {
             if (left || right) sPending.mouseWheelAction = sPending.mouseWheelAction ? 0 : 1;
         }
         // Pikmin field limit. Stepped through meaningful values rather than one
         // at a time: the menu has no key repeat, so a fine slider would take
         // hundreds of presses to cross the range.
-        else if (sModsSelection == 3) {
+        else if (sModsSelection == 4) {
             int idx = 0;
             for (int i = 0; i < kPikiLimitCount; i++) {
                 if (kPikiLimits[i] == sPending.pikiLimit) { idx = i; break; }
@@ -1407,7 +1418,7 @@ void pollMenuInput() {
             sPending.pikiLimit = kPikiLimits[idx];
         }
         // Day length.
-        else if (sModsSelection == 4) {
+        else if (sModsSelection == 5) {
             int idx = 0;
             for (int i = 0; i < kDayMinutesCount; i++) {
                 if (kDayMinutes[i] == sPending.dayMinutes) { idx = i; break; }
@@ -1417,7 +1428,7 @@ void pollMenuInput() {
             sPending.dayMinutes = kDayMinutes[idx];
         }
         // Debug shortcuts.
-        else if (sModsSelection == 5) {
+        else if (sModsSelection == 6) {
             if (left || right) sPending.debugKeys = sPending.debugKeys ? 0 : 1;
         }
         return;
@@ -2496,6 +2507,7 @@ void pc_settings_draw(void) {
         const char* modsLabels[kModsRowCount] = {
             "Control Scheme",
             "Chain Pikmin Actions",
+            "Hold to Pluck",
             "Mouse Wheel",
             "Pikmin Limit",
             "Day Length",
@@ -2521,11 +2533,14 @@ void pc_settings_draw(void) {
                          sPending.chainActions ? "On" : "Off (original)");
             } else if (i == 2) {
                 snprintf(value, sizeof(value), "%s",
+                         sPending.holdToPluck ? "On" : "Off (original)");
+            } else if (i == 3) {
+                snprintf(value, sizeof(value), "%s",
                          sPending.mouseWheelAction ? "Camera Zoom" : "Pikmin Colour");
-            } else if (i == 5) {
+            } else if (i == 6) {
                 snprintf(value, sizeof(value), "%s",
                          sPending.debugKeys ? "On" : "Off");
-            } else if (i == 4) {
+            } else if (i == 5) {
                 if (sPending.dayMinutes == 10) {
                     snprintf(value, sizeof(value), "10 min (original)");
                 } else {
@@ -2566,6 +2581,10 @@ int pc_settings_get_fps_mode(void) {
 
 int pc_settings_get_chain_actions(void) {
     return sConfig.chainActions;
+}
+
+int pc_settings_get_hold_to_pluck(void) {
+    return sConfig.holdToPluck;
 }
 
 int pc_settings_get_mouse_wheel_action(void) {

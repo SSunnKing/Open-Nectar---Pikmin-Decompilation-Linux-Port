@@ -41,6 +41,9 @@
 #include "GoalItem.h"
 #include "UtEffect.h"
 #include "jaudio/pikidemo.h"
+#if defined(PIKI_PC_PORT)
+#include "settings/pc_settings.h"
+#endif
 
 /**
  * @todo: Documentation
@@ -2530,14 +2533,24 @@ void NaviNukuState::exec(Navi* navi)
 	navi->mVelocity.set(0.0f, 0.0f, 0.0f);
 	navi->mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 
-	if (!mExtractKeyReleased && navi->mKontroller->keyUp(KeyConfig::_instance->mExtractKey.mBind)) {
-		mExtractKeyReleased = true;
-	}
+#if defined(PIKI_PC_PORT)
+	if (pc_settings_get_hold_to_pluck()) {
+		// Holding continues an already-started pluck; release/whistle clears
+		// the request rather than leaving another pluck queued.
+		mWantsNextPluck = navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)
+		               && !navi->mKontroller->keyDown(KeyConfig::_instance->mSetCursorKey.mBind);
+	} else
+#endif
+	{
+		if (!mExtractKeyReleased && navi->mKontroller->keyUp(KeyConfig::_instance->mExtractKey.mBind)) {
+			mExtractKeyReleased = true;
+		}
 
-	if (mExtractKeyReleased && navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)) {
-		mWantsNextPluck = true;
-		navi->mIsPlucking;
-		navi->mFastPluckKeyTaps++;
+		if (mExtractKeyReleased && navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)) {
+			mWantsNextPluck = true;
+			navi->mIsPlucking;
+			navi->mFastPluckKeyTaps++;
+		}
 	}
 	navi->mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 	navi->mPressedTimer += gsys->getFrameTime();
@@ -2583,6 +2596,16 @@ void NaviNukuState::procAnimMsg(Navi* navi, MsgAnim* msg)
 	case KEY_Finished:
 	{
 		navi->_810 = 0;
+#if defined(PIKI_PC_PORT)
+		if (pc_settings_get_hold_to_pluck()) {
+			// Read current input at the animation boundary too. Count at most
+			// one continuation per sprout, not one fast-pluck tap per frame.
+			mWantsNextPluck = navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)
+			               && !navi->mKontroller->keyDown(KeyConfig::_instance->mSetCursorKey.mBind);
+			if (mWantsNextPluck)
+				navi->mFastPluckKeyTaps = 1;
+		}
+#endif
 		if (mWantsNextPluck) {
 			if (!navi->procActionButton()) {
 				mWantsNextPluck = false;
