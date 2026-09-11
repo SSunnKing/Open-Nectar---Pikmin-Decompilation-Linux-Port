@@ -1,12 +1,11 @@
-name: Legacy matching build
+name: Build
 
 on:
-  workflow_dispatch:
+  push:
+  pull_request:
 
 jobs:
   build:
-    # Requires access to the private toolchain image and its original game files.
-    # Public native-port validation runs in linux.yml on every push/PR.
     container: ghcr.io/projectpiki/build:main
 
     runs-on: ubuntu-latest

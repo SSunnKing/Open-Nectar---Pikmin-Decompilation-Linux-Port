@@ -85,13 +85,25 @@ void GenObjectBoss::ramSaveParameters(RandomAccessStream& output)
  */
 void GenObjectBoss::readParameters(RandomAccessStream& input)
 {
-	// File layout is fixed; host C++ bitfield allocation order is not.
-	const u32 flags = static_cast<u32>(input.readInt());
-	mBossID          = flags & 0xf;
-	mItemIndex       = (flags >> 4) & 0x3;
-	mItemColour      = (flags >> 6) & 0x3;
-	mItemCount       = (flags >> 8) & 0xf;
-	mPelletConfigIdx = static_cast<int>(flags >> 12) - 1;
+	// this is too much compression, just read them as words goddamn it!
+	union GenFlags {
+		u32 w;
+		struct {
+			u32 m0 : 20;
+			u32 m1 : 4;
+			u32 m2 : 2;
+			u32 m3 : 2;
+			u32 m4 : 4;
+		} b;
+	} flags;
+
+	flags.w = input.readInt();
+
+	mBossID          = flags.b.m4;
+	mItemIndex       = flags.b.m3;
+	mItemColour      = flags.b.m2;
+	mItemCount       = flags.b.m1;
+	mPelletConfigIdx = flags.b.m0 - 1;
 }
 
 /**
@@ -99,12 +111,26 @@ void GenObjectBoss::readParameters(RandomAccessStream& input)
  */
 void GenObjectBoss::writeParameters(RandomAccessStream& output)
 {
-	const u32 flags = (static_cast<u32>(mBossID) & 0xf)
-	    | ((static_cast<u32>(mItemIndex) & 0x3) << 4)
-	    | ((static_cast<u32>(mItemColour) & 0x3) << 6)
-	    | ((static_cast<u32>(mItemCount) & 0xf) << 8)
-	    | ((static_cast<u32>(mPelletConfigIdx + 1) & 0xfffff) << 12);
-	output.writeInt(flags);
+	// this is too much compression, just write them as words goddamn it!
+	union GenFlags {
+		u32 w;
+		struct {
+			u32 m0 : 20;
+			u32 m1 : 4;
+			u32 m2 : 2;
+			u32 m3 : 2;
+			u32 m4 : 4;
+		} b;
+	} flags;
+
+	flags.w    = 0;
+	flags.b.m4 = mBossID;
+	flags.b.m3 = mItemIndex;
+	flags.b.m2 = mItemColour;
+	flags.b.m1 = mItemCount;
+	flags.b.m0 = mPelletConfigIdx + 1;
+
+	output.writeInt(flags.w);
 }
 
 /**

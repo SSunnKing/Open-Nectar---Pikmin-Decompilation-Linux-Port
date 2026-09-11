@@ -1338,7 +1338,7 @@ void Navi::releasePikis()
 	for (colorIdx1 = 0; colorIdx1 < PikiColorCount + 1; colorIdx1++) {
 		if (colorCounts[colorIdx1] > 0) {
 			colorCoMs[colorIdx1].multiply(1.0f / colorCounts[colorIdx1]);
-			colorSizes[colorIdx1] = (2.5f * pikiList[0]->getSize()) * sqrtf(colorCounts[colorIdx1]);
+			colorSizes[colorIdx1] = (2.5f * pikiList[0]->getSize()) * std::sqrtf(colorCounts[colorIdx1]);
 		}
 	}
 
@@ -1472,14 +1472,14 @@ bool Navi::procActionButton()
 #endif
 				{
 					Vector3f pelShipSep = pellet->mSRT.t - ship->getGoalPos();
-					f32 distFromShip    = sqrtf(pelShipSep.x * pelShipSep.x + pelShipSep.z * pelShipSep.z);
+					f32 distFromShip    = std::sqrtf(pelShipSep.x * pelShipSep.x + pelShipSep.z * pelShipSep.z);
 					if (distFromShip < 30.0f && pellet->mCarrierCounter != 0) {
 						continue;
 					}
 				}
 
 				Vector3f pelNaviSep = pellet->mSRT.t - mSRT.t;
-				f32 distFromNavi    = sqrtf(pelNaviSep.x * pelNaviSep.x + pelNaviSep.z * pelNaviSep.z) - pellet->getBottomRadius();
+				f32 distFromNavi    = std::sqrtf(pelNaviSep.x * pelNaviSep.x + pelNaviSep.z * pelNaviSep.z) - pellet->getBottomRadius();
 				if (distFromNavi <= 20.0f) {
 					int idx = PelletMgr::getUfoIndexFromID(pellet->mConfig->mModelId.mId);
 					if (idx == -1) {
@@ -1500,7 +1500,7 @@ bool Navi::procActionButton()
 		UfoItem* ship = itemMgr->getUfo();
 		if (ship) {
 			Vector3f naviShipSep = ship->mSRT.t - mSRT.t;
-			f32 naviShipDist     = sqrtf(naviShipSep.x * naviShipSep.x + naviShipSep.z * naviShipSep.z);
+			f32 naviShipDist     = std::sqrtf(naviShipSep.x * naviShipSep.x + naviShipSep.z * naviShipSep.z);
 			if (naviShipDist <= 50.0f) {
 				mStateMachine->transit(this, NAVISTATE_UfoAccess);
 				return true;
@@ -1531,7 +1531,7 @@ bool Navi::procActionButton()
 			}
 
 			Vector3f sproutNaviSep = sprout->mSRT.t - mSRT.t;
-			f32 sproutDist         = sqrtf(sproutNaviSep.x * sproutNaviSep.x + sproutNaviSep.z * sproutNaviSep.z);
+			f32 sproutDist         = std::sqrtf(sproutNaviSep.x * sproutNaviSep.x + sproutNaviSep.z * sproutNaviSep.z);
 			f32 heightDiff         = absF(sproutNaviSep.y);
 			if (sprout->canPullout() && sproutDist < minDist && heightDiff < 25.0f) {
 				minDist       = sproutDist;
@@ -2906,7 +2906,7 @@ void Navi::updateLook()
 	if (mLookAtPosPtr) {
 		Vector3f lookDelta = *mLookAtPosPtr - mSRT.t;
 		targetYaw          = atan2f(lookDelta.x, lookDelta.z);
-		f32 horizDist      = sqrtf(lookDelta.x * lookDelta.x + lookDelta.z * lookDelta.z);
+		f32 horizDist      = std::sqrtf(lookDelta.x * lookDelta.x + lookDelta.z * lookDelta.z);
 		targetPitch        = atan2f(lookDelta.y, horizDist);
 	} else {
 		f32 returnFactor  = 0.2f;

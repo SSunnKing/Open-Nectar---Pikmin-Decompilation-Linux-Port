@@ -1239,7 +1239,7 @@ f32 qdist2(Creature* c1, Creature* c2)
 {
 	f32 xDiff = c1->mSRT.t.x - c2->mSRT.t.x;
 	f32 zDiff = c1->mSRT.t.z - c2->mSRT.t.z;
-	return sqrtf(SQUARE(xDiff) + SQUARE(zDiff));
+	return std::sqrtf(SQUARE(xDiff) + SQUARE(zDiff));
 }
 
 /**

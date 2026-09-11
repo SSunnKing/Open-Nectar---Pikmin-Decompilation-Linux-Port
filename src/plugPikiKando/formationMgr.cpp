@@ -401,7 +401,7 @@ void PyramidArranger::arrange(FormationMgr* mgr)
 f32 PyramidArranger::getLength(FormationMgr* mgr)
 {
 	int count = mgr->mCount; // load bearing temp. try it.
-	return (-1.0f + sqrtf(count * 8.0f + 1.0f)) / 2.0f * 26.0f;
+	return (-1.0f + std::sqrtf(count * 8.0f + 1.0f)) / 2.0f * 26.0f;
 }
 
 /**

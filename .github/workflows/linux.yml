@@ -38,7 +38,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: nectar-linux
-          path: nectar-linux
       - name: Install only the documented requirement (OpenGL driver)
         run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0
       - name: Standalone package runs on clean Debian 12

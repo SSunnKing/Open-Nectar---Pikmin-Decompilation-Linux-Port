@@ -558,7 +558,7 @@ void zen::ogRaderMgr::AreaScroll(f32* p1, f32* p2, f32 p3, f32 p4)
 	f32 z1 = b + z - d;
 	PRINT("scroll(%7.2f, %7.2f)  orima(%7.2f, %7.2f)  area(%7.2f, %7.2f)\n", p3, p4, mOlimarWorldPos.x, mOlimarWorldPos.z, mMapAreaCenterX,
 	      mMapAreaCenterZ);
-	f32 dist = sqrtf(SQUARE(x1) + SQUARE(z1));
+	f32 dist = std::sqrtf(SQUARE(x1) + SQUARE(z1));
 	if (dist < mMapAreaRadius) {
 		*p1 = a;
 		*p2 = b;

@@ -311,7 +311,7 @@ public:
 						f32 x = weightPos.x - mSlime->mSlimeCreatures[k]->mSRT.t.x;
 						f32 y = weightPos.y - mSlime->mSlimeCreatures[k]->mSRT.t.y;
 						f32 z = weightPos.z - mSlime->mSlimeCreatures[k]->mSRT.t.z;
-						score += mSlime->mAppearanceScale / sqrtf(SQUARE(x) + SQUARE(y) + SQUARE(z));
+						score += mSlime->mAppearanceScale / std::sqrtf(SQUARE(x) + SQUARE(y) + SQUARE(z));
 					}
 
 					// closer to other stick slimes = higher score

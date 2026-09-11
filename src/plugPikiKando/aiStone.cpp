@@ -104,7 +104,7 @@ int ActStone::exeApproach()
 	}
 
 	Vector3f direction = mCurrPebble->mPosition - mPiki->mSRT.t;
-	f32 dist2D         = sqrtf(direction.x * direction.x + direction.z * direction.z);
+	f32 dist2D         = std::sqrtf(direction.x * direction.x + direction.z * direction.z);
 	f32 unused         = direction.normalise();
 
 	if (dist2D <= 20.0f) {
@@ -135,7 +135,7 @@ int ActStone::exeAdjust()
 	}
 
 	Vector3f direction = mCurrPebble->mPosition - mPiki->mSRT.t;
-	f32 dist2D         = sqrtf(direction.x * direction.x + direction.z * direction.z);
+	f32 dist2D         = std::sqrtf(direction.x * direction.x + direction.z * direction.z);
 	f32 unused         = direction.normalise();
 
 	if (dist2D < 8.0f) {
