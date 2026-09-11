@@ -56,19 +56,19 @@ f32 Cylinder::get2dDist(immut Vector3f& point) immut
 	if (projectionRatio < 0.0f) {
 		// Before cylinder start - get 2D distance to start point
 		Vector3f startToPoint = mStartPoint - point;
-		return std::sqrtf(startToPoint.x * startToPoint.x + startToPoint.z * startToPoint.z);
+		return sqrtf(startToPoint.x * startToPoint.x + startToPoint.z * startToPoint.z);
 	}
 
 	if (projectionRatio > 1.0f) {
 		// Past cylinder end - get 2D distance to end point
 		Vector3f endToPoint = mEndPoint - point;
-		return std::sqrtf(endToPoint.x * endToPoint.x + endToPoint.z * endToPoint.z);
+		return sqrtf(endToPoint.x * endToPoint.x + endToPoint.z * endToPoint.z);
 	}
 
 	// On cylinder body - get distance to projected point
 	Vector3f projectedPoint = (cylinderDir * projectionRatio) + mStartPoint;
 	projectedPoint          = projectedPoint - point;
-	return std::sqrtf(projectedPoint.x * projectedPoint.x + projectedPoint.z * projectedPoint.z);
+	return sqrtf(projectedPoint.x * projectedPoint.x + projectedPoint.z * projectedPoint.z);
 }
 
 /**

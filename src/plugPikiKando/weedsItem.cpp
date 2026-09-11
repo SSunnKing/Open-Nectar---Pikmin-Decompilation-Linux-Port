@@ -87,7 +87,7 @@ void RockGen::resolve()
 				Vector3f& pos2 = mPebbles[k].mPosition;
 
 				Vector3f separation = pos - pos2;
-				f32 distance        = std::sqrtf(separation.x * separation.x + separation.z * separation.z);
+				f32 distance        = sqrtf(separation.x * separation.x + separation.z * separation.z);
 				separation.normalise();
 				if (distance < 30.0f) {
 					separation = separation * 15.0f;
@@ -114,7 +114,7 @@ void GrassGen::resolve()
 			for (int k = j + 1; k < max; k++) {
 				Vector3f* pos2 = &mGrass[k].mPosition;
 				Vector3f diff  = *pos - *pos2;
-				f32 len        = std::sqrtf(diff.x * diff.x + diff.z * diff.z);
+				f32 len        = sqrtf(diff.x * diff.x + diff.z * diff.z);
 				diff.normalise();
 				if (len < 30.0f) {
 					diff  = diff * 15.0f;
