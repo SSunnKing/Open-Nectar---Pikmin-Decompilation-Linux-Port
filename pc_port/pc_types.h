@@ -173,7 +173,7 @@ static unsigned int __pc_rlwinm(unsigned int value, unsigned int shift, unsigned
 /* ──────────────────────────────────────────────
  *  Single-precision C math under std:: (MinGW)
  *
- *  The decompiled code calls sqrtf, fmodf and friends in 25 files.
+ *  The decompiled code calls std::sqrtf, std::fmodf and friends in 25 files.
  *  Those names come from <math.h> and the C++ standard never required them in
  *  namespace std; glibc's headers add them anyway, MinGW's do not. Rather than
  *  edit decompiled sources, pull the global versions into std here. This
