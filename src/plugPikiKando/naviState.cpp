@@ -2100,6 +2100,9 @@ void NaviThrowWaitState::exec(Navi* navi)
 			}
 			if (!mPendingThrowPiki->isAlive()) {
 				transit(navi, NAVISTATE_Walk);
+#if defined(PIKI_PC_PORT)
+				return;
+#endif
 			}
 			Vector3f diff = mPendingThrowPiki->mSRT.t - navi->mSRT.t;
 			f32 d         = diff.length();
@@ -2127,13 +2130,26 @@ void NaviThrowWaitState::exec(Navi* navi)
 
 	if (mHeldThrowPiki) {
 		int state = mHeldThrowPiki->getState();
+#if defined(PIKI_PC_PORT)
+		// A nearby selection remains Normal until KEY_Action0 completes the
+		// grab. Rejecting it here loses taps before the animation can attach it.
+		const bool awaitingGrab = !mIsHoldingThrowPiki && state == PIKISTATE_Normal;
+		if (!mHeldThrowPiki->isAlive() || (!awaitingGrab && state != PIKISTATE_Hanged && state != PIKISTATE_GoHang)) {
+#else
 		if (state != PIKISTATE_Hanged && state != PIKISTATE_GoHang) {
+#endif
 			transit(navi, NAVISTATE_Walk);
 			return;
 		}
 	}
 
-	if (navi->mKontroller->keyUp(KeyConfig::_instance->mThrowKey.mBind)) {
+	if (navi->mKontroller->keyUp(KeyConfig::_instance->mThrowKey.mBind)
+#if defined(PIKI_PC_PORT)
+	    // keyUp is level-triggered: a quick release remains pending while the
+	    // Pikmin approaches and the grab animation finishes.
+	    && mIsHoldingThrowPiki
+#endif
+	) {
 		sortPikis(navi);
 		navi->mThrowHoldTime = mThrowChargeLevel / 3.0f * C_NAVI_PARM(navi, mThrowHoldMaxTime);
 		transit(navi, NAVISTATE_Throw);
