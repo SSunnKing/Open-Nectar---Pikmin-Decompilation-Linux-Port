@@ -149,11 +149,31 @@ PcConfig sConfig;      // the confirmed, persisted settings
 namespace {
 int menuStickThreshold()
 {
-	// Same units the game uses: the setting counts in pad steps, the axis in
-	// SDL's 16-bit range. A zero setting would make the menu react to noise,
-	// so keep a small floor.
+	// Gameplay uses a small pad-step dead zone. The F1 list must not: DualSense
+	// rest noise and the Linux IMU device sit well above 2048 and looked like
+	// a held down. Half throw is a flick, not drift.
 	const int threshold = sConfig.stickDeadZone * 256;
-	return threshold < 2048 ? 2048 : threshold;
+	return threshold < 16384 ? 16384 : threshold;
+}
+
+bool menuStickVertical(SDL_GameController* c, int sign)
+{
+	const int x = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
+	const int y = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+	const int t = menuStickThreshold();
+	if (std::abs(y) <= t || std::abs(y) < std::abs(x))
+		return false;
+	return sign < 0 ? y < 0 : y > 0;
+}
+
+bool menuStickHorizontal(SDL_GameController* c, int sign)
+{
+	const int x = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
+	const int y = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+	const int t = menuStickThreshold();
+	if (std::abs(x) <= t || std::abs(x) < std::abs(y))
+		return false;
+	return sign < 0 ? x < 0 : x > 0;
 }
 } // namespace
 PcConfig sPending;     // settings staged while editing
@@ -230,6 +250,9 @@ int sResolutionIdx = 0; // se resuelve al construir la lista (ver defaultResolut
 bool sInControlsSubmenu = false;
 int sControlSelection = 0; // index into PC_KEY_ACT_COUNT
 bool sWaitingForKey = false; // true while capturing a new key
+// Enter / Space / pad A started capture while still held. Ignore them until
+// they are released, otherwise the same press is stored as the new binding.
+bool sCaptureWaitRelease = false;
 
 // Gamepad controls submenu state.
 bool sInGamepadSubmenu = false;
@@ -820,29 +843,59 @@ bool padEdge(bool pressed, int slot) { return pc_menu_edge(pressed, slot, SDL_Ge
 /// Stick threshold for menus. Follows the configured dead zone, which a fixed
 /// 8000 used to ignore -- so changing the setting appeared to do nothing.
 int menuStickThreshold();
+bool menuStickVertical(SDL_GameController* c, int sign);
+bool menuStickHorizontal(SDL_GameController* c, int sign);
 
 bool padNavUp(SDL_GameController* c)
 {
 	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP)
-	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -menuStickThreshold(), 0);
+	                   || menuStickVertical(c, -1), 0);
 }
 bool padNavDown(SDL_GameController* c)
 {
 	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN)
-	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) > menuStickThreshold(), 1);
+	                   || menuStickVertical(c, 1), 1);
 }
 bool padNavLeft(SDL_GameController* c)
 {
 	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT)
-	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -menuStickThreshold(), 2);
+	                   || menuStickHorizontal(c, -1), 2);
 }
 bool padNavRight(SDL_GameController* c)
 {
 	return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
-	                   || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) > menuStickThreshold(), 3);
+	                   || menuStickHorizontal(c, 1), 3);
 }
 bool padNavA(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A), 4); }
 bool padNavB(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_B), 5); }
+
+bool captureConfirmHeld(SDL_GameController* ctl)
+{
+	int numKeys = 0;
+	const Uint8* keys = SDL_GetKeyboardState(&numKeys);
+	if (SDL_SCANCODE_RETURN < numKeys && keys[SDL_SCANCODE_RETURN])
+		return true;
+	if (SDL_SCANCODE_SPACE < numKeys && keys[SDL_SCANCODE_SPACE])
+		return true;
+	return ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A);
+}
+
+bool anyGamepadButtonHeld(SDL_GameController* ctl)
+{
+	if (!ctl)
+		return false;
+	for (int btn = 0; btn < SDL_CONTROLLER_BUTTON_MAX; btn++) {
+		if (SDL_GameControllerGetButton(ctl, (SDL_GameControllerButton)btn))
+			return true;
+	}
+	return false;
+}
+
+bool isCaptureModifierScancode(int sc)
+{
+	return sc == SDL_SCANCODE_LCTRL || sc == SDL_SCANCODE_RCTRL || sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT
+	    || sc == SDL_SCANCODE_LALT || sc == SDL_SCANCODE_RALT || sc == SDL_SCANCODE_LGUI || sc == SDL_SCANCODE_RGUI;
+}
 } // namespace
 
 bool keyWentDown(SDL_Scancode sc) {
@@ -921,24 +974,24 @@ void pollMenuInput() {
     // Controls submenu (key capture mode).
     if (sInControlsSubmenu) {
         if (sWaitingForKey) {
-            // Wait for any key press.
-            const Uint8* state = SDL_GetKeyboardState(NULL);
-            for (int sc = 0; sc < SDL_NUM_SCANCODES; sc++) {
-                if (state[sc]) {
-                    // Ignore modifier keys alone.
-                    if (sc != SDL_SCANCODE_LCTRL && sc != SDL_SCANCODE_RCTRL &&
-                        sc != SDL_SCANCODE_LSHIFT && sc != SDL_SCANCODE_RSHIFT &&
-                        sc != SDL_SCANCODE_LALT && sc != SDL_SCANCODE_RALT &&
-                        sc != SDL_SCANCODE_LGUI && sc != SDL_SCANCODE_RGUI) {
-                        sPending.keyboardBindings[sControlSelection] = sc;
-                        sWaitingForKey = false;
-                        break;
-                    }
-                }
-            }
-            // ESC cancels capture.
             if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && padNavB(ctl))) {
                 sWaitingForKey = false;
+                sCaptureWaitRelease = false;
+                return;
+            }
+            if (sCaptureWaitRelease) {
+                if (!captureConfirmHeld(ctl))
+                    sCaptureWaitRelease = false;
+                return;
+            }
+            for (int sc = 0; sc < SDL_NUM_SCANCODES; sc++) {
+                if (!keyWentDown(static_cast<SDL_Scancode>(sc)))
+                    continue;
+                if (isCaptureModifierScancode(sc))
+                    continue;
+                sPending.keyboardBindings[sControlSelection] = sc;
+                sWaitingForKey = false;
+                break;
             }
             return;
         }
@@ -973,6 +1026,7 @@ void pollMenuInput() {
         }
         if (ok) {
             sWaitingForKey = true;
+            sCaptureWaitRelease = true;
             return;
         }
         if (left || right) {
@@ -985,6 +1039,7 @@ void pollMenuInput() {
             keyWentDown(SDL_SCANCODE_B) || (ctl && padNavB(ctl))) {
             sInControlsSubmenu = false;
             sWaitingForKey = false;
+            sCaptureWaitRelease = false;
         }
         return;
     }
@@ -992,20 +1047,34 @@ void pollMenuInput() {
     // Gamepad submenu (button capture mode).
     if (sInGamepadSubmenu) {
         if (sWaitingForButton) {
-            // Wait for any gamepad button press.
+            // B/Circle is a bindable face button. Only Esc cancels capture.
+            if (keyWentDown(SDL_SCANCODE_ESCAPE)) {
+                sWaitingForButton = false;
+                sCaptureWaitRelease = false;
+                return;
+            }
+            if (sCaptureWaitRelease) {
+                if (!captureConfirmHeld(ctl))
+                    sCaptureWaitRelease = false;
+                return;
+            }
             if (ctl) {
                 for (int btn = 0; btn < SDL_CONTROLLER_BUTTON_MAX; btn++) {
                     if (SDL_GameControllerGetButton(ctl, (SDL_GameControllerButton)btn)) {
                         sPending.gamepadBindings[sGamepadSelection] = btn;
                         sWaitingForButton = false;
+                        sCaptureWaitRelease = true;
                         break;
                     }
                 }
             }
-            // ESC cancels capture.
-            if (keyWentDown(SDL_SCANCODE_ESCAPE) || (ctl && padNavB(ctl))) {
-                sWaitingForButton = false;
-            }
+            return;
+        }
+
+        // The button just bound is still held; do not treat it as Back.
+        if (sCaptureWaitRelease) {
+            if (!anyGamepadButtonHeld(ctl) && !captureConfirmHeld(ctl))
+                sCaptureWaitRelease = false;
             return;
         }
 
@@ -1039,6 +1108,7 @@ void pollMenuInput() {
         }
         if (ok) {
             sWaitingForButton = true;
+            sCaptureWaitRelease = true;
             return;
         }
         if (left || right) {
@@ -1049,6 +1119,7 @@ void pollMenuInput() {
             keyWentDown(SDL_SCANCODE_B) || (ctl && padNavB(ctl))) {
             sInGamepadSubmenu = false;
             sWaitingForButton = false;
+            sCaptureWaitRelease = false;
         }
         return;
     }
@@ -1459,6 +1530,7 @@ void pollMenuInput() {
             sInControlsSubmenu = true;
             sControlSelection = 0;
             sWaitingForKey = false;
+            sCaptureWaitRelease = false;
         }
         break;
     case ROW_GAMEPAD:
@@ -1466,6 +1538,7 @@ void pollMenuInput() {
             sInGamepadSubmenu = true;
             sGamepadSelection = 0;
             sWaitingForButton = false;
+            sCaptureWaitRelease = false;
         }
         break;
     case ROW_ADVANCED:
@@ -2146,7 +2219,7 @@ void pc_settings_draw(void) {
             bool waiting = sWaitingForKey && selected;
 
             const char* actionName = pc_window_get_key_action_name(i);
-            SDL_Scancode boundSc = pc_window_get_key_binding(i);
+            SDL_Scancode boundSc = static_cast<SDL_Scancode>(sPending.keyboardBindings[i]);
             const char* scName = SDL_GetScancodeName(boundSc);
 
             char value[96];
@@ -2176,8 +2249,9 @@ void pc_settings_draw(void) {
         const int subX = px1 + 18, subY = py1 + 44;
         const int subW = panelW - 36, subH = panelH - 58;
         drawSubmenuSurface(gfx, subX, subY, subW, subH, "Gamepad Controls",
-                           "Enter: capture   Left/Right: default",
-                           "Up/Down: select   Esc/B: back");
+                           sWaitingForButton ? "Press a button   Esc: cancel"
+                                            : "Enter: capture   Left/Right: default",
+                           sWaitingForButton ? "" : "Up/Down: select   Esc/B: back");
 
         const int listStartY = subY + 48;
         const int itemH = 24;

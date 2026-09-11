@@ -4,16 +4,34 @@
 #include "pc_window.h"
 #include <cstdio>
 #include <cstring>
+#include <cctype>
 #include <algorithm>
 #include <chrono>
 #include <thread>
 #include <cstdlib>
 #include <fstream>
+#include <string>
 
 static SDL_Window*   sWindow = nullptr;
 static SDL_GLContext sGLContext = nullptr;
 static SDL_GameController* sController = nullptr;
 static bool sShouldClose = false;
+
+// DualSense on Linux also shows up as a motion-sensor joystick. Gravity on
+// that device's Y axis looks like a held stick, so the F1 menu walks itself.
+static bool pc_joystick_is_secondary(int index)
+{
+	const char* name = SDL_JoystickNameForIndex(index);
+	if (!name)
+		name = SDL_GameControllerNameForIndex(index);
+	if (!name)
+		return false;
+	std::string n(name);
+	for (char& c : n)
+		c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+	return n.find("motion") != std::string::npos || n.find("touchpad") != std::string::npos
+	    || n.find("accelerometer") != std::string::npos || n.find("gyro") != std::string::npos;
+}
 static int sWindowWidth = 1280;
 static int sWindowHeight = 720;
 static int sLogicalRetraceInterval = 1;
@@ -328,7 +346,7 @@ bool pc_window_init(const char* title, int width, int height) {
 
     // Check for connected controllers
     for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        if (SDL_IsGameController(i)) {
+        if (SDL_IsGameController(i) && !pc_joystick_is_secondary(i)) {
             sController = SDL_GameControllerOpen(i);
             if (sController) {
                 printf("[PC Port] Opened Game Controller: %s\n", SDL_GameControllerName(sController));
@@ -385,7 +403,7 @@ void pc_window_poll_events(PADStatus* pad) {
                 }
                 break;
             case SDL_CONTROLLERDEVICEADDED:
-                if (!sController) {
+                if (!sController && !pc_joystick_is_secondary(event.cdevice.which)) {
                     sController = SDL_GameControllerOpen(event.cdevice.which);
                     if (sController) {
                         printf("[PC Port] Connected Game Controller: %s\n", SDL_GameControllerName(sController));
