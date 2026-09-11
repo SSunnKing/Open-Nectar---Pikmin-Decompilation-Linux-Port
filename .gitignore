@@ -22,6 +22,7 @@ orig/*/*
 build/
 build-*/
 /packaging/linux/out/
+/packaging/windows/out/
 /packaging.zip
 /save/
 .ninja_*

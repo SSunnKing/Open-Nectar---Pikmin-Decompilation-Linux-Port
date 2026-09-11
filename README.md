@@ -197,7 +197,10 @@ cmake --build build-pal -j"$(nproc)"
 ```
 
 The release packages carry both, and the installer copies whichever the disc
-asks for. `packaging/linux/package-standalone.sh` builds them both.
+asks for. `packaging/linux/package-standalone.sh` and
+`packaging/windows/package-standalone.sh` each build both executables. The
+Windows zip must include `nectar-pal.exe` next to `nectar.exe`; without it a
+European disc extracts cleanly and then fails to start.
 
 ### Windows (cross-compiled from Linux)
 
@@ -219,6 +222,15 @@ cmake --build build-windows -j"$(nproc)"
 ```
 
 The result is `build-windows/bin/nectar.exe`, which needs `SDL2.dll` beside it.
+
+To ship a folder with both USA and PAL builds:
+
+```sh
+packaging/windows/package-standalone.sh
+```
+
+That writes `packaging/windows/out/nectar-windows/` with `nectar.exe`,
+`nectar-pal.exe`, `nectar-launcher.exe` and `SDL2.dll`.
 
 ### Run after building
 

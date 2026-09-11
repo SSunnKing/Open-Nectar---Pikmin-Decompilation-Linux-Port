@@ -31,7 +31,13 @@ float pc_gfx_get_current_aspect_ratio(void);
 // stretched map. Viewport and scissor share map_gx_rect, so this flag
 // applies to both. Reset at begin_frame.
 void pc_gfx_set_ui_43(int enabled);
+void pc_gfx_set_ui_43_no_bars(int enabled);
 int pc_gfx_get_ui_43(void);
+
+// Translucent quad over the whole render target, ignoring GX 640/hud mapping.
+// Used by the F1 overlay so the dim covers 16:9 even when leftover menu
+// scissors still describe a left-aligned 4:3 rect.
+void pc_gfx_dim_full_target(unsigned char alpha);
 
 // Field HUD: GX space is V=480*aspect by 480, mapped uniformly onto the RT.
 // Panes are translated in that space (left / centre / right). Not a stretch.

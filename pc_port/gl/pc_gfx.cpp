@@ -242,6 +242,17 @@ static bool uniform_cache_disabled() {
 static void invalidate_uniform_cache() {
     if (++sUniformGeneration == 0) sUniformGeneration = 1;
 }
+
+// Post-process programs share location indices (uDepth is often loc 1). The
+// cache does not know which program is bound, so a CoC upload of uDepth=1
+// makes the composite skip its own uDepth and leave it at the default unit
+// 0 -- the scene colour. Dark ground then reads as "near camera" and DoF
+// alone paints a noisy overlay. Bloom/AO change the shader and mask it.
+static void post_bind_program(GLuint program)
+{
+    glUseProgram_ptr(program);
+    invalidate_uniform_cache();
+}
 template <typename T> struct UniformCacheEntry {
     uint32_t generation = 0;
     T value {};
@@ -1081,6 +1092,129 @@ void pc_gfx_set_ui_43(int enabled) {
     if (want) {
         fill_ui_43_bars();
     }
+}
+
+void pc_gfx_set_ui_43_no_bars(int enabled) {
+    const bool want = enabled != 0;
+    sUi43 = want;
+    invalidate_gl_pipeline_guards();
+}
+
+static void gl_program_cache_invalidate();
+
+static GLuint sDimProgram = 0;
+static GLuint sDimVAO = 0;
+static GLint sDimColorLoc = -1;
+static bool sDimWindowAfterBlit = false;
+static unsigned char sDimWindowAlpha = 160;
+
+static bool ensure_dim_program()
+{
+    if (sDimProgram && sDimVAO) return true;
+    if (!glCreateShader_ptr || !glCreateProgram_ptr || !glGenVertexArrays_ptr) return false;
+
+    static const char* kFrag =
+        "#version 330 core\n"
+        "uniform vec4 uColor;\n"
+        "out vec4 oColour;\n"
+        "void main() { oColour = uColor; }\n";
+
+    GLuint vs = glCreateShader_ptr(GL_VERTEX_SHADER);
+    const char* vert = pc_post_vertex_shader();
+    glShaderSource_ptr(vs, 1, &vert, nullptr);
+    glCompileShader_ptr(vs);
+    GLuint fs = glCreateShader_ptr(GL_FRAGMENT_SHADER);
+    glShaderSource_ptr(fs, 1, &kFrag, nullptr);
+    glCompileShader_ptr(fs);
+    sDimProgram = glCreateProgram_ptr();
+    glAttachShader_ptr(sDimProgram, vs);
+    glAttachShader_ptr(sDimProgram, fs);
+    glLinkProgram_ptr(sDimProgram);
+    glDeleteShader_ptr(vs);
+    glDeleteShader_ptr(fs);
+    GLint ok = 0;
+    if (glGetProgramiv_ptr) glGetProgramiv_ptr(sDimProgram, GL_LINK_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        glDeleteProgram_ptr(sDimProgram);
+        sDimProgram = 0;
+        return false;
+    }
+    sDimColorLoc = glGetUniformLocation_ptr(sDimProgram, "uColor");
+    glGenVertexArrays_ptr(1, &sDimVAO);
+    return sDimVAO != 0;
+}
+
+static void dim_draw(unsigned char alpha)
+{
+    if (!ensure_dim_program() || !glUseProgram_ptr || !glBindVertexArray_ptr) return;
+    invalidate_uniform_cache();
+    glUseProgram_ptr(sDimProgram);
+    glUniform4f_ptr(sDimColorLoc, 0.0f, 0.0f, 0.0f, float(alpha) / 255.0f);
+    glBindVertexArray_ptr(sDimVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray_ptr(0);
+    glUseProgram_ptr(0);
+    // Same trap as post_apply(): GX thinks the TEV program is still bound
+    // and skips glUseProgram. P2D plates then draw with program 0 and show
+    // up as an opaque black rectangle over the field.
+    for (int i = 0; i < 8; i++) sBoundTextures[i] = 0;
+    gl_program_cache_invalidate();
+    invalidate_gl_pipeline_guards();
+}
+
+void pc_gfx_dim_full_target(unsigned char alpha)
+{
+    const GLint w = sNativeFramebufferReady ? sRenderWidth : sDrawableWidth;
+    const GLint h = sNativeFramebufferReady ? sRenderHeight : sDrawableHeight;
+    if (w <= 0 || h <= 0 || alpha == 0) return;
+
+    pc_gfx_note_gl_state_change();
+    invalidate_gl_pipeline_guards();
+    if (sNativeFramebufferReady && glBindFramebuffer_ptr) {
+        glBindFramebuffer_ptr(GL_FRAMEBUFFER, sNativeFramebuffer);
+    }
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glViewport(0, 0, w, h);
+    dim_draw(alpha);
+    glEnable(GL_SCISSOR_TEST);
+    sDimWindowAfterBlit = true;
+    sDimWindowAlpha = alpha;
+}
+
+static void dim_window_letterbox(GLint outX, GLint outY, GLint outW, GLint outH)
+{
+    if (!sDimWindowAfterBlit) return;
+    sDimWindowAfterBlit = false;
+    if (sDrawableWidth <= 0 || sDrawableHeight <= 0) return;
+
+    pc_gfx_note_gl_state_change();
+    invalidate_gl_pipeline_guards();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_SCISSOR_TEST);
+    glViewport(0, 0, sDrawableWidth, sDrawableHeight);
+
+    const GLint dw = sDrawableWidth;
+    const GLint dh = sDrawableHeight;
+    const unsigned char a = sDimWindowAlpha;
+    auto bar = [&](GLint x, GLint y, GLint w, GLint h) {
+        if (w <= 0 || h <= 0) return;
+        glScissor(x, y, w, h);
+        dim_draw(a);
+    };
+    bar(0, 0, outX, dh);
+    bar(outX + outW, 0, dw - (outX + outW), dh);
+    bar(outX, 0, outW, outY);
+    bar(outX, outY + outH, outW, dh - (outY + outH));
+    glDisable(GL_SCISSOR_TEST);
 }
 
 int pc_gfx_get_ui_43(void) {
@@ -2670,7 +2804,7 @@ static bool dof_build()
 
     // Scene and depth -> [0], premultiplied by coverage.
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sDofFbo[0]);
-    glUseProgram_ptr(sDofCocProgram);
+    post_bind_program(sDofCocProgram);
     if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
     if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sDofCocProgram, "uScene"), 0);
@@ -2692,7 +2826,7 @@ static bool dof_build()
     // Blur across and down, once per iteration. Running the same five-tap
     // kernel again is what widens the blur: stretching its offsets instead
     // would sample past its own weights and band.
-    glUseProgram_ptr(sDofBlurProgram);
+    post_bind_program(sDofBlurProgram);
     const GLint blurSource = glGetUniformLocation_ptr(sDofBlurProgram, "uSource");
     const GLint blurStep = glGetUniformLocation_ptr(sDofBlurProgram, "uBlurStep");
     const int iterations = std::max(1, std::min(sPostEffects.dofIterations, 4));
@@ -2727,7 +2861,7 @@ static bool bloom_build()
 
     // Bright pass: scene -> [0]
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sBloomFbo[0]);
-    glUseProgram_ptr(sBrightProgram);
+    post_bind_program(sBrightProgram);
     if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
     if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sBrightProgram, "uScene"), 0);
@@ -2738,7 +2872,7 @@ static bool bloom_build()
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     // Blur across: [0] -> [1], then down: [1] -> [0]
-    glUseProgram_ptr(sBlurProgram);
+    post_bind_program(sBlurProgram);
     const GLint blurSource = glGetUniformLocation_ptr(sBlurProgram, "uSource");
     const GLint blurStep = glGetUniformLocation_ptr(sBlurProgram, "uBlurStep");
     for (int axis = 0; axis < 2; axis++) {
@@ -2810,7 +2944,7 @@ static bool ao_build()
     glBindVertexArray_ptr(sPostVAO);
 
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sAoFbo[0]);
-    glUseProgram_ptr(sSsaoProgram);
+    post_bind_program(sSsaoProgram);
     if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sNativeDepthTexture);
     if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sSsaoProgram, "uDepth"), 0);
@@ -2830,7 +2964,7 @@ static bool ao_build()
     }
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
-    glUseProgram_ptr(sAoBlurProgram);
+    post_bind_program(sAoBlurProgram);
     const GLint blurSource = glGetUniformLocation_ptr(sAoBlurProgram, "uSource");
     const GLint blurDepth = glGetUniformLocation_ptr(sAoBlurProgram, "uDepth");
     const GLint blurStep = glGetUniformLocation_ptr(sAoBlurProgram, "uBlurStep");
@@ -2921,7 +3055,7 @@ static GLuint post_apply()
     glBindFramebuffer_ptr(GL_FRAMEBUFFER, sPostFramebuffer);
     glViewport(0, 0, sRenderWidth, sRenderHeight);
 
-    glUseProgram_ptr(sPostProgram);
+    post_bind_program(sPostProgram);
     if (glActiveTexture_ptr) glActiveTexture_ptr(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sNativeColorTexture);
     if (glUniform1i_ptr) {
@@ -2946,8 +3080,15 @@ static GLuint post_apply()
                             sPostEffects.dofFalloffFraction, sPostEffects.dofStrength);
         }
     } else if (pc_post_dof_active(sPostEffects) && glUniform4f_ptr) {
-        // The shader carries the composite, so silence it with zero strength
-        // rather than mixing in a texture nothing filled this frame.
+        // The shader still samples uDof. An unbound unit is undefined (and on
+        // some drivers, leftover TEV memory). Neutral white with zero strength
+        // keeps the mix from seeing garbage when the chain did not run.
+        if (glActiveTexture_ptr) {
+            glActiveTexture_ptr(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D, post_white_texture());
+            if (glUniform1i_ptr) glUniform1i_ptr(glGetUniformLocation_ptr(sPostProgram, "uDof"), 4);
+            glActiveTexture_ptr(GL_TEXTURE0);
+        }
         glUniform4f_ptr(glGetUniformLocation_ptr(sPostProgram, "uDofFocus"),
                         1.0f, 1.0f, 1.0f, 0.0f);
     }
@@ -3218,6 +3359,7 @@ void pc_gfx_present(void) {
     
     glBlitFramebuffer_ptr(0, 0, sRenderWidth, sRenderHeight, outX, outY, outX + outWidth, outY + outHeight,
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    dim_window_letterbox(outX, outY, outWidth, outHeight);
 #ifdef GL_TIME_ELAPSED
     if (gpuQuery) {
         glEndQuery_ptr(GL_TIME_ELAPSED);

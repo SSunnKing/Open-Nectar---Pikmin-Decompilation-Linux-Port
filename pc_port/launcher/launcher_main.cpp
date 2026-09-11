@@ -228,6 +228,41 @@ bool sameFile(const fs::path& lhs, const fs::path& rhs)
     return fs::exists(lhs) && fs::exists(rhs) && fs::equivalent(lhs, rhs, ec) && !ec;
 }
 
+// Stem of the default (USA) game binary: "nectar". The disc table stores the
+// same form, without a platform suffix.
+std::string defaultBuildStem()
+{
+    const std::string canonical = kGameExecutable;
+    const std::size_t dot = canonical.rfind('.');
+    return (dot == std::string::npos) ? canonical : canonical.substr(0, dot);
+}
+
+std::string gameFileExtension()
+{
+    const std::string canonical = kGameExecutable;
+    const std::size_t dot = canonical.rfind('.');
+    return (dot == std::string::npos) ? std::string() : canonical.substr(dot);
+}
+
+// ".pikmin-build" and the disc table write "nectar" / "nectar-pal". Older
+// Windows installs may have stored "nectar.exe"; strip a trailing .exe so
+// both forms resolve to the same file.
+std::string buildStem(const std::string& build)
+{
+    std::string name = trim(build);
+    if (name.size() >= 4) {
+        std::string tail = name.substr(name.size() - 4);
+        for (char& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (tail == ".exe") name.resize(name.size() - 4);
+    }
+    return name.empty() ? defaultBuildStem() : name;
+}
+
+std::string gameFileName(const std::string& build, const std::string& suffix)
+{
+    return buildStem(build) + gameFileExtension() + suffix;
+}
+
 // The build this installation needs, recorded when the assets were extracted.
 //
 // The disc is only known while installing, but the executables are installed
@@ -238,30 +273,36 @@ std::string installedGameBuild(const fs::path& dataRoot)
     std::ifstream in(dataRoot / "assets" / ".pikmin-build");
     std::string name;
     if (in && std::getline(in, name)) {
-        name = trim(name);
+        name = buildStem(name);
         if (!name.empty()) return name;
     }
-    return kGameExecutable;
+    return defaultBuildStem();
 }
 
 // Where the game binary for that build lives in the package, given the suffix
-// the platform uses (".exe", ".real", or none). Falls back to the plain name so
-// a package with only one build still installs.
+// the platform uses (".exe", ".real", or none).
+//
+// The default USA build may fall back to the canonical file name so a tree
+// with only one executable still installs. A named variant (nectar-pal) must
+// be present: falling back here used to copy the American build over a
+// European disc and report success.
 fs::path gameSource(const fs::path& sourceDirectory, const std::string& build,
                     const std::string& suffix)
 {
-    // The build name has no extension -- it comes from the disc table, which
-    // knows nothing about platforms -- so it takes whatever the canonical name
-    // carries. On Windows that is ".exe", and without it this looked for a
-    // file called "nectar-pal", never found one, and quietly installed the
-    // American build over a European disc.
-    const std::string canonical = kGameExecutable;
-    const std::size_t dot = canonical.rfind('.');
-    const std::string extension = (dot == std::string::npos) ? std::string() : canonical.substr(dot);
-
-    const fs::path preferred = sourceDirectory / (build + extension + suffix);
+    const std::string stem = buildStem(build);
+    const fs::path preferred = sourceDirectory / gameFileName(stem, suffix);
     if (fs::is_regular_file(preferred)) return preferred;
-    return sourceDirectory / (canonical + suffix);
+    if (stem == defaultBuildStem()) {
+        return sourceDirectory / (std::string(kGameExecutable) + suffix);
+    }
+    return {};
+}
+
+std::string missingGameBuildMessage(const std::string& build, const std::string& suffix)
+{
+    const std::string needed = gameFileName(build, suffix);
+    return "This disc needs " + needed
+         + ", but the package does not include it. Use a complete Open Nectar package.";
 }
 
 bool installExecutables(const fs::path& sourceDirectory, const fs::path& installDirectory,
@@ -280,8 +321,13 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
     for (const char* name : { kGameExecutable, kLauncherExecutable }) {
         const bool isGame = std::string(name) == kGameExecutable;
         const fs::path source = isGame ? gameSource(sourceDirectory, build, "") : sourceDirectory / name;
+        if (isGame && source.empty()) {
+            failure = missingGameBuildMessage(build, "");
+            return false;
+        }
         if (!fs::is_regular_file(source)) {
-            failure = "The package is incomplete: missing " + source.filename().string() + ".";
+            failure = isGame ? missingGameBuildMessage(build, "")
+                             : ("The package is incomplete: missing " + source.filename().string() + ".");
             return false;
         }
         const fs::path destination = installDirectory / name;
@@ -319,6 +365,10 @@ bool installExecutables(const fs::path& sourceDirectory, const fs::path& install
                             && fs::is_directory(sourceLib);
 
     if (!isStandalone && (!fs::is_regular_file(sourceGame) || !fs::is_regular_file(sourceLauncher))) {
+        if (sourceGame.empty() || sourceGameReal.empty()) {
+            failure = missingGameBuildMessage(build, fs::is_regular_file(sourceLauncherReal) ? ".real" : "");
+            return false;
+        }
         failure = "The package is incomplete: " + std::string(kGameExecutable) + " y "
                 + kLauncherExecutable + " must sit next to each other.";
         return false;

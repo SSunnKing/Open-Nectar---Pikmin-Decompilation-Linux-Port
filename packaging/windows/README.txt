@@ -12,7 +12,9 @@ WHAT YOU NEED
   - GPU drivers with OpenGL 3.3 or newer. Intel, NVIDIA and AMD drivers all
     have it. Windows' generic "Basic Display Adapter" driver does NOT, and
     the game will not start on it.
-  - Your legal, uncompressed copy of Pikmin USA Rev. 1 (GPIE01), as ISO or GCM.
+  - Your legal, uncompressed copy of Pikmin USA Rev. 1 (GPIE01) or
+    Pikmin Europe (GPIP01), as ISO or GCM. The package includes both
+    game executables; the launcher copies the one your disc needs.
 
 The ROM and any Nintendo proprietary resources are not included. Your image
 is neither copied nor modified during installation.
@@ -34,11 +36,16 @@ You can also install without dialogs, from cmd or PowerShell:
 
 Options: --extract-only (install without launching), --skip-verify, --help.
 
-The installer checks the image against a known-good dump of Pikmin USA
-Rev. 1 before extracting, and re-reads each file it writes. That catches
-copies damaged in transfer and failing drives, which are the usual reason a
-game installs fine and then fails strangely. It adds about a minute;
---skip-verify skips it.
+The installer checks the image against a known-good dump of the matching
+release (USA Rev. 1 or Europe) before extracting, and re-reads each file
+it writes. That catches copies damaged in transfer and failing drives,
+which are the usual reason a game installs fine and then fails strangely.
+It adds about a minute; --skip-verify skips it.
+
+A European disc needs nectar-pal.exe from this package. The installer
+copies it as nectar.exe in the folder you chose. If that file is missing
+from the zip, installation stops with an error instead of installing the
+American build by mistake.
 
 
 THE CONSOLE WINDOW IS DELIBERATE
@@ -72,8 +79,9 @@ Common failures and what they mean:
       somewhere else.
 
   The installer rejects the image
-      It must be Pikmin USA Rev. 1 (GPIE01, revision 1), uncompressed.
-      Convert RVZ/WIA/GCZ to ISO with dolphin-tool.
+      It must be Pikmin USA Rev. 1 (GPIE01, revision 1) or Pikmin Europe
+      (GPIP01, revision 0), uncompressed. Convert RVZ/WIA/GCZ to ISO with
+      dolphin-tool.
 
   No sound, but the game runs
       The log says "no audio device yet; playing silently and retrying". The

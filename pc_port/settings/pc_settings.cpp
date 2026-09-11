@@ -1961,17 +1961,30 @@ void pc_settings_draw(void) {
     ensureFont();
     if (!sFont) return;
 
+    // Dim ignores GX 640 mapping (title/file-select leave a left-aligned
+    // 4:3 scissor). The panel then uses centred 4:3 without stretching and
+    // without fill_ui_43_bars, which would overwrite the dim with opaque black.
+    // Mapping stays live through the P2D destructor, including submenu returns.
+    struct F1Map {
+        F1Map()
+        {
+            pc_gfx_set_menu_clip_43(0);
+            pc_gfx_set_hud_wide(0);
+            pc_gfx_set_ui_43_no_bars(0);
+        }
+        void bindPanel() { pc_gfx_set_ui_43_no_bars(1); }
+        ~F1Map() { pc_gfx_set_ui_43_no_bars(0); }
+    } f1Map;
+
     const int screenW = gfx->mScreenWidth;
     const int screenH = gfx->mScreenHeight;
     PcSettingsP2DFrame nativeFrame(screenW, screenH);
 
+    pc_gfx_dim_full_target(160);
+    f1Map.bindPanel();
+
     Matrix4f ortho;
     gfx->setOrthogonal(ortho.mMtx, RectArea(0, 0, screenW, screenH));
-
-    // Dim backdrop.
-    gfx->setColour(Colour(0, 0, 0, 160), true);
-    gfx->setAuxColour(Colour(0, 0, 0, 160));
-    gfx->fillRectangle(RectArea(0, 0, screenW, screenH));
 
     const int panelX = 74;
     const int panelY = pc_settings_p2d_active() ? 52 : 64;
@@ -2320,7 +2333,7 @@ void pc_settings_draw(void) {
         };
 
         const int listStartY = subY + 62;
-        const int itemH = 28;
+        const int itemH = 22;
         const bool gradingOn = sPending.colourGrading != 0;
 
         for (int i = 0; i < kGraphicsRowCount; i++) {
