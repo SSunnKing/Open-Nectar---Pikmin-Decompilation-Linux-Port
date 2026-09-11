@@ -858,6 +858,16 @@ void MemoryCard::loadCurrentGame()
  */
 void MemoryCard::saveCurrentGame()
 {
+#if defined(PIKI_PC_PORT)
+	// Direct boot can reach the save UI before a physical backup slot has
+	// been selected. Index zero would write at cardData - 0x2000.
+	if (gameflow.mGamePrefs.mSpareMemCardSaveIndex < 1 || gameflow.mGamePrefs.mSpareMemCardSaveIndex > 4) {
+		mDidSaveFail = true;
+		gsys->mIsCardSaving = FALSE;
+		OSReport("[PC Port] Refusing save with invalid backup slot %d\n", gameflow.mGamePrefs.mSpareMemCardSaveIndex);
+		return;
+	}
+#endif
 	mDidSaveFail                    = false;
 	gsys->mIsCardSaving             = TRUE;
 	gameflow.mPlayState.mSaveStatus = PlayState::ReadyToSave;
@@ -888,6 +898,15 @@ void MemoryCard::saveCurrentGame()
 	gameflow.mGamePrefs.mMostRecentSaveIndex++;
 	gameflow.mGamePrefs.mHasSaveGame = true;
 	gsys->mIsCardSaving              = FALSE;
+#if defined(PIKI_PC_PORT)
+	// On the first save after direct boot, the previous current slot is zero.
+	// It cannot become a backup: derive the unused/redundant block from the
+	// card directory, as the file-selection screen normally does.
+	if (idx < 1 || idx > 4) {
+		CardQuickInfo infos[4];
+		getQuickInfos(infos);
+	}
+#endif
 
 	STACK_PAD_VAR(10);
 }
