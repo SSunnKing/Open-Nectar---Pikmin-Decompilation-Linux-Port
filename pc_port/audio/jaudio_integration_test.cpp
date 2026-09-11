@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <filesystem>
 
 namespace {
 u64 frames = 0, nonzero = 0;
@@ -36,6 +37,12 @@ void pump(u32 milliseconds)
 }
 int pc_jaudio_integration_test()
 {
+    // Public source-only builds cannot exercise proprietary audio content.
+    // Keep the test enabled for developer checkouts with extracted assets.
+    if (!std::filesystem::is_directory("assets/dataDir/SndData")) {
+        std::puts("[jaudio-test] SKIP: extracted assets/dataDir/SndData is required");
+        return 77;
+    }
     SDL_setenv("SDL_AUDIODRIVER", std::getenv("PIKMIN_AUDIO_TEST_NO_DEVICE") ? "unavailable-test-driver" : "dummy", 1);
     // Native pointer graphs are larger than the console's packed bank image.
     constexpr u32 heapSize = 0x80000;
