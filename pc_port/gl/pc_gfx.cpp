@@ -3015,6 +3015,15 @@ static GLuint post_apply(bool allowDof)
     // Any of these failing means no post-processing, never a stopped frame.
     if (!post_ensure_target() || !post_ensure_program()) return sNativeFramebuffer;
 
+    // GX can leave colour or alpha writes disabled for the last scene draw.
+    // Every post target is a replacement image, so inheriting that mask can
+    // silently preserve stale channels (or the entire previous frame). Keep
+    // the GX mirrors untouched: save the actual GL mask and restore it after
+    // the chain, including when this function is called from present().
+    GLboolean colourMask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    glGetBooleanv(GL_COLOR_WRITEMASK, colourMask);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
     // Every pass below draws a full-screen triangle, and none of them wants the
     // game's pipeline state. This has to happen BEFORE the chains, not just
     // before the composite: they are draws too.
@@ -3155,6 +3164,7 @@ static GLuint post_apply(bool allowDof)
     // disabled blend/depth/cull and resized the viewport, so the GX
     // setters' redundancy guards are now lying.
     invalidate_gl_pipeline_guards();
+    glColorMask(colourMask[0], colourMask[1], colourMask[2], colourMask[3]);
     return sPostFramebuffer;
 }
 
