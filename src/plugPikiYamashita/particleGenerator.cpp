@@ -402,7 +402,7 @@ void zen::particleGenerator::pmSetDDF(u8* data)
 		if (len == 0.0f) {
 			pmGetArbitUnitVec(mVortexCenter);
 		} else {
-			len = std::sqrtf(len);
+			len = sqrtf(len);
 			mVortexCenter.x /= len;
 			mVortexCenter.y /= len;
 			mVortexCenter.z /= len;
@@ -414,7 +414,7 @@ void zen::particleGenerator::pmSetDDF(u8* data)
 		if (len == 0.0f) {
 			pmGetArbitUnitVec(mLineFieldAxis);
 		} else {
-			len = std::sqrtf(len);
+			len = sqrtf(len);
 			mLineFieldAxis.x /= len;
 			mLineFieldAxis.y /= len;
 			mLineFieldAxis.z /= len;
@@ -518,7 +518,7 @@ void zen::particleGenerator::PtclsGen(zen::particleMdl* ptcl)
 	if (scale == 0.0f) {
 		pmGetArbitUnitVec(emitDir);
 	} else {
-		scale = std::sqrtf(scale);
+		scale = sqrtf(scale);
 		emitDir.x /= scale;
 		emitDir.y /= scale;
 		emitDir.z /= scale;
@@ -603,7 +603,7 @@ void zen::particleGenerator::PtclsGen(zen::particleMdl* ptcl)
 				ptcl->mAge      = 0;
 				ptcl->mAgeTimer = 0.0f;
 			} else {
-				scale = std::sqrtf(scale);
+				scale = sqrtf(scale);
 				ptclVel.x /= scale;
 				ptclVel.y /= scale;
 				ptclVel.z /= scale;
@@ -646,7 +646,7 @@ void zen::particleGenerator::PtclsGen(zen::particleMdl* ptcl)
 			ptcl->mAgeTimer = 0.0f;
 
 		} else {
-			scale = std::sqrtf(scale);
+			scale = sqrtf(scale);
 			ptclVel.x /= scale;
 			ptclVel.y /= scale;
 			ptclVel.z /= scale;
@@ -860,7 +860,7 @@ void zen::particleGenerator::UpdatePtclsStatus(f32 timeStep)
 				f32 speed
 				    = ptcl->mVelocity.x * ptcl->mVelocity.x + ptcl->mVelocity.y * ptcl->mVelocity.y + ptcl->mVelocity.z * ptcl->mVelocity.z;
 				if (speed > mMaxVel * mMaxVel) {
-					f32 norm = std::sqrtf(speed);
+					f32 norm = sqrtf(speed);
 					ptcl->mVelocity.x *= mMaxVel / norm;
 					ptcl->mVelocity.y *= mMaxVel / norm;
 					ptcl->mVelocity.z *= mMaxVel / norm;

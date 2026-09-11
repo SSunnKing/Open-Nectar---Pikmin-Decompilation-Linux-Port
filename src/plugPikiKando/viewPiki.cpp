@@ -359,7 +359,7 @@ void Piki::updateLook()
 	if (mLookatPosPtr) {
 		Vector3f targetOffset = *mLookatPosPtr - mSRT.t;
 		horizontalAngle       = atan2f(targetOffset.x, targetOffset.z);
-		horizontalDistance    = std::sqrtf(targetOffset.x * targetOffset.x + targetOffset.z * targetOffset.z);
+		horizontalDistance    = sqrtf(targetOffset.x * targetOffset.x + targetOffset.z * targetOffset.z);
 		verticalAngle         = atan2f(targetOffset.y, horizontalDistance);
 	} else {
 		rotationSpeed       = 0.2f;

@@ -11,7 +11,7 @@ static f32 SINTABLE[SINTABLE_LENGTH];
  */
 f32 sqrtf2(f32 x)
 {
-	return std::sqrtf(x);
+	return sqrtf(x);
 }
 
 /**

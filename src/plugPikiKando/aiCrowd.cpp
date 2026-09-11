@@ -318,7 +318,7 @@ int ActCrowd::exec()
 	}
 
 	Vector3f plateDir = platePos - mPiki->mSRT.t;
-	f32 plateDist2D   = std::sqrtf(plateDir.x * plateDir.x + plateDir.z * plateDir.z);
+	f32 plateDist2D   = sqrtf(plateDir.x * plateDir.x + plateDir.z * plateDir.z);
 	plateDir.normalise();
 
 	if (plateDist2D < 60.0f && mPiki->mNavi->mIsCStickNeutral && mState != STATE_Sort) {

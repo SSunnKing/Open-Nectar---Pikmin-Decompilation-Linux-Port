@@ -237,7 +237,7 @@ void Quat::fromMat3f(immut Matrix3f& mtx)
 	switch (type) {
 	case 0:
 	{
-		s   = std::sqrtf(a);
+		s   = sqrtf(a);
 		t   = 0.25f / s;
 		v.x = t * (mtx.mMtx[2][1] - mtx.mMtx[1][2]);
 		v.y = t * (mtx.mMtx[0][2] - mtx.mMtx[2][0]);
@@ -246,7 +246,7 @@ void Quat::fromMat3f(immut Matrix3f& mtx)
 	}
 	case 1:
 	{
-		v.x = std::sqrtf(b);
+		v.x = sqrtf(b);
 		t   = 0.25f / v.x;
 		s   = t * (mtx.mMtx[2][1] - mtx.mMtx[1][2]);
 		v.y = t * (mtx.mMtx[0][1] + mtx.mMtx[1][0]);
@@ -255,7 +255,7 @@ void Quat::fromMat3f(immut Matrix3f& mtx)
 	}
 	case 2:
 	{
-		v.y = std::sqrtf(c);
+		v.y = sqrtf(c);
 		t   = 0.25f / v.y;
 		s   = t * (mtx.mMtx[0][2] - mtx.mMtx[2][0]);
 		v.z = t * (mtx.mMtx[1][2] + mtx.mMtx[2][1]);
@@ -264,7 +264,7 @@ void Quat::fromMat3f(immut Matrix3f& mtx)
 	}
 	case 3:
 	{
-		v.z = std::sqrtf(d);
+		v.z = sqrtf(d);
 		t   = 0.25f / v.z;
 		s   = t * (mtx.mMtx[1][0] - mtx.mMtx[0][1]);
 		v.x = t * (mtx.mMtx[2][0] + mtx.mMtx[0][2]);
@@ -280,7 +280,7 @@ void Quat::fromMat3f(immut Matrix3f& mtx)
 		v.z = -v.z;
 	}
 
-	t = 1.0f / std::sqrtf(SQUARE(s) + SQUARE(v.x) + SQUARE(v.y) + SQUARE(v.z));
+	t = 1.0f / sqrtf(SQUARE(s) + SQUARE(v.x) + SQUARE(v.y) + SQUARE(v.z));
 
 	s *= t;
 	v.x *= t;
@@ -332,7 +332,7 @@ void Quat::multiplyTo(immut Quat& other, Quat& outQuat)
  */
 void Quat::normalise()
 {
-	f32 factor = 1.0f / std::sqrtf(v.x * v.x + v.y * v.y + v.z * v.z + s * s);
+	f32 factor = 1.0f / sqrtf(v.x * v.x + v.y * v.y + v.z * v.z + s * s);
 	v.x *= factor;
 	v.y *= factor;
 	v.z *= factor;
@@ -766,7 +766,7 @@ f32 distanceTriRect(KTri& tri, KRect& rect, f32* barycentricU, f32* barycentricV
 		return 0.0f;
 	}
 
-	return std::sqrtf(sqrDist);
+	return sqrtf(sqrDist);
 }
 
 /**
