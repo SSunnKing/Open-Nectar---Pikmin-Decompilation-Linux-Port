@@ -410,7 +410,7 @@ void NaviBuryState::exec(Navi* navi)
 	Vector3f stickInput(navi->mKontroller->getMainStickX(), 0.0f, navi->mKontroller->getMainStickY());
 	navi->reviseController(stickInput);
 
-	f32 stickMag = std::sqrtf(stickInput.x * stickInput.x + stickInput.z * stickInput.z);
+	f32 stickMag = sqrtf(stickInput.x * stickInput.x + stickInput.z * stickInput.z);
 
 	switch (mBuryState) {
 	case 0:

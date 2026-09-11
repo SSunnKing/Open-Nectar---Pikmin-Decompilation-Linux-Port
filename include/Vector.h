@@ -63,7 +63,7 @@ public:
 	void input(immut Vector3f& other) { set(other.x, other.y, other.z); }
 	void output(Vector3f& outVec) immut { outVec.set(x, y, z); }
 
-	f32 length() immut { return std::sqrtf(SQUARE(x) + SQUARE(y) + SQUARE(z)); }
+	f32 length() immut { return sqrtf(SQUARE(x) + SQUARE(y) + SQUARE(z)); }
 	f32 squaredLength() immut { return SQUARE(x) + SQUARE(y) + SQUARE(z); }
 
 	// TODO: implementions are guessed, a manual check if accurate required
