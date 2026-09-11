@@ -30,9 +30,8 @@ jobs:
           path: nectar-linux.tar.gz
 
   smoke-clean-distro:
-    # Reproduce lo que verá otro equipo: una distro limpia donde SOLO se
-    # instala el driver OpenGL (libgl1). Ni SDL2 ni nada más: el paquete
-    # debe ser autocontenido.
+    # Install the graphics runtime documented in packaging/linux/README.txt.
+    # SDL2 and the non-driver runtime must come from the package itself.
     needs: build
     runs-on: ubuntu-latest
     container: debian:12
@@ -42,8 +41,8 @@ jobs:
           name: nectar-linux
       - name: Extract package with executable permissions
         run: tar -xzf nectar-linux.tar.gz
-      - name: Install only the documented requirement (OpenGL driver)
-        run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0
+      - name: Install documented graphics runtime
+        run: apt-get update && apt-get install -y --no-install-recommends libgl1 libopengl0 libglvnd0 libgbm1 libdrm2 libgl1-mesa-dri
       - name: Standalone package runs on clean Debian 12
         run: |
           cd nectar-linux
