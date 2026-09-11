@@ -63,7 +63,7 @@ void NaviDemoSunsetState::GoState::exec(NaviDemoSunsetState* state)
 	}
 
 	Vector3f diff = state->mGoalPos - state->mNavi->mSRT.t;
-	f32 dist      = std::sqrtf(diff.x * diff.x + diff.z * diff.z);
+	f32 dist      = sqrtf(diff.x * diff.x + diff.z * diff.z);
 	f32 nrm       = diff.normalise() / state->mGoalDistance;
 
 	if (nrm > 0.7f && nrm < 0.71f && gsys->getRand(1.0f) >= 0.9999f) {

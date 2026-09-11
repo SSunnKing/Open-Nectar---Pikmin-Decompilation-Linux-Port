@@ -115,7 +115,7 @@ void NsCalculation::calcJointPos(const Vector3f& topPosition, const Vector3f& bo
 			calcOuterPro(botToTop, adjBotToTop, middleJointPos);
 			f32 midJointSqr = SQUARE(middleJointPos.x) + SQUARE(middleJointPos.y) + SQUARE(middleJointPos.z);
 			if (midJointSqr != 0.0f) {
-				factor                = std::sqrtf(adjSqr / midJointSqr);
+				factor                = sqrtf(adjSqr / midJointSqr);
 				bottomJointPosition.x = factor * middleJointPos.x + adjTop.x;
 				bottomJointPosition.y = factor * middleJointPos.y + adjTop.y;
 				bottomJointPosition.z = factor * middleJointPos.z + adjTop.z;
@@ -124,8 +124,8 @@ void NsCalculation::calcJointPos(const Vector3f& topPosition, const Vector3f& bo
 		}
 	}
 
-	topToMiddleDistance    = std::sqrtf(topMidSqr);
-	middleToBottomDistance = std::sqrtf(midBotSqr);
+	topToMiddleDistance    = sqrtf(topMidSqr);
+	middleToBottomDistance = sqrtf(midBotSqr);
 
 	f32 rootVal           = topToMiddleDistance / (topToMiddleDistance + middleToBottomDistance);
 	bottomJointPosition.x = rootVal * botToTop.x + topPosition.x;

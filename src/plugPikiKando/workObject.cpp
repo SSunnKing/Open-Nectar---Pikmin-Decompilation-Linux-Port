@@ -830,7 +830,7 @@ void HinderRock::update()
 
 		mIsMoving = true;
 		mVelocity = mDestinationPosition - mSRT.t;
-		if (std::sqrtf(mVelocity.x * mVelocity.x + mVelocity.z * mVelocity.z) < 4.0f) {
+		if (sqrtf(mVelocity.x * mVelocity.x + mVelocity.z * mVelocity.z) < 4.0f) {
 			mSRT.t = mDestinationPosition;
 			mState = 2;
 			mWayPoint->setFlag(true);

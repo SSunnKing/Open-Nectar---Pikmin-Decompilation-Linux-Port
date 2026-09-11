@@ -980,7 +980,7 @@ bool TAIAflyingToGoal::act(Teki& teki)
 		f32 x = teki.mTargetPosition.x - teki.getPosition().x;
 		f32 z = teki.mTargetPosition.z - teki.getPosition().z;
 
-		f32 dist2 = std::sqrtf(x * x + z * z);
+		f32 dist2 = sqrtf(x * x + z * z);
 		if (dist2 <= teki.getParameterF(TPF_WalkVelocity)) {
 			return goal(teki);
 		}

@@ -83,7 +83,7 @@ struct NMathF {
 	}
 
 	static inline f32 interpolate(f32 x, f32 y, f32 t) { return x * (1.0f - t) + y * t; }
-	static inline f32 length(f32 x, f32 y) { return std::sqrtf(SQUARE(x) + SQUARE(y)); }
+	static inline f32 length(f32 x, f32 y) { return sqrtf(SQUARE(x) + SQUARE(y)); }
 
 	static inline bool equals(f32 x, f32 y) { return NMathF::isZero(x - y); }
 	static inline bool isPositive(f32 x) { return x >= error; }
@@ -133,9 +133,9 @@ struct NMathF {
 	static inline f32 rangeRandom(f32 min, f32 max) { return (max - min) * NSystem::random() + min; }
 	static inline bool occurred(f32 chance) { return NSystem::random() < chance; }
 	static inline f32 rateRandom(f32 min, f32 range) { return min * (2.0f * (NSystem::random() - 0.5f)) * range + min; }
-	static inline f32 sqrt(f32 x) { return std::sqrtf(x); }
+	static inline f32 sqrt(f32 x) { return sqrtf(x); }
 	static inline int quotient(f32 num, f32 denom) { return num / denom; }
-	static inline f32 acos(f32 x) { return NMathF::atan2(std::sqrtf(1.0f - SQUARE(x)), x); }
+	static inline f32 acos(f32 x) { return NMathF::atan2(sqrtf(1.0f - SQUARE(x)), x); }
 };
 
 struct NMathI {
