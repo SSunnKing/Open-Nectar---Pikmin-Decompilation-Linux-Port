@@ -2514,6 +2514,12 @@ void NaviNukuState::exec(Navi* navi)
 	navi->mVelocity.set(0.0f, 0.0f, 0.0f);
 	navi->mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 
+#if defined(PIKI_PC_PORT)
+	// Holding continues an already-started pluck; release/cancel clears the
+	// request rather than leaving another pluck queued.
+	mWantsNextPluck = navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)
+	    && !navi->mKontroller->keyDown(KeyConfig::_instance->mSetCursorKey.mBind);
+#else
 	if (!mExtractKeyReleased && navi->mKontroller->keyUp(KeyConfig::_instance->mExtractKey.mBind)) {
 		mExtractKeyReleased = true;
 	}
@@ -2523,6 +2529,7 @@ void NaviNukuState::exec(Navi* navi)
 		navi->mIsPlucking;
 		navi->mFastPluckKeyTaps++;
 	}
+#endif
 	navi->mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 	navi->mPressedTimer += gsys->getFrameTime();
 	navi->mPressedTimer = -1000.0f;
@@ -2567,6 +2574,13 @@ void NaviNukuState::procAnimMsg(Navi* navi, MsgAnim* msg)
 	case KEY_Finished:
 	{
 		navi->_810 = 0;
+#if defined(PIKI_PC_PORT)
+		// Read current input at the animation boundary too. Count at most one
+		// continuation per sprout, not one fast-pluck tap per rendered frame.
+		mWantsNextPluck = navi->mKontroller->keyDown(KeyConfig::_instance->mExtractKey.mBind)
+		    && !navi->mKontroller->keyDown(KeyConfig::_instance->mSetCursorKey.mBind);
+		if (mWantsNextPluck) navi->mFastPluckKeyTaps = 1;
+#endif
 		if (mWantsNextPluck) {
 			if (!navi->procActionButton()) {
 				mWantsNextPluck = false;
