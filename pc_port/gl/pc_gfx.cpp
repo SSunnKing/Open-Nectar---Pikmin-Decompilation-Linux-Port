@@ -3001,7 +3001,11 @@ static bool ao_build()
 static void gl_program_cache_invalidate();
 
 // Returns the framebuffer the blit should read from.
-static GLuint post_apply()
+// allowDof: the HUD/ortho path has a real world depth buffer and a captain
+// to focus on. Late present (file select, title, cutscenes with no interface)
+// applies the pass to the whole picture, including 2D chrome -- leftover
+// gameplay focus then blurred the menus after exiting a stage.
+static GLuint post_apply(bool allowDof)
 {
     if (!pc_post_any_enabled(sPostEffects)) return sNativeFramebuffer;
     // An effect that needs depth cannot run when the driver made us fall back
@@ -3041,7 +3045,7 @@ static GLuint post_apply()
     // chain is skipped and the composite is told to blur nothing.
     bool dofReady = false;
     dof_debug_report();
-    if (pc_post_dof_active(sPostEffects) && sDofFocusDistance > 0.0f) {
+    if (allowDof && pc_post_dof_active(sPostEffects) && sDofFocusDistance > 0.0f) {
         dofReady = dof_build();
     }
 
@@ -3230,7 +3234,7 @@ static void post_apply_before_interface()
         glReadPixels(sRenderWidth / 2, sRenderHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, before);
     }
 
-    const GLuint produced = post_apply();
+    const GLuint produced = post_apply(true);
     sPostRanThisFrame = true;
 
     if (report) {
@@ -3333,7 +3337,7 @@ void pc_gfx_present(void) {
     if (sFileSelDebugReport && latePost) {
         filesel_debug_probe_now("present_before_post", sNativeFramebuffer);
     }
-    const GLuint sourceFramebuffer = sPostRanThisFrame ? sNativeFramebuffer : post_apply();
+    const GLuint sourceFramebuffer = sPostRanThisFrame ? sNativeFramebuffer : post_apply(false);
     if (sFileSelDebugReport) {
         filesel_debug_on_present(latePost, sourceFramebuffer);
     }

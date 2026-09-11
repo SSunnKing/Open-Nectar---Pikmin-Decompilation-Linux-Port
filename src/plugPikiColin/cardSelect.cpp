@@ -347,6 +347,9 @@ struct CardSelectSetupSection : public Node {
  */
 CardSelectSection::CardSelectSection()
 {
+#if defined(PIKI_PC_PORT)
+	pc_gfx_set_dof_focus(0.0f);
+#endif
 	Node::init("<CardSelectSection>");
 	// run card select at 60 fps
 	gsys->setFrameClamp(1);

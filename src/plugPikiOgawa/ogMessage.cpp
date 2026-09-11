@@ -10,6 +10,9 @@
 #include "zen/DrawCommon.h"
 #include "zen/ogSub.h"
 #include <stddef.h>
+#if defined(PIKI_PC_PORT)
+#include "pc_window.h"
+#endif
 
 #if defined(VERSION_PIKIDEMO) || defined(VERSION_GPIJ01) // these tables aren't here in demo
 #else
@@ -346,17 +349,27 @@ void zen::ogScrMessageMgr::cnvButtonIcon(char* str)
 	if (data) {
 		int offset = data - mButtonTagChars;
 		if (offset < 8) {
+			char tmp1[64];
+#if defined(PIKI_PC_PORT)
+			// The two-byte GameCube button glyphs are not in the PC font
+			// (English drew '@'; PAL hit the wrong kanji). Print the F1 binding.
+			pc_window_message_control_label(c, tmp1, sizeof(tmp1));
+#else
 			char* a = &mButtonTagIconStrings[2 * offset];
-			char tmp1[4];
 			tmp1[0] = a[0];
 			tmp1[1] = a[1];
 			tmp1[2] = 0;
+#endif
 			char tmp2[4];
 			tmp2[0] = 0x1B; // esc character
 			tmp2[1] = 0;
 
 			char buf1[PATH_MAX];
-#if defined(VERSION_GPIP01)
+#if defined(PIKI_PC_PORT)
+			// FX/FY were for the two-byte GC glyphs. ASCII names at 32x28 ate
+			// the following ellipsis and looked like an extra letter ("Spacee").
+			sprintf(buf1, "%sCC[%s]%s%sCC[%s]", tmp2, mButtonMarkupColours[offset], tmp1, tmp2, mDefaultButtonMarkupColour);
+#elif defined(VERSION_GPIP01)
 			sprintf(buf1, "%sCC[%s]%s%sCC[%s]", tmp2, mButtonMarkupColours[offset], tmp1, tmp2, mDefaultButtonMarkupColour);
 #else
 			sprintf(buf1, "%sFX[32]%sFY[28]%sCC[%s]%s%sCC[%s]%sFX[24]%sFY[24]", tmp2, tmp2, tmp2, mButtonMarkupColours[offset], tmp1, tmp2,
@@ -369,10 +382,18 @@ void zen::ogScrMessageMgr::cnvButtonIcon(char* str)
 			PRINT("Button \'%s\'\n", tmp);
 		}
 	} else if (c == 'm') {
+#if defined(PIKI_PC_PORT)
+		// SJIS 0x926E is the sentence-ending mark. The PC font has no slot
+		// for it, so it became '@'. The English lines are "compelled! I".
+		tmp[0] = '!';
+		tmp[1] = ' ';
+		len    = 2;
+#else
 		// i assume this is a shift-jis character
 		char terminator[3] = { 0x92, 0x6E, 0x00 };
 		tmp[0]             = terminator[0];
 		tmp[1]             = terminator[1];
+#endif
 	}
 	cnvButtonIcon(tmp + len);
 }

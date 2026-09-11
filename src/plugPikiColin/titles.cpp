@@ -819,6 +819,9 @@ void TitlesMovieInterface::message(int cmd, int)
  */
 void TitlesSection::init()
 {
+#if defined(PIKI_PC_PORT)
+	pc_gfx_set_dof_focus(0.0f);
+#endif
 	Node::init("<TitlesSection>");
 	Jac_BackDVDBuffer();
 

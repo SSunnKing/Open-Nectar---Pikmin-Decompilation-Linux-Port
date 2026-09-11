@@ -81,6 +81,15 @@ int pc_window_get_cstick_invert(void);
 // Access to controller for menu navigation.
 SDL_GameController* pc_window_get_controller(void);
 
+// Last device that produced game input. Tutorial text uses this so the
+// prompts match the F1 bindings the player is actually using.
+bool pc_window_last_input_is_gamepad(void);
+
+// Writes the F1 name for a message-box button tag (a/b/c/x/y/z/l/r) into buf.
+// Keyboard vs gamepad follows pc_window_last_input_is_gamepad(). In mouse
+// cursor mode, A/B/Z also list the matching mouse button.
+void pc_window_message_control_label(char tag, char* buf, unsigned bufSize);
+
 void pc_window_set_display_mode(int mode);        // PC_WINDOW_FULLSCREEN_*
 int  pc_window_get_display_mode(void);
 void pc_window_set_window_size(int w, int h);     // windowed resolution

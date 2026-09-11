@@ -819,6 +819,11 @@ void GameCoreSection::prepareBadEnd()
  */
 void GameCoreSection::exitStage()
 {
+#if defined(PIKI_PC_PORT)
+	// Stale focus would keep depth of field running on the file-select and
+	// title screens: those frames have no HUD ortho, so the pass hits the UI.
+	pc_gfx_set_dof_focus(0.0f);
+#endif
 	demoEventMgr = nullptr;
 	naviMgr      = nullptr;
 	playerState->exitCourse();

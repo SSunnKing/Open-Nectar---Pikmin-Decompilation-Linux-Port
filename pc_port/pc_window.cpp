@@ -16,6 +16,7 @@ static SDL_Window*   sWindow = nullptr;
 static SDL_GLContext sGLContext = nullptr;
 static SDL_GameController* sController = nullptr;
 static bool sShouldClose = false;
+static bool sLastInputIsGamepad = false;
 
 // DualSense on Linux also shows up as a motion-sensor joystick. Gravity on
 // that device's Y axis looks like a held stick, so the F1 menu walks itself.
@@ -205,6 +206,106 @@ int pc_window_get_gamepad_binding(int action) {
     return kDefaultGamepadBindings[action];
 }
 
+bool pc_window_last_input_is_gamepad(void)
+{
+	return sLastInputIsGamepad;
+}
+
+static int messageTagToAction(char tag)
+{
+	switch (tag) {
+	case 'a': return PC_KEY_ACT_A;
+	case 'b': return PC_KEY_ACT_B;
+	case 'c': return PC_KEY_ACT_CSTICK_UP;
+	case 'x': return PC_KEY_ACT_X;
+	case 'y': return PC_KEY_ACT_Y;
+	case 'z': return PC_KEY_ACT_Z;
+	case 'l': return PC_KEY_ACT_L;
+	case 'r': return PC_KEY_ACT_R;
+	default: return -1;
+	}
+}
+
+static const char* mouseButtonAliasForTag(char tag)
+{
+	switch (tag) {
+	case 'a':
+		return "Left Click";
+	case 'b':
+		return "Right Click";
+	case 'z':
+		return "Middle Click";
+	default:
+		return nullptr;
+	}
+}
+
+void pc_window_message_control_label(char tag, char* buf, unsigned bufSize)
+{
+	if (!buf || bufSize == 0)
+		return;
+	buf[0] = '\0';
+	const int action = messageTagToAction(tag);
+	if (action < 0) {
+		snprintf(buf, bufSize, "?");
+		return;
+	}
+
+	if (sLastInputIsGamepad) {
+		if (tag == 'c') {
+			snprintf(buf, bufSize, "C-Stick");
+			return;
+		}
+		const int button = pc_window_get_gamepad_binding(action);
+		if (button < 0) {
+			if (action == PC_KEY_ACT_R)
+				snprintf(buf, bufSize, "R Trigger");
+			else
+				snprintf(buf, bufSize, "%s", pc_window_get_key_action_name(action));
+			return;
+		}
+		snprintf(buf, bufSize, "%s", pc_window_get_gamepad_button_name(button));
+		return;
+	}
+
+	if (tag == 'c') {
+		const SDL_Scancode keys[4] = {
+		    pc_window_get_key_binding(PC_KEY_ACT_CSTICK_UP),
+		    pc_window_get_key_binding(PC_KEY_ACT_CSTICK_LEFT),
+		    pc_window_get_key_binding(PC_KEY_ACT_CSTICK_DOWN),
+		    pc_window_get_key_binding(PC_KEY_ACT_CSTICK_RIGHT),
+		};
+		char compact[4] = { 0 };
+		bool allSingle = true;
+		for (int i = 0; i < 4; i++) {
+			const char* name = SDL_GetScancodeName(keys[i]);
+			if (!name || name[1] != '\0') {
+				allSingle = false;
+				break;
+			}
+			compact[i] = name[0];
+		}
+		if (allSingle && compact[0])
+			snprintf(buf, bufSize, "%c/%c/%c/%c", compact[0], compact[1], compact[2], compact[3]);
+		else
+			snprintf(buf, bufSize, "C-Stick");
+		return;
+	}
+
+	const char* name = SDL_GetScancodeName(pc_window_get_key_binding(action));
+	snprintf(buf, bufSize, "%s", (name && name[0]) ? name : "?");
+
+	// Mouse buttons are fixed conveniences (not F1 remaps): L=A, R=B, M=Z.
+	if (sControlMode != PC_CONTROL_CLASSIC) {
+		const char* mouse = mouseButtonAliasForTag(tag);
+		if (mouse) {
+			const size_t used = strlen(buf);
+			if (used + 3 < bufSize)
+				snprintf(buf + used, bufSize - used, " / %s", mouse);
+		}
+	}
+}
+
 const char* pc_window_get_gamepad_button_name(int button) {
     if (button < 0) return "None";
     if (button >= SDL_CONTROLLER_BUTTON_MAX) return "Unknown";
@@ -349,6 +450,7 @@ bool pc_window_init(const char* title, int width, int height) {
         if (SDL_IsGameController(i) && !pc_joystick_is_secondary(i)) {
             sController = SDL_GameControllerOpen(i);
             if (sController) {
+                sLastInputIsGamepad = true;
                 printf("[PC Port] Opened Game Controller: %s\n", SDL_GameControllerName(sController));
                 fflush(stdout);
                 break;
@@ -406,6 +508,7 @@ void pc_window_poll_events(PADStatus* pad) {
                 if (!sController && !pc_joystick_is_secondary(event.cdevice.which)) {
                     sController = SDL_GameControllerOpen(event.cdevice.which);
                     if (sController) {
+                        sLastInputIsGamepad = true;
                         printf("[PC Port] Connected Game Controller: %s\n", SDL_GameControllerName(sController));
                     }
                 }
@@ -414,6 +517,7 @@ void pc_window_poll_events(PADStatus* pad) {
                 if (sController && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(sController)) == event.cdevice.which) {
                     SDL_GameControllerClose(sController);
                     sController = nullptr;
+                    sLastInputIsGamepad = false;
                     printf("[PC Port] Game Controller disconnected\n");
                 }
                 break;
@@ -527,6 +631,9 @@ void pc_window_poll_events(PADStatus* pad) {
     substickX = (s8)(cdirX * 127);
     substickY = (s8)(cdirY * 127);
 
+    const bool usedKeyboard = button != 0 || dirX != 0 || dirY != 0 || cdirX != 0 || cdirY != 0;
+    bool usedGamepad = false;
+
     // ── Gamepad Mapping (overrides / merges if controller connected) ──
     if (sController) {
         auto boundButtonPressed = [](int action) {
@@ -593,7 +700,22 @@ void pc_window_poll_events(PADStatus* pad) {
         if (boundButtonPressed(PC_KEY_ACT_CSTICK_RIGHT)) substickX = 127;
         if (boundButtonPressed(PC_KEY_ACT_CSTICK_UP)) substickY = 127;
         if (boundButtonPressed(PC_KEY_ACT_CSTICK_DOWN)) substickY = -127;
+
+        const int noticeZone = axisDeadZone < 16384 ? 16384 : axisDeadZone;
+        usedGamepad = boundButtonPressed(PC_KEY_ACT_A) || boundButtonPressed(PC_KEY_ACT_B)
+            || boundButtonPressed(PC_KEY_ACT_X) || boundButtonPressed(PC_KEY_ACT_Y)
+            || boundButtonPressed(PC_KEY_ACT_Z) || boundButtonPressed(PC_KEY_ACT_L)
+            || boundButtonPressed(PC_KEY_ACT_R) || boundButtonPressed(PC_KEY_ACT_START)
+            || boundButtonPressed(PC_KEY_ACT_DPAD_UP) || boundButtonPressed(PC_KEY_ACT_DPAD_DOWN)
+            || boundButtonPressed(PC_KEY_ACT_DPAD_LEFT) || boundButtonPressed(PC_KEY_ACT_DPAD_RIGHT)
+            || axisL > noticeZone || axisR > noticeZone
+            || abs(lx) > noticeZone || abs(ly) > noticeZone
+            || abs(rx) > noticeZone || abs(ry) > noticeZone;
     }
+    if (usedGamepad)
+        sLastInputIsGamepad = true;
+    else if (usedKeyboard)
+        sLastInputIsGamepad = false;
 
     // ── Mouse Input (Virtual Cursor) ──
     // In mouse modes: mouse controls virtual cursor (separate from movement stick)
