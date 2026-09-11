@@ -63,7 +63,7 @@ void PVWPolygonColourInfo::animate(f32* data, Colour& col)
 	}
 
 	if (data) {
-		mCurrentFrame = std::fmodf(data[0], mTotalFrameCount);
+		mCurrentFrame = fmodf(data[0], mTotalFrameCount);
 	} else {
 		// If no new data is provided, increment the current frame
 #if defined(PIKI_PC_PORT)
@@ -404,7 +404,7 @@ void PVWTextureData::animate(f32* framePtr, Matrix4f& mtx)
 		}
 	} else {
 		if (framePtr) {
-			mCurrentFrame = std::fmodf(*framePtr, (f32)mTotalFrameCount);
+			mCurrentFrame = fmodf(*framePtr, (f32)mTotalFrameCount);
 		} else {
 #if defined(PIKI_PC_PORT)
 			if (pc_render_is_authoritative()) {
@@ -536,7 +536,7 @@ void PVWTevColReg::animate(f32* framePtr, ShortColour& color)
 	}
 
 	if (framePtr) {
-		mCurrentAnimFrame = std::fmodf(*framePtr, mAnimFrameCount);
+		mCurrentAnimFrame = fmodf(*framePtr, mAnimFrameCount);
 	} else {
 #if defined(PIKI_PC_PORT)
 		if (pc_render_is_authoritative()) {
