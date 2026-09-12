@@ -1951,8 +1951,14 @@ void Navi::makeVelocity(bool isSunset)
 			check = true;
 		}
 
-		// Cursor-facing logic: when cursor is moving but movement stick is small
-		if ((check || (!check && cursorStickMag > NAVI_PARM(mNeutralStickThreshold))) && cursorStickMag <= NAVI_PARM(mCursorMoveStickThreshold)) {
+		// GC uses one stick for run and cursor. A small deflection stops
+		// Olimar so he can turn toward the cursor. Mouse mode splits those:
+		// WASD is the stick, the mouse is the cursor. Treating a small mouse
+		// delta as that "look" band zeroed velocity while the player was
+		// still holding WASD (issue #17).
+		const bool moving = moveStickMag > NAVI_PARM(mNeutralStickThreshold);
+		if (!moving && (check || cursorStickMag > NAVI_PARM(mNeutralStickThreshold))
+		    && cursorStickMag <= NAVI_PARM(mCursorMoveStickThreshold)) {
 			mTargetVelocity.set(0.0f, 0.0f, 0.0f);
 			Vector3f cursorPos(mCursorPosition);
 			mFaceDirection += 0.2f * angDist(roundAng(atan2f(cursorPos.x, cursorPos.z)), mFaceDirection);
