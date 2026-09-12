@@ -5,6 +5,8 @@
 
 #include "pc_aram.h"
 
+#include <chrono>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,13 +25,36 @@ void check(bool condition, const char* what)
 	}
 }
 
+// Reserve a private directory atomically so concurrent test processes cannot
+// overwrite one another's fixtures. Remove only our empty directory on exit;
+// main removes the scratch file after the existing byte-level checks.
+struct ScratchDirectory {
+	std::filesystem::path path;
+	ScratchDirectory()
+	{
+		std::error_code error;
+		const auto root = std::filesystem::temp_directory_path(error);
+		if (error) return;
+		const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+		for (int attempt = 0; attempt < 100; ++attempt) {
+			auto candidate = root / ("pc_aram_test_" + std::to_string(stamp) + "_" + std::to_string(attempt));
+			if (std::filesystem::create_directory(candidate, error)) { path = candidate; return; }
+			if (error) return;
+		}
+	}
+	~ScratchDirectory()
+	{
+		std::error_code error;
+		if (!path.empty()) std::filesystem::remove(path, error);
+	}
+};
+
 /// Writes @p bytes to a scratch file and returns its path.
 std::string writeScratch(const char* name, const std::vector<u8>& bytes)
 {
-	const char* dir = std::getenv("TMPDIR");
-	std::string path = (dir != nullptr ? dir : "/tmp");
-	path += "/pc_aram_test_";
-	path += name;
+	static ScratchDirectory directory;
+	if (directory.path.empty()) return {};
+	std::string path = (directory.path / name).string();
 
 	FILE* file = std::fopen(path.c_str(), "wb");
 	if (file == nullptr) {
