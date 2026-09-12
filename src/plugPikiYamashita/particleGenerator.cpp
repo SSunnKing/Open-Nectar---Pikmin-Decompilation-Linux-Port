@@ -19,9 +19,10 @@ DEFINE_ERROR(29)
  */
 DEFINE_PRINT("particleGenerator")
 
-static u8 lpsPos[48] ATTRIBUTE_ALIGN(32) = {
-	255, 231, 0, 25, 0,   0,   0, 25, 0, 25, 0, 0,  0, 25, 255, 231, 0, 0,  255, 231, 255, 231, 0,   0,
-	0,   0,   0, 25, 255, 231, 0, 0,  0, 25, 0, 25, 0, 0,  255, 231, 0, 25, 0,   0,   255, 231, 255, 231,
+// GC stored these as big-endian s16 bytes. The PC GX array reader uses host
+// endian, so keep the ±25 unit quad in native s16.
+static s16 lpsPos[24] ATTRIBUTE_ALIGN(32) = {
+	-25, 25, 0, 25, 25, 0, 25, -25, 0, -25, -25, 0, 0, 25, -25, 0, 25, 25, 0, -25, 25, 0, -25, -25,
 };
 
 static u8 lpsCoord[8] ATTRIBUTE_ALIGN(32) = {
@@ -1032,6 +1033,14 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 #if PIKI_USE_DGX
 	gfx.setBlendMode(mBlendFactor, mZMode, mAnimData.mBlendMode);
 	GXSetCullMode(GX_CULL_NONE);
+#if defined(PIKI_PC_PORT)
+	// Indexed FIFO ribbons never reached the GL backend. Submit world-space
+	// camera-facing quads with the same matrix path as billboards.
+	if (!gfx.initParticle(false)) {
+		return;
+	}
+	gfx.useMatrix(gfx.mCamera->mLookAtMtx, 0);
+#else
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_PNMTXIDX, GX_DIRECT);
 	GXSetVtxDesc(GX_VA_POS, GX_INDEX8);
@@ -1048,6 +1057,7 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 	GXSetNumTevStages(1);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
 	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX3X4, GX_TG_TEX0, GX_IDENTITY, GX_FALSE, GX_PTIDENTITY);
+#endif
 	Vector3f vec1;
 	STACK_PAD_VAR(3);
 	Matrix4f mtx1; // 0x104
@@ -1075,6 +1085,12 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 		MTXIdentity(mtx2);
 
 		f32 a  = ptcl->mSize * ptcl->mScaleFactor;
+#if defined(PIKI_PC_PORT)
+		// Scale-in/out hits 0 and a zero basis turns the ±25 quad into a sliver.
+		if (a < 0.0001f) {
+			continue;
+		}
+#endif
 		cosVal = cosShort(ptcl->mRotAngle);
 		sinVal = sinShort(ptcl->mRotAngle);
 		(this->*mRotAxisCallBack)(mtx3, sinVal, cosVal);
@@ -1105,6 +1121,49 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 		if (len != 0.0f) {
 			f32 v = a * mLengthScale; // f27
 			vec1.normalize();
+#if defined(PIKI_PC_PORT)
+			{
+				Vector3f worldPos = ptcl->mLocalPosition + ptcl->mGlobalPosition;
+				Vector3f toCam    = gfx.mCamera->mPosition - worldPos;
+				vec2.cross(toCam, vec1);
+				f32 width2 = vec2.x * vec2.x + vec2.y * vec2.y + vec2.z * vec2.z;
+				if (width2 < 1.0e-8f) {
+					vec2 = gfx.mCamera->mViewXAxis;
+					width2 = vec2.x * vec2.x + vec2.y * vec2.y + vec2.z * vec2.z;
+				}
+				if (width2 < 1.0e-8f) {
+					continue;
+				}
+				vec2.normalize();
+				// Keep the streak along velocity. Rotating width into length
+				// made each particle a spoke of a spinning cross.
+				if (vec2.DP(ptcl->mOrientedNormal) < 0.0f) {
+					vec2.x = -vec2.x;
+					vec2.y = -vec2.y;
+					vec2.z = -vec2.z;
+				}
+				if (pc_render_is_authoritative()) {
+					ptcl->mOrientedNormal = vec2;
+				}
+				f32 hx = 25.0f * a;
+				f32 hy = 25.0f * v;
+				f32 py = 25.0f * mPivotOffsetY;
+				Vector3f axisW = vec2;
+				Vector3f axisL = vec1;
+				const f32 sx[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+				const f32 sy[4] = { 1.0f, 1.0f, -1.0f, -1.0f };
+				const f32 tu[4] = { 0.0f, 1.0f, 1.0f, 0.0f };
+				const f32 tv[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+				GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+				for (int vi = 0; vi < 4; vi++) {
+					Vector3f p = worldPos + axisW * (sx[vi] * hx) + axisL * (sy[vi] * hy + py);
+					GXPosition3f32(p.x, p.y, p.z);
+					GXTexCoord2f32(tu[vi], tv[vi]);
+				}
+				GXEnd();
+				continue;
+			}
+#endif
 
 			vec2.cross(vec1, ptcl->mOrientedNormal);
 
@@ -1162,14 +1221,46 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 #if defined(PIKI_PC_PORT)
 			}
 #endif
-			continue;
+				continue;
 		}
 
 		MTXConcat(mtx2, mtx3, mtx2);
 		MTXConcat(mtx1.mMtx, mtx2, mtx1.mMtx);
 
 		GXLoadPosMtxImm(mtx1.mMtx, 0);
-
+#if defined(PIKI_PC_PORT)
+		GXSetCurrentMtx(0);
+		if (mOrientedDrawConfig.mIsDoubleSided) {
+			GXBegin(GX_QUADS, GX_VTXFMT0, 8);
+			GXPosition3f32(-25.0f, 25.0f, 0.0f);
+			GXTexCoord2f32(0.0f, 0.0f);
+			GXPosition3f32(25.0f, 25.0f, 0.0f);
+			GXTexCoord2f32(1.0f, 0.0f);
+			GXPosition3f32(25.0f, -25.0f, 0.0f);
+			GXTexCoord2f32(1.0f, 1.0f);
+			GXPosition3f32(-25.0f, -25.0f, 0.0f);
+			GXTexCoord2f32(0.0f, 1.0f);
+			GXPosition3f32(0.0f, 25.0f, -25.0f);
+			GXTexCoord2f32(0.0f, 0.0f);
+			GXPosition3f32(0.0f, 25.0f, 25.0f);
+			GXTexCoord2f32(1.0f, 0.0f);
+			GXPosition3f32(0.0f, -25.0f, 25.0f);
+			GXTexCoord2f32(1.0f, 1.0f);
+			GXPosition3f32(0.0f, -25.0f, -25.0f);
+			GXTexCoord2f32(0.0f, 1.0f);
+		} else {
+			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+			GXPosition3f32(-25.0f, 25.0f, 0.0f);
+			GXTexCoord2f32(0.0f, 0.0f);
+			GXPosition3f32(25.0f, 25.0f, 0.0f);
+			GXTexCoord2f32(1.0f, 0.0f);
+			GXPosition3f32(25.0f, -25.0f, 0.0f);
+			GXTexCoord2f32(1.0f, 1.0f);
+			GXPosition3f32(-25.0f, -25.0f, 0.0f);
+			GXTexCoord2f32(0.0f, 1.0f);
+		}
+		GXEnd();
+#else
 		if (mOrientedDrawConfig.mIsDoubleSided) {
 			GXBegin(GX_QUADS, GX_VTXFMT0, 8);
 			GXTexCoord2u8(0, 0);
@@ -1193,6 +1284,7 @@ void zen::particleGenerator::drawPtclOriented(Graphics& gfx)
 			GXTexCoord2u8(2, 0);
 			GXTexCoord2u8(3, 3);
 		}
+#endif
 	}
 #else
 	drawPtclBillboard(gfx);

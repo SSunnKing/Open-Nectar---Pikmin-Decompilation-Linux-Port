@@ -460,6 +460,8 @@ CamDataInfo::CamDataInfo()
 	mCamera.mFar         = 15000.0f;
 	mCamera.mAspectRatio = 640.0f / 480.0f;
 	mUseStaticCamera     = false;
+	mCamNearAnims[0].mEntryNum = mCamNearAnims[0].mDataOffset = mCamNearAnims[0].mFlags = 0;
+	mCamFarAnims[0].mEntryNum = mCamFarAnims[0].mDataOffset = mCamFarAnims[0].mFlags = 0;
 };
 
 /**
@@ -569,6 +571,49 @@ void CamDataInfo::update(f32 currentFrame, immut Matrix4f& mtx)
 	mCamera.mPosition.multMatrix(mtx);
 	mCamera.mFocus.multMatrix(mtx);
 	mCamera.mFov = cameraFovy[0];
+
+	// Softimage writes cam_near / cam_far into the .dsk and the parser stores
+	// them, but the update path never copied them onto the Camera. Every
+	// cinematic kept the constructor defaults (1 / 15000). The opening
+	// spaceship portal sits past that far plane (authored 0.1 / 32768).
+	if (mSceneData && mSceneData->mCameraAnimations) {
+		f32 cameraNear[1];
+		f32 cameraFar[1];
+		for (int camNearIdx = 0; camNearIdx < 1; camNearIdx++) {
+			AnimParam& thisParam = mCamNearAnims[camNearIdx];
+			switch (thisParam.mEntryNum) {
+			case 0:
+				cameraNear[camNearIdx] = mCamera.mNear;
+				break;
+			case 1:
+				cameraNear[camNearIdx] = mSceneData->mCameraAnimations->mData[thisParam.mDataOffset];
+				break;
+			default:
+				cameraNear[camNearIdx] = extract(currentFrame, thisParam, *mSceneData->mCameraAnimations);
+				break;
+			}
+		}
+		for (int camFarIdx = 0; camFarIdx < 1; camFarIdx++) {
+			AnimParam& thisParam = mCamFarAnims[camFarIdx];
+			switch (thisParam.mEntryNum) {
+			case 0:
+				cameraFar[camFarIdx] = mCamera.mFar;
+				break;
+			case 1:
+				cameraFar[camFarIdx] = mSceneData->mCameraAnimations->mData[thisParam.mDataOffset];
+				break;
+			default:
+				cameraFar[camFarIdx] = extract(currentFrame, thisParam, *mSceneData->mCameraAnimations);
+				break;
+			}
+		}
+		if (mCamNearAnims[0].mEntryNum != 0) {
+			mCamera.mNear = cameraNear[0];
+		}
+		if (mCamFarAnims[0].mEntryNum != 0) {
+			mCamera.mFar = cameraFar[0];
+		}
+	}
 
 	if (mBlendRatio > 0.0f) {
 		mCamera.mFov = (mTargetFov - mCamera.mFov) * mBlendRatio + mCamera.mFov;

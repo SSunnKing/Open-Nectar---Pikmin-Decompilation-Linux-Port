@@ -2,6 +2,9 @@
 #include "port/jaudio_host.h"
 #endif
 #include "pc_window.h"
+#ifdef __linux__
+#include "pc_gpu_preference.h"
+#endif
 #include <cstdio>
 #include <cstring>
 #include <cctype>
@@ -439,25 +442,50 @@ bool pc_window_init(const char* title, int width, int height) {
     // features (GLSL 1.20 attribute/varying syntax and GL_QUADS). A Core
     // profile accepts the context but rejects every draw, producing a black
     // window without an SDL error.
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    auto applyGlAttrs = []() {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    };
+    applyGlAttrs();
 
-    sWindow = SDL_CreateWindow(
-        title,
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        sWindowWidth,
-        sWindowHeight,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
-    );
-
-    if (!sWindow) {
+    bool retriedGpu = false;
+    for (;;) {
+        sWindow = SDL_CreateWindow(
+            title,
+            SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED,
+            sWindowWidth,
+            sWindowHeight,
+            SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        );
+        if (sWindow) {
+            break;
+        }
         printf("[PC Port Error] SDL_CreateWindow failed: %s\n", SDL_GetError());
         fflush(stdout);
+#ifdef __linux__
+        if (!retriedGpu) {
+            retriedGpu = true;
+            printf("[PC Port] Retrying without NVIDIA PRIME/EGL (X11 if unset)\n");
+            fflush(stdout);
+            pc_gpu_preference_clear();
+            SDL_Quit();
+            if (!getenv("SDL_VIDEODRIVER")) {
+                setenv("SDL_VIDEODRIVER", "x11", 1);
+            }
+            if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) < 0) {
+                printf("[PC Port Error] SDL_Init retry failed: %s\n", SDL_GetError());
+                fflush(stdout);
+                return false;
+            }
+            applyGlAttrs();
+            continue;
+        }
+#endif
         SDL_Quit();
         return false;
     }

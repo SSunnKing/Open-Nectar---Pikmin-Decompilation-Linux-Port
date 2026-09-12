@@ -19,23 +19,27 @@ static void check(bool condition, const char* what)
     }
 }
 
-static PcGpuEvidence evidence(int nvidia, int eglFile, int chose, int optOut)
+static PcGpuEvidence evidence(int nvidia, int eglFile, int chose, int optOut, int forceEgl = 0)
 {
     PcGpuEvidence e;
     e.nvidiaKernelModuleLoaded = nvidia;
     e.eglVendorFilePresent     = eglFile;
     e.userAlreadyChose         = chose;
     e.optedOut                 = optOut;
+    e.forceEglRoute            = forceEgl;
     return e;
 }
 
 int main()
 {
-    // The laptop this was found on: NVIDIA module loaded, Wayland session with
-    // the glvnd EGL vendor file present. Both graphics paths get routed,
-    // because SDL chooses between them and either can be the one used.
+    // Default: offload + GLX. Exclusive NVIDIA EGL is opt-in — it is what
+    // yields "Could not get EGL display" on a Wayland compositor owned by the
+    // integrated GPU.
     PcGpuDecision d = pc_gpu_preference_decide(evidence(1, 1, 0, 0));
-    check(d.requestOffload && d.routeGlx && d.routeEgl, "NVIDIA laptop: offload, GLX and EGL");
+    check(d.requestOffload && d.routeGlx && !d.routeEgl, "NVIDIA laptop: offload and GLX, not EGL");
+
+    d = pc_gpu_preference_decide(evidence(1, 1, 0, 0, 1));
+    check(d.requestOffload && d.routeGlx && d.routeEgl, "NECTAR_PRIME_EGL pins NVIDIA EGL");
 
     // No NVIDIA module: an Intel-only or AMD machine. Setting
     // __GLX_VENDOR_LIBRARY_NAME=nvidia here leaves libglvnd with no vendor and

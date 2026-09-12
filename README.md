@@ -439,6 +439,7 @@ PIKMIN_PROJ_DEBUG=1          # One frame's projections, once a second
 PIKMIN_MENU_PILLARBOX=1      # Menus boxed in 4:3 instead of widescreen
 NECTAR_LANGUAGE=es           # Language (European disc), overrides the setting
 NECTAR_NO_PRIME=1            # Do not ask for the dedicated GPU
+NECTAR_PRIME_EGL=1           # Also pin EGL to NVIDIA (can fail on Wayland)
 ```
 
 The game binary also accepts `--audio-self-test`, which walks scenes, stages,

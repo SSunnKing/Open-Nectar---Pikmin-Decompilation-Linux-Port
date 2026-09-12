@@ -4528,10 +4528,41 @@ void pc_gfx_set_array(GXAttr attr, void* basePtr, u8 stride) {
 }
 
 static Vertex sCurVertex = {};
+static GXVtxFmt sImmVtxFmt = GX_VTXFMT0;
+static bool sFifoImmActive = false;
+static int sFifoAttr = GX_VA_PNMTXIDX;
+static u8 sFifoMtxId = 0;
+static u8 sFifoNeed = 0;
+static u8 sFifoGot = 0;
+static u8 sFifoTmp[32];
+static Vertex sFifoVertex = {};
+
+static bool vtx_desc_uses_fifo()
+{
+    for (int a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
+        const GXAttrType d = sVtxDesc[a];
+        if (d == GX_INDEX8 || d == GX_INDEX16) return true;
+        if (a <= GX_VA_TEX7MTXIDX && d == GX_DIRECT) return true;
+    }
+    return false;
+}
+
+static void fifo_imm_byte(u8 val);
+static void fifo_imm_start_vertex();
+
+static void fifo_imm_reset()
+{
+    sFifoImmActive = vtx_desc_uses_fifo();
+    sFifoMtxId     = static_cast<u8>(sCurrentPosMtxId);
+    fifo_imm_start_vertex();
+}
 
 // ── Drawing & FIFO Stream Parser ──
 void pc_gfx_begin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts) {
-    (void)vtxfmt;
+    if (sInPrimitive) {
+        pc_gfx_end();
+    }
+    sImmVtxFmt = vtxfmt;
     sCurrentPrimType = type;
     sExpectedVerts = nverts;
     sVertexStream.clear();
@@ -4550,6 +4581,7 @@ void pc_gfx_begin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts) {
         sCurVertex.tex[i][0] = 0.0f;
         sCurVertex.tex[i][1] = 0.0f;
     }
+    fifo_imm_reset();
 }
 static int sAttrStep = 0;
 
@@ -4588,12 +4620,22 @@ void pc_gfx_push_f32(f32 val) {
     sAttrStep++;
 }
 
-void pc_gfx_push_u8(u8 val) { (void)val; }
-void pc_gfx_push_u16(u16 val) { (void)val; }
-void pc_gfx_push_u32(u32 val) { (void)val; }
-void pc_gfx_push_s8(s8 val) { (void)val; }
-void pc_gfx_push_s16(s16 val) { (void)val; }
-void pc_gfx_push_s32(s32 val) { (void)val; }
+void pc_gfx_push_u8(u8 val) { fifo_imm_byte(val); }
+void pc_gfx_push_u16(u16 val)
+{
+    fifo_imm_byte(static_cast<u8>(val >> 8));
+    fifo_imm_byte(static_cast<u8>(val));
+}
+void pc_gfx_push_u32(u32 val)
+{
+    fifo_imm_byte(static_cast<u8>(val >> 24));
+    fifo_imm_byte(static_cast<u8>(val >> 16));
+    fifo_imm_byte(static_cast<u8>(val >> 8));
+    fifo_imm_byte(static_cast<u8>(val));
+}
+void pc_gfx_push_s8(s8 val) { fifo_imm_byte(static_cast<u8>(val)); }
+void pc_gfx_push_s16(s16 val) { pc_gfx_push_u16(static_cast<u16>(val)); }
+void pc_gfx_push_s32(s32 val) { pc_gfx_push_u32(static_cast<u32>(val)); }
 
 
 // ── Specialised TEV programs ──
@@ -6300,6 +6342,120 @@ static u8 attr_inline_size(GXAttr attr, const VertexFormatState& fmt) {
         return (fmt.count == GX_TEX_ST ? 2 : 1) * get_comptype_size(fmt.type);
     }
     return 0;
+}
+
+static u8 fifo_imm_attr_bytes(GXAttr attr)
+{
+    const GXAttrType desc = sVtxDesc[attr];
+    if (desc == GX_NONE) return 0;
+    if (desc == GX_INDEX8) return 1;
+    if (desc == GX_INDEX16) return 2;
+    return attr_inline_size(attr, sVtxFormats[sImmVtxFmt][attr]);
+}
+
+static void fifo_imm_start_vertex()
+{
+    sFifoVertex.x  = 0.0f;
+    sFifoVertex.y  = 0.0f;
+    sFifoVertex.z  = 0.0f;
+    sFifoVertex.nx = 0.0f;
+    sFifoVertex.ny = 0.0f;
+    sFifoVertex.nz = 1.0f;
+    sFifoVertex.r  = 1.0f;
+    sFifoVertex.g  = 1.0f;
+    sFifoVertex.b  = 1.0f;
+    sFifoVertex.a  = 1.0f;
+    for (int tc = 0; tc < 4; ++tc) {
+        sFifoVertex.tex[tc][0] = 0.0f;
+        sFifoVertex.tex[tc][1] = 0.0f;
+    }
+    sFifoGot  = 0;
+    sFifoNeed = 0;
+    sFifoAttr = GX_VA_PNMTXIDX;
+    if (!sFifoImmActive) return;
+    while (sFifoAttr <= GX_VA_TEX7 && sVtxDesc[sFifoAttr] == GX_NONE) {
+        ++sFifoAttr;
+    }
+    if (sFifoAttr <= GX_VA_TEX7) {
+        sFifoNeed = fifo_imm_attr_bytes(static_cast<GXAttr>(sFifoAttr));
+    }
+}
+
+static void fifo_imm_apply_attr(GXAttr attr, const u8* data)
+{
+    const GXAttrType desc = sVtxDesc[attr];
+    if (attr <= GX_VA_TEX7MTXIDX) {
+        if (attr == GX_VA_PNMTXIDX) {
+            sFifoMtxId = data[0];
+        }
+        return;
+    }
+
+    const u8* element = data;
+    if (desc == GX_INDEX8 || desc == GX_INDEX16) {
+        u16 index = data[0];
+        if (desc == GX_INDEX16) {
+            index = static_cast<u16>((data[0] << 8) | data[1]);
+        }
+        const VertexArrayState& array = sVtxArrays[attr];
+        if (!array.base || array.stride == 0) return;
+        element = array.base + size_t(index) * array.stride;
+    }
+
+    if (attr == GX_VA_POS) {
+        const VertexFormatState& fmtState = sVtxFormats[sImmVtxFmt][attr];
+        const u8 compSize                 = get_comptype_size(fmtState.type);
+        const float x                     = read_attr_float(element, fmtState.type, fmtState.frac);
+        const float y                     = read_attr_float(element + compSize, fmtState.type, fmtState.frac);
+        const float z = (fmtState.count == GX_POS_XYZ) ? read_attr_float(element + 2 * compSize, fmtState.type, fmtState.frac) : 0.0f;
+        transform_position(sFifoMtxId, x, y, z, sFifoVertex.x, sFifoVertex.y, sFifoVertex.z);
+        sVerticesPretransformed = true;
+    } else if (attr == GX_VA_CLR0) {
+        const VertexFormatState& fmtState = sVtxFormats[sImmVtxFmt][attr];
+        u8 r, g, b, a;
+        read_attr_color(element, fmtState.type, r, g, b, a);
+        sFifoVertex.r = r / 255.0f;
+        sFifoVertex.g = g / 255.0f;
+        sFifoVertex.b = b / 255.0f;
+        sFifoVertex.a = a / 255.0f;
+    } else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
+        const VertexFormatState& fmtState = sVtxFormats[sImmVtxFmt][attr];
+        const u8 compSize                 = get_comptype_size(fmtState.type);
+        const int tc                      = int(attr) - int(GX_VA_TEX0);
+        if (tc < 4) {
+            sFifoVertex.tex[tc][0] = read_attr_float(element, fmtState.type, fmtState.frac);
+            sFifoVertex.tex[tc][1]
+                = (fmtState.count == GX_TEX_ST) ? read_attr_float(element + compSize, fmtState.type, fmtState.frac) : 0.0f;
+        }
+    }
+}
+
+static void fifo_imm_byte(u8 val)
+{
+    if (!sInPrimitive || !sFifoImmActive || sFifoAttr > GX_VA_TEX7) return;
+    if (sFifoNeed == 0) return;
+    if (sFifoGot < sizeof(sFifoTmp)) {
+        sFifoTmp[sFifoGot++] = val;
+    }
+    if (sFifoGot < sFifoNeed) return;
+
+    fifo_imm_apply_attr(static_cast<GXAttr>(sFifoAttr), sFifoTmp);
+    ++sFifoAttr;
+    while (sFifoAttr <= GX_VA_TEX7 && sVtxDesc[sFifoAttr] == GX_NONE) {
+        ++sFifoAttr;
+    }
+    sFifoGot = 0;
+    if (sFifoAttr <= GX_VA_TEX7) {
+        sFifoNeed = fifo_imm_attr_bytes(static_cast<GXAttr>(sFifoAttr));
+        return;
+    }
+
+    sVertexStream.push_back(sFifoVertex);
+    if (sVertexStream.size() >= sExpectedVerts) {
+        pc_gfx_end();
+        return;
+    }
+    fifo_imm_start_vertex();
 }
 
 // ── Embedded GP command stream handlers ──

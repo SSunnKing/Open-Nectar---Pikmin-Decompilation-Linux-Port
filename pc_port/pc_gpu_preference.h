@@ -24,8 +24,11 @@
  *   __NV_PRIME_RENDER_OFFLOAD   ask for the discrete GPU at all
  *   __GLX_VENDOR_LIBRARY_NAME   route GLX to the NVIDIA vendor (X11, Xwayland)
  *   __EGL_VENDOR_LIBRARY_FILENAMES  the same for EGL (native Wayland)
- * Both graphics paths are set because SDL picks between them by session type,
- * and a Wayland session can take either.
+ * GLX is requested automatically: X11 and Xwayland use it. Exclusive NVIDIA
+ * EGL is not — pointing __EGL_VENDOR_LIBRARY_FILENAMES at 10_nvidia.json
+ * alone makes SDL's Wayland path call eglGetDisplay on a vendor that cannot
+ * talk to an Intel/AMD compositor, and the window never opens
+ * ("Could not get EGL display"). Opt in with NECTAR_PRIME_EGL=1.
  *
  * AMD switchable graphics use DRI_PRIME instead and are NOT handled: that path
  * has no hardware here to verify it on, and an unverified guess is how the
@@ -54,6 +57,9 @@ typedef struct PcGpuEvidence {
     /// Non-zero if NECTAR_NO_PRIME is set: the opt-out, for when the discrete
     /// GPU is the broken one.
     int optedOut;
+    /// Non-zero if NECTAR_PRIME_EGL=1: also pin EGL to the NVIDIA vendor file.
+    /// Off by default; see the EGL note above.
+    int forceEglRoute;
 } PcGpuEvidence;
 
 /// What to do about it. Each field means "set this variable"; the caller sets
@@ -79,6 +85,10 @@ extern const char* const kPcGpuEglVendorPath;
 /// and by the time a context exists the choice is already made. No-op off
 /// Linux. Reports what it did on stdout either way.
 void pc_gpu_preference_apply(void);
+
+/// Drop the three PRIME variables this module may have set. Used when window
+/// creation fails so a second SDL_Init can talk to the compositor again.
+void pc_gpu_preference_clear(void);
 
 #ifdef __cplusplus
 }

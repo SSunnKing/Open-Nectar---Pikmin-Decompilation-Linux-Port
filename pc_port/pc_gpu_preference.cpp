@@ -32,14 +32,16 @@ PcGpuDecision pc_gpu_preference_decide(PcGpuEvidence evidence)
     decision.requestOffload = 1;
     decision.routeGlx       = 1;
 
-    if (evidence.eglVendorFilePresent) {
+    if (evidence.forceEglRoute && evidence.eglVendorFilePresent) {
         decision.routeEgl = 1;
-        decision.reason   = "NVIDIA present; requesting PRIME offload for GLX and EGL";
+        decision.reason   = "NVIDIA present; requesting PRIME offload for GLX and EGL "
+                            "(NECTAR_PRIME_EGL)";
     } else {
-        // Still worth doing. On an X11 session GLX is the only path that
-        // matters, and the EGL variable would have nothing valid to point at.
-        decision.reason = "NVIDIA present; requesting PRIME offload for GLX only "
-                          "(no glvnd EGL vendor file)";
+        // GLX is enough for X11/Xwayland. Pinning EGL to NVIDIA exclusively
+        // is what produces "Could not get EGL display" on Wayland when the
+        // compositor is on the integrated GPU.
+        decision.reason = "NVIDIA present; requesting PRIME offload for GLX "
+                          "(EGL left to the compositor)";
     }
     return decision;
 }
@@ -57,6 +59,7 @@ void pc_gpu_preference_apply(void)
                                          || getenv("__EGL_VENDOR_LIBRARY_FILENAMES") != nullptr
                                          || getenv("DRI_PRIME") != nullptr);
     evidence.optedOut                 = (getenv("NECTAR_NO_PRIME") != nullptr);
+    evidence.forceEglRoute            = (getenv("NECTAR_PRIME_EGL") != nullptr);
 
     PcGpuDecision decision = pc_gpu_preference_decide(evidence);
 
@@ -65,5 +68,14 @@ void pc_gpu_preference_apply(void)
     if (decision.routeEgl)       setenv("__EGL_VENDOR_LIBRARY_FILENAMES", kPcGpuEglVendorPath, 1);
 
     printf("[PC Port] GPU preference: %s\n", decision.reason);
+#endif
+}
+
+void pc_gpu_preference_clear(void)
+{
+#ifdef __linux__
+    unsetenv("__NV_PRIME_RENDER_OFFLOAD");
+    unsetenv("__GLX_VENDOR_LIBRARY_NAME");
+    unsetenv("__EGL_VENDOR_LIBRARY_FILENAMES");
 #endif
 }
