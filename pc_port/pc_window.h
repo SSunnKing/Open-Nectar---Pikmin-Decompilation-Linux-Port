@@ -67,10 +67,15 @@ extern const SDL_Scancode kDefaultKeyBindings[PC_KEY_ACT_COUNT];
 // Default gamepad button bindings (SDL_GameControllerButton).
 extern const int kDefaultGamepadBindings[PC_KEY_ACT_COUNT];
 
-// Gamepad button remapping.
+// Gamepad remapping. Values are SDL_GameControllerButton, -1 for default,
+// or PC_GP_AXIS_BIND + axis*2 + (positive?1:0) for analog axes / triggers.
+#define PC_GP_AXIS_BIND 1000
 void pc_window_set_gamepad_binding(int action, int button);
 int pc_window_get_gamepad_binding(int action);
 const char* pc_window_get_gamepad_button_name(int button);
+int pc_window_gamepad_first_held_binding(SDL_GameController* controller);
+bool pc_window_gamepad_bind_held(SDL_GameController* controller, int bind);
+bool pc_window_gamepad_any_held(SDL_GameController* controller);
 void pc_window_set_stick_dead_zone(int deadZone);
 int pc_window_get_stick_dead_zone(void);
 void pc_window_set_stick_invert(int flags);

@@ -308,6 +308,21 @@ void pc_window_message_control_label(char tag, char* buf, unsigned bufSize)
 
 const char* pc_window_get_gamepad_button_name(int button) {
     if (button < 0) return "None";
+    if (button >= PC_GP_AXIS_BIND) {
+        const int axis = (button - PC_GP_AXIS_BIND) / 2;
+        const int positive = (button - PC_GP_AXIS_BIND) & 1;
+        static const char* axisNames[6][2] = {
+            { "L Stick Left", "L Stick Right" },
+            { "L Stick Up", "L Stick Down" },
+            { "R Stick Left", "R Stick Right" },
+            { "R Stick Up", "R Stick Down" },
+            { "L Trigger", "L Trigger" },
+            { "R Trigger", "R Trigger" },
+        };
+        if (axis >= 0 && axis < 6)
+            return axisNames[axis][positive];
+        return "Unknown";
+    }
     if (button >= SDL_CONTROLLER_BUTTON_MAX) return "Unknown";
     static const char* names[] = {
         "A", "B", "X", "Y", "Back", "Guide", "Start",
@@ -318,6 +333,55 @@ const char* pc_window_get_gamepad_button_name(int button) {
     };
     if (button < (int)(sizeof(names) / sizeof(names[0]))) return names[button];
     return "Unknown";
+}
+
+bool pc_window_gamepad_bind_held(SDL_GameController* controller, int bind)
+{
+    if (!controller || bind < 0)
+        return false;
+    if (bind < SDL_CONTROLLER_BUTTON_MAX)
+        return SDL_GameControllerGetButton(controller, static_cast<SDL_GameControllerButton>(bind)) != 0;
+    if (bind >= PC_GP_AXIS_BIND) {
+        const int axis = (bind - PC_GP_AXIS_BIND) / 2;
+        const int positive = (bind - PC_GP_AXIS_BIND) & 1;
+        if (axis < 0 || axis >= SDL_CONTROLLER_AXIS_MAX)
+            return false;
+        const int v = SDL_GameControllerGetAxis(controller, static_cast<SDL_GameControllerAxis>(axis));
+        return positive ? v > 12000 : v < -12000;
+    }
+    return false;
+}
+
+int pc_window_gamepad_first_held_binding(SDL_GameController* controller)
+{
+    if (!controller)
+        return -1;
+    for (int btn = 0; btn < SDL_CONTROLLER_BUTTON_MAX; btn++) {
+        if (btn == SDL_CONTROLLER_BUTTON_GUIDE)
+            continue;
+        if (SDL_GameControllerGetButton(controller, static_cast<SDL_GameControllerButton>(btn)))
+            return btn;
+    }
+    int bestAxis = -1;
+    int bestPos = 0;
+    int bestAbs = 16000;
+    for (int axis = 0; axis < SDL_CONTROLLER_AXIS_MAX; axis++) {
+        const int v = SDL_GameControllerGetAxis(controller, static_cast<SDL_GameControllerAxis>(axis));
+        const int a = abs(v);
+        if (a > bestAbs) {
+            bestAbs = a;
+            bestAxis = axis;
+            bestPos = v > 0 ? 1 : 0;
+        }
+    }
+    if (bestAxis >= 0)
+        return PC_GP_AXIS_BIND + bestAxis * 2 + bestPos;
+    return -1;
+}
+
+bool pc_window_gamepad_any_held(SDL_GameController* controller)
+{
+    return pc_window_gamepad_first_held_binding(controller) >= 0;
 }
 
 void pc_window_reset_key_bindings(void) {
@@ -637,9 +701,7 @@ void pc_window_poll_events(PADStatus* pad) {
     // ── Gamepad Mapping (overrides / merges if controller connected) ──
     if (sController) {
         auto boundButtonPressed = [](int action) {
-            const int mapped = pc_window_get_gamepad_binding(action);
-            return mapped >= 0 && mapped < SDL_CONTROLLER_BUTTON_MAX
-                && SDL_GameControllerGetButton(sController, static_cast<SDL_GameControllerButton>(mapped));
+            return pc_window_gamepad_bind_held(sController, pc_window_get_gamepad_binding(action));
         };
         if (boundButtonPressed(PC_KEY_ACT_A)) button |= PAD_BUTTON_A;
         if (boundButtonPressed(PC_KEY_ACT_B)) button |= PAD_BUTTON_B;

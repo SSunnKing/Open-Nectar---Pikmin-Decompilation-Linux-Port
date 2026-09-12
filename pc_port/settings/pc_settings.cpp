@@ -853,7 +853,10 @@ void loadConfig() {
             int idx = atoi(key.substr(3).c_str());
             if (idx >= 0 && idx < PC_KEY_ACT_COUNT) {
                 const int button = atoi(val.c_str());
-                if (button >= -1 && button < SDL_CONTROLLER_BUTTON_MAX) {
+                const bool isButton = button >= -1 && button < SDL_CONTROLLER_BUTTON_MAX;
+                const int axis = (button - PC_GP_AXIS_BIND) / 2;
+                const bool isAxis = button >= PC_GP_AXIS_BIND && axis >= 0 && axis < SDL_CONTROLLER_AXIS_MAX;
+                if (isButton || isAxis) {
                     sConfig.gamepadBindings[idx] = button;
                 }
             }
@@ -914,17 +917,6 @@ bool captureConfirmHeld(SDL_GameController* ctl)
 	if (SDL_SCANCODE_SPACE < numKeys && keys[SDL_SCANCODE_SPACE])
 		return true;
 	return ctl && SDL_GameControllerGetButton(ctl, SDL_CONTROLLER_BUTTON_A);
-}
-
-bool anyGamepadButtonHeld(SDL_GameController* ctl)
-{
-	if (!ctl)
-		return false;
-	for (int btn = 0; btn < SDL_CONTROLLER_BUTTON_MAX; btn++) {
-		if (SDL_GameControllerGetButton(ctl, (SDL_GameControllerButton)btn))
-			return true;
-	}
-	return false;
 }
 
 bool isCaptureModifierScancode(int sc)
@@ -1095,13 +1087,11 @@ void pollMenuInput() {
                 return;
             }
             if (ctl) {
-                for (int btn = 0; btn < SDL_CONTROLLER_BUTTON_MAX; btn++) {
-                    if (SDL_GameControllerGetButton(ctl, (SDL_GameControllerButton)btn)) {
-                        sPending.gamepadBindings[sGamepadSelection] = btn;
-                        sWaitingForButton = false;
-                        sCaptureWaitRelease = true;
-                        break;
-                    }
+                const int bind = pc_window_gamepad_first_held_binding(ctl);
+                if (bind >= 0) {
+                    sPending.gamepadBindings[sGamepadSelection] = bind;
+                    sWaitingForButton = false;
+                    sCaptureWaitRelease = true;
                 }
             }
             return;
@@ -1109,7 +1099,7 @@ void pollMenuInput() {
 
         // The button just bound is still held; do not treat it as Back.
         if (sCaptureWaitRelease) {
-            if (!anyGamepadButtonHeld(ctl) && !captureConfirmHeld(ctl))
+            if (!pc_window_gamepad_any_held(ctl) && !captureConfirmHeld(ctl))
                 sCaptureWaitRelease = false;
             return;
         }
@@ -2289,7 +2279,7 @@ void pc_settings_draw(void) {
         const int subX = px1 + 18, subY = py1 + 44;
         const int subW = panelW - 36, subH = panelH - 58;
         drawSubmenuSurface(gfx, subX, subY, subW, subH, "Gamepad Controls",
-                           sWaitingForButton ? "Press a button   Esc: cancel"
+                           sWaitingForButton ? "Press a button, trigger or stick   Esc: cancel"
                                             : "Enter: capture   Left/Right: default",
                            sWaitingForButton ? "" : "Up/Down: select   Esc/B: back");
 
