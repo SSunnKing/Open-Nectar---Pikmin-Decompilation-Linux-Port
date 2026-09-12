@@ -908,6 +908,26 @@ bool padNavRight(SDL_GameController* c)
 bool padNavA(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A), 4); }
 bool padNavB(SDL_GameController* c) { return padEdge(SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_B), 5); }
 
+// The new-game prompt is a game-facing dialog rather than the F1 settings
+// menu. Its accept/cancel actions follow the configured A/B bindings, which
+// may be either SDL buttons or the axis encodings used by the remapping page.
+// Keep these separate from padNavA/B: F1 navigation deliberately retains its
+// physical A/B convention.
+bool promptPadBinding(SDL_GameController* c, int action, int edgeSlot)
+{
+	return c && padEdge(pc_window_gamepad_bind_held(c, pc_window_get_gamepad_binding(action)), edgeSlot);
+}
+
+bool promptPadA(SDL_GameController* c)
+{
+	return promptPadBinding(c, PC_KEY_ACT_A, 4);
+}
+
+bool promptPadB(SDL_GameController* c)
+{
+	return promptPadBinding(c, PC_KEY_ACT_B, 5);
+}
+
 bool captureConfirmHeld(SDL_GameController* ctl)
 {
 	int numKeys = 0;
@@ -1972,8 +1992,8 @@ void pcNewGamePromptInput() {
     if (ctl) {
         if (padNavLeft(ctl))  left   = true;
         if (padNavRight(ctl)) right  = true;
-        if (padNavA(ctl))     accept = true;
-        if (padNavB(ctl))     cancel = true;
+        if (promptPadA(ctl))  accept = true;
+        if (promptPadB(ctl))  cancel = true;
     }
 
     if (left || right) sNewGamePromptChoice = sNewGamePromptChoice ? 0 : 1;
